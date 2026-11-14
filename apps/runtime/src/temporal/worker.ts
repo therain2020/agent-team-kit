@@ -1,12 +1,14 @@
 import { fileURLToPath } from "node:url";
 import {
+  type EngineRunStatus,
   createDegradationGuard,
   guardedActivities,
+  reconcileIterationRuns,
   setActivityHeartbeat,
 } from "@kit/engine";
 import { initStore } from "@kit/store";
 import { initTelemetry, shutdownTelemetry } from "@kit/telemetry";
-import { applyTaskQueue } from "@kit/workflow";
+import { applyTaskQueue, createTemporalClient } from "@kit/workflow";
 import { Context } from "@temporalio/activity";
 import { NativeConnection, Worker } from "@temporalio/worker";
 import * as activities from "./activities";
@@ -55,18 +57,66 @@ const applyWorker = await Worker.create({
   maxConcurrentActivityTaskExecutions: 1,
 });
 
+const temporalClient = await createTemporalClient();
+const reconcileIntervalMs = clampInt(
+  process.env.KIT_RECONCILE_INTERVAL_MS,
+  10_000,
+  3_600_000,
+  60_000,
+);
+const reconcileProbe = {
+  async describe(workflowId: string): Promise<EngineRunStatus> {
+    try {
+      const description = await temporalClient.client.workflow
+        .getHandle(workflowId)
+        .describe();
+      return mapEngineStatus(description.status.name);
+    } catch {
+      return "unknown";
+    }
+  },
+};
+
+async function runReconcile(): Promise<void> {
+  try {
+    const repaired = await reconcileIterationRuns({
+      store: engineStore,
+      probe: reconcileProbe,
+    });
+    if (repaired.length > 0) {
+      console.log(`[reconciler] repaired ${repaired.length} run(s)`);
+    }
+  } catch (error) {
+    console.error(
+      `[reconciler] ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+const reconcileTimer = setInterval(
+  () => void runReconcile(),
+  reconcileIntervalMs,
+);
+reconcileTimer.unref?.();
+void runReconcile();
+
 console.log(
   `[worker] ready address=${address} namespace=${namespace} queue=${taskQueue} activityConcurrency=${activityConcurrency}`,
 );
 console.log(
   `[worker] apply queue ready queue=${applyTaskQueue} activityConcurrency=1`,
 );
+console.log(`[reconciler] interval=${reconcileIntervalMs}ms`);
 
 process.once("SIGINT", () => {
+  clearInterval(reconcileTimer);
+  void temporalClient.connection.close().catch(() => undefined);
   void worker.shutdown();
   void applyWorker.shutdown();
 });
 process.once("SIGTERM", () => {
+  clearInterval(reconcileTimer);
+  void temporalClient.connection.close().catch(() => undefined);
   void worker.shutdown();
   void applyWorker.shutdown();
 });
@@ -74,6 +124,27 @@ process.once("SIGTERM", () => {
 await Promise.all([worker.run(), applyWorker.run()]);
 await engineStore.close().catch(() => undefined);
 await shutdownTelemetry();
+
+function mapEngineStatus(name: string): EngineRunStatus {
+  switch (name) {
+    case "RUNNING":
+      return "running";
+    case "COMPLETED":
+      return "completed";
+    case "FAILED":
+      return "failed";
+    case "CANCELED":
+      return "cancelled";
+    case "TERMINATED":
+      return "terminated";
+    case "TIMED_OUT":
+      return "timed_out";
+    case "CONTINUED_AS_NEW":
+      return "continued_as_new";
+    default:
+      return "unknown";
+  }
+}
 
 function clampInt(
   value: string | undefined,

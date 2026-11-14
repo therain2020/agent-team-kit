@@ -17,6 +17,7 @@ import {
 import { assertKillSwitchClear } from "./kill-switch";
 import * as packActivities from "./pack-activities";
 import { type ApprovalOutcome, runPackPipeline } from "./pack-pipeline";
+import { reconcileLocalIterationRuns } from "./reconciler";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -153,6 +154,7 @@ export interface LocalRunnerLoopOptions {
   tickMs?: number;
   staleMs?: number;
   heartbeatMs?: number;
+  reconcileEveryMs?: number;
   onError?: (error: unknown) => void;
   /** Test seam for the iteration pipeline's activity layer. */
   iterationActivities?: IterationPipelineActivities;
@@ -164,6 +166,7 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
   const tickMs = options.tickMs ?? 1000;
   const staleMs = options.staleMs ?? 60_000;
   const heartbeatMs = options.heartbeatMs ?? 15_000;
+  const reconcileEveryMs = options.reconcileEveryMs ?? 60_000;
   const onError =
     options.onError ??
     ((error: unknown) => {
@@ -175,6 +178,21 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
   let stopping = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
+  let lastReconcileAt = 0;
+
+  const reconcile = async (): Promise<void> => {
+    lastReconcileAt = Date.now();
+    try {
+      const repaired = await reconcileLocalIterationRuns({
+        store: options.store,
+      });
+      if (repaired.length > 0) {
+        console.log(`[local-runner] reconciled ${repaired.length} run(s)`);
+      }
+    } catch (error) {
+      onError(error);
+    }
+  };
 
   const tick = async (): Promise<void> => {
     if (stopping) {
@@ -183,6 +201,9 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
     if (!busy) {
       busy = true;
       try {
+        if (Date.now() - lastReconcileAt >= reconcileEveryMs) {
+          await reconcile();
+        }
         const request = await options.store.runRequests.claimNext(
           owner,
           new Date(),

@@ -6,3 +6,4 @@ export * from "./kill-switch";
 export * from "./local-runner";
 export * from "./pack-activities";
 export * from "./pack-pipeline";
+export * from "./reconciler";
