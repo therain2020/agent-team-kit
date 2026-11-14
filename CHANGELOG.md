@@ -45,6 +45,9 @@
   `kit signals summarize` aggregates pass/apply rates by domain;
   `kit signals propose` writes manual improvement proposals for low-pass
   domains. Promotion/canary remains gated.
+- Medium-risk canary gate: `--apply low-medium` runs `typecheck`, `lint`,
+  `test` and a production `web:build` after applying; failure reverts the
+  commit. High-risk changes are never auto-applied.
 - Tests: 75 passing (coder sandbox/diff, coder stage, gateway signatures and
   normalization, router matching, iteration plan/risk, autopilot iterations,
   plus the existing suite).

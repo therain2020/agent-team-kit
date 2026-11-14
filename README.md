@@ -186,7 +186,7 @@ remove the ability to recover. Product changes are classified:
 | Risk | Examples | Default |
 |---|---|---|
 | low | docs, tests, i18n copy, non-core styles | auto-apply after checks |
-| medium | non-core feature code, pages, scripts | pending until the canary slice |
+| medium | non-core feature code, pages, scripts | auto in `low-medium` after checks + production build (canary gate) |
 | high | runtime/orchestrator, auth, approval/apply, dependencies, deploy, secrets | human approval |
 
 Forbidden changes (secrets, `.git`, deleting audit/tests, escaping the sandbox)

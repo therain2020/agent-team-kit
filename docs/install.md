@@ -68,7 +68,9 @@ bun run kit iterate --pack packs/self-improve \
 ```
 
 `--stub` uses a deterministic security+UX plan; the coder still runs for real.
-Low-risk changes are applied with a commit and backup; high-risk changes stay
+Low-risk changes are applied with a commit and backup. With
+`--apply low-medium`, medium-risk changes also apply after `typecheck`,
+`lint`, `test` and a production `web:build` canary; high-risk changes stay
 pending. Evidence is stored as artifacts.
 
 ### Events

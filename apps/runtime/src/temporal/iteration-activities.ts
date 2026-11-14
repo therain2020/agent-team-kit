@@ -566,7 +566,7 @@ export async function applyIterationTask(
   const head = await runGit(repoRoot, ["rev-parse", "HEAD"]);
   const commitSha = head.stdout.trim();
 
-  const postChecks = await runPostApplyChecks(repoRoot);
+  const postChecks = await runPostApplyChecks(repoRoot, input.risk);
   if (!postChecks.ok) {
     const revert = await runGit(repoRoot, ["revert", "--no-edit", "HEAD"]);
     return await publishApply(
@@ -1057,12 +1057,18 @@ async function failVerification(
   };
 }
 
-async function runPostApplyChecks(repoRoot: string): Promise<{
+async function runPostApplyChecks(
+  repoRoot: string,
+  risk: "low" | "medium" | "high",
+): Promise<{
   ok: boolean;
   feedback: string;
 }> {
   const bun = commandOnPath("bun") ?? "bun";
   const checks = ["typecheck", "lint", "test"];
+  if (risk === "medium") {
+    checks.push("web:build");
+  }
   const failures: string[] = [];
   for (const check of checks) {
     const result = await runProcess(bun, ["run", check], {
