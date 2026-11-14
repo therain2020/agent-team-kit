@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
     "@kit/job",
     "@kit/workflow",
     "@kit/source",
+    "@kit/workshop",
   ],
   serverExternalPackages: ["postgres", "better-sqlite3", "@aws-sdk/client-s3"],
   experimental: {

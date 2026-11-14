@@ -1,6 +1,8 @@
 import {
+  type WorkshopPublishResult,
   installWorkshop,
   previewWorkshop,
+  publishWorkshop,
   searchWorkshop,
 } from "@kit/workshop";
 import type { Command } from "commander";
@@ -70,4 +72,70 @@ export function registerWorkshop(program: Command): void {
         console.log(JSON.stringify(installed, null, 2));
       },
     );
+
+  workshop
+    .command("publish [dir]")
+    .description(
+      "Generate or validate workshop.yaml and print a publish checklist (never pushes)",
+    )
+    .option("--check", "validate an existing workshop.yaml without writing")
+    .option("--json", "print machine-readable JSON")
+    .action(
+      async (
+        dir: string | undefined,
+        options: { check?: boolean; json?: boolean },
+      ) => {
+        const result = await publishWorkshop({
+          dir: dir ?? process.cwd(),
+          write: !options.check,
+        });
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          printPublish(result);
+        }
+        if (!result.ok) {
+          process.exitCode = 1;
+        }
+      },
+    );
+}
+
+function printPublish(result: WorkshopPublishResult): void {
+  const status = result.ok
+    ? "✔ publish check passed"
+    : "✖ publish check failed";
+  console.log(
+    `${status} · ${result.manifest.kind} ${result.manifest.name}@${result.manifest.version}`,
+  );
+  console.log(
+    `manifest: ${result.manifestPath}${
+      result.generated
+        ? result.written
+          ? " (generated and written)"
+          : " (generated, not written)"
+        : ""
+    }`,
+  );
+  console.log(`risk: ${result.risk.level} — ${result.risk.reasons.join(", ")}`);
+  console.log(
+    `permissions: network=${result.permissions.network ? "yes" : "no"} filesystem=${result.permissions.filesystem} code=${result.permissions.code ? "yes" : "no"}`,
+  );
+  console.log(`files (${result.files.length}):`);
+  for (const file of result.files) {
+    console.log(`  ${file.path}  ${file.sha256}  ${file.bytes} bytes`);
+  }
+  console.log("checks:");
+  for (const item of result.checks) {
+    const mark =
+      item.status === "pass" ? "✓" : item.status === "warn" ? "!" : "✖";
+    console.log(`  ${mark} ${item.id}: ${item.detail}`);
+  }
+  console.log("next:");
+  console.log(
+    "  - Add the GitHub topic agent-team-workshop to the repository.",
+  );
+  console.log(
+    "  - Review the files above, commit workshop.yaml, and push from your own terminal.",
+  );
 }

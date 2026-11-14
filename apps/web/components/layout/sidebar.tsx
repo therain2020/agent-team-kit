@@ -16,6 +16,7 @@ import {
   Play,
   ScrollText,
   ShieldCheck,
+  Store,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
@@ -32,6 +33,7 @@ const NAV = [
   { href: "/activity", labelKey: "activity", icon: ScrollText },
   { href: "/packs", labelKey: "packs", icon: Package },
   { href: "/sources", labelKey: "sources", icon: Globe2 },
+  { href: "/workshop", labelKey: "workshop", icon: Store },
   { href: "/autopilot", labelKey: "autopilot", icon: ShieldCheck },
   { href: "/evolution", labelKey: "evolution", icon: FlaskConical },
   { href: "/traces", labelKey: "traces", icon: Activity },
