@@ -61,11 +61,20 @@ export async function runIterationPipeline(
     if (error instanceof IterationCancelledError) {
       throw error;
     }
-    await activities.failIterationActivity({
-      iterationId: input.iterationId,
-      workspaceId: input.workspaceId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    try {
+      await activities.failIterationActivity({
+        iterationId: input.iterationId,
+        workspaceId: input.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } catch (failError) {
+      // The reconciler owns runs whose terminal write could not be applied.
+      console.error(
+        `[iteration] failed to persist terminal state for ${input.iterationId}: ${
+          failError instanceof Error ? failError.message : String(failError)
+        }`,
+      );
+    }
     throw error;
   }
 }

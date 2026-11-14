@@ -2,6 +2,7 @@ import type { CoderStreamEvent } from "@kit/coder";
 import type { TaskPlan } from "@kit/core";
 import type { initStore } from "@kit/store";
 import type { IterationInput } from "@kit/workflow";
+import { asText, toErrorMessage } from "./errors";
 
 export type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -185,6 +186,10 @@ export async function appendEvent(
   input: IterationEventInput,
 ): Promise<number> {
   const at = input.createdAt ?? new Date().toISOString();
+  const kind = asText(input.kind);
+  const status = input.status === undefined ? null : asText(input.status);
+  const tool = input.tool === undefined ? null : asText(input.tool);
+  const summary = input.summary === undefined ? null : asText(input.summary);
   return await store.sql.begin(async (tx) => {
     const rows = await tx<Array<{ event_id: number }>>`
       INSERT INTO iteration_events (
@@ -192,8 +197,8 @@ export async function appendEvent(
         payload, created_at
       ) VALUES (
         ${input.iterationId}, ${input.taskId ?? null}, ${input.turn ?? null},
-        ${input.step ?? null}, ${input.kind}, ${input.status ?? null},
-        ${input.tool ?? null}, ${input.summary ?? null},
+        ${input.step ?? null}, ${kind}, ${status},
+        ${tool}, ${summary},
         ${store.sql.json(input.payload ?? {})}, ${at}
       )
       RETURNING event_id
@@ -338,17 +343,18 @@ export async function failIteration(
   iterationId: string,
   error: string,
 ): Promise<void> {
+  const message = toErrorMessage(error);
   await appendEvent(store, {
     iterationId,
     kind: "run.failed",
     status: "failed",
-    summary: error,
-    payload: { error },
+    summary: message,
+    payload: { error: message },
   });
   await updateRun(store, iterationId, {
     status: "failed",
     phase: "failed",
-    error,
+    error: message,
     finishedAt: new Date().toISOString(),
   });
 }

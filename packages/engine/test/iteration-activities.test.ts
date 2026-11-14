@@ -25,6 +25,58 @@ describe("parseTaskPlan", () => {
   it("rejects invalid JSON", () => {
     expect(() => parseTaskPlan("not json")).toThrow();
   });
+
+  it("normalizes string hints and mixed-case risk from the model", () => {
+    const plan = parseTaskPlan(
+      JSON.stringify({
+        goal: " improve ",
+        summary: " one task ",
+        tasks: [
+          {
+            id: " t1 ",
+            domain: " docs ",
+            goal: " do ",
+            acceptance: " ok ",
+            filesHint: "README.md, docs/a.md\ndocs/b.md",
+            dependsOn: "t0",
+            risk: "MEDIUM",
+          },
+        ],
+      }),
+    );
+    expect(plan.goal).toBe("improve");
+    expect(plan.tasks[0]?.id).toBe("t1");
+    expect(plan.tasks[0]?.domain).toBe("docs");
+    expect(plan.tasks[0]?.risk).toBe("medium");
+    expect(plan.tasks[0]?.filesHint).toEqual([
+      "README.md",
+      "docs/a.md",
+      "docs/b.md",
+    ]);
+    expect(plan.tasks[0]?.dependsOn).toEqual(["t0"]);
+  });
+
+  it("treats null hints as empty arrays and drops non-strings", () => {
+    const plan = parseTaskPlan(
+      JSON.stringify({
+        goal: "g",
+        summary: "s",
+        tasks: [
+          {
+            id: "t1",
+            domain: "docs",
+            goal: "g",
+            acceptance: "a",
+            filesHint: null,
+            dependsOn: ["t0", 1, null],
+            risk: "low",
+          },
+        ],
+      }),
+    );
+    expect(plan.tasks[0]?.filesHint).toEqual([]);
+    expect(plan.tasks[0]?.dependsOn).toEqual(["t0"]);
+  });
 });
 
 describe("classifyRisk", () => {
