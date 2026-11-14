@@ -24,8 +24,17 @@
   to improve itself.
 - Version reset: workspace packages and compatibility checks are `0.9.0`;
   task-centric features remain, but 1.0 is reserved for unattended operation.
-- Tests: 72 passing (coder sandbox/diff, coder stage, gateway signatures and
-  normalization, router matching, iteration plan/risk, plus the existing suite).
+- First autonomy pilot: DSH found a CWE-22 path traversal in the Pack loader
+  and produced a fix plus a regression test; it was human-approved and landed
+  in `3e8f586` (74 tests pass). A low-risk docs iteration was verified and
+  auto-applied as `c092472` (`autonomy: docs-update (docs)`).
+- Known issue: DSH's `pwsh` tool hits `SetNamedSecurityInfoW ... grantWrite
+  (Win32 5)` inside the copied sandbox, so the coder cannot run shell checks
+  itself; the external Verifier still runs `typecheck`/`lint`/`test`. Fix the
+  sandbox ACL or move to container isolation in the next slice.
+- Tests: 74 passing (coder sandbox/diff, coder stage, gateway signatures and
+  normalization, router matching, iteration plan/risk, autopilot iterations,
+  plus the existing suite).
 
 ## 1.0.0 — 2026-11-14 (not released)
 
