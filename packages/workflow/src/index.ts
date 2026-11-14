@@ -21,6 +21,9 @@ export interface StageDefinition {
   timeout?: string;
   retry?: RetryPolicy;
   gate?: string;
+  inputFrom?: string;
+  inputsFrom?: string[];
+  position?: { x: number; y: number };
 }
 
 export interface DeliveryDefinition {

@@ -228,9 +228,6 @@ export async function packWorkflow(
     })),
   });
 
-  let current = input.initialInput;
-  let lastArtifactId: string | undefined;
-  let previousStageId: string | undefined;
   let approvalPayload:
     | { decision: "approve" | "abort"; note?: string; requestId?: string }
     | undefined;
@@ -279,10 +276,39 @@ export async function packWorkflow(
       await setPackRunStatus({ runId: input.runId, status: "running" });
     };
 
-    for (const stage of input.stages) {
-      const upstream = stage.inputFromStageId
-        ? outputs.get(stage.inputFromStageId)
-        : undefined;
+    for (let index = 0; index < input.stages.length; index += 1) {
+      const stage = input.stages[index];
+      if (!stage) {
+        continue;
+      }
+
+      const previousStage = input.stages[index - 1];
+      const dependencyIds = stage.inputsFromStageIds?.length
+        ? stage.inputsFromStageIds
+        : stage.inputFromStageId
+          ? [stage.inputFromStageId]
+          : previousStage
+            ? [previousStage.stageId]
+            : [];
+
+      const upstreamArtifacts = dependencyIds
+        .map((dependencyId) => outputs.get(dependencyId))
+        .filter(
+          (value): value is { artifactId: string; text: string } =>
+            value !== undefined,
+        );
+
+      const upstreamTexts = upstreamArtifacts
+        .map((item) => item.text)
+        .filter((text) => text.length > 0);
+
+      const inputText =
+        upstreamTexts.length === 0
+          ? input.initialInput
+          : upstreamTexts.length === 1
+            ? (upstreamTexts[0] ?? input.initialInput)
+            : upstreamTexts.join("\n\n---\n\n");
+      const inputArtifactIds = upstreamArtifacts.map((item) => item.artifactId);
 
       if (
         stage.approval &&
@@ -310,8 +336,9 @@ export async function packWorkflow(
         runId: input.runId,
         workspaceId: input.workspaceId,
         runMode: input.runMode,
-        inputText: upstream?.text ?? current,
-        inputArtifactId: upstream?.artifactId ?? lastArtifactId,
+        inputText,
+        inputArtifactId: inputArtifactIds[0],
+        inputArtifactIds,
         evidenceText: input.initialInput,
         stub: input.stub,
       });
@@ -321,13 +348,19 @@ export async function packWorkflow(
           result.approvalRequestId,
           stage.approval?.ttlMs ?? 7 * 24 * 60 * 60 * 1000,
         );
+        const revisedArtifactIds =
+          result.effectiveInputArtifactId && inputArtifactIds.length > 0
+            ? [result.effectiveInputArtifactId, ...inputArtifactIds.slice(1)]
+            : inputArtifactIds;
         result = await executePackStage({
           ...stage,
           runId: input.runId,
           workspaceId: input.workspaceId,
           runMode: input.runMode,
-          inputText: result.effectiveInputText ?? current,
-          inputArtifactId: result.effectiveInputArtifactId ?? lastArtifactId,
+          inputText: result.effectiveInputText ?? inputText,
+          inputArtifactId:
+            result.effectiveInputArtifactId ?? inputArtifactIds[0],
+          inputArtifactIds: revisedArtifactIds,
           evidenceText: input.initialInput,
           stub: input.stub,
           gateApproved: true,
@@ -356,13 +389,12 @@ export async function packWorkflow(
         }
       }
 
-      if (result.effectiveInputArtifactId && previousStageId) {
-        outputs.set(previousStageId, {
+      const draftSourceId = dependencyIds[0];
+      if (result.effectiveInputArtifactId && draftSourceId) {
+        outputs.set(draftSourceId, {
           artifactId: result.effectiveInputArtifactId,
           text:
-            result.effectiveInputText ??
-            outputs.get(previousStageId)?.text ??
-            "",
+            result.effectiveInputText ?? outputs.get(draftSourceId)?.text ?? "",
         });
       }
 
@@ -371,9 +403,6 @@ export async function packWorkflow(
         text: result.text,
       });
       artifactIds.push(result.artifactId);
-      current = result.text;
-      lastArtifactId = result.artifactId;
-      previousStageId = stage.stageId;
     }
 
     await finishPackRun({ runId: input.runId });

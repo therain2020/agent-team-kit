@@ -224,9 +224,12 @@ async function executePackStageInner(
       promptHash: hash(input.instructions ?? input.stageName),
       modelId,
     },
-    inputs: draftArtifactId
-      ? [{ artifactId: draftArtifactId, version: 1 }]
-      : [],
+    inputs: (input.inputArtifactIds?.length
+      ? input.inputArtifactIds
+      : draftArtifactId
+        ? [draftArtifactId]
+        : []
+    ).map((artifactId) => ({ artifactId, version: 1 })),
     runId: input.runId,
     stageId: input.stageId,
     runMode: input.runMode,
@@ -370,9 +373,12 @@ async function publishCoderArtifacts(
         promptHash: hash(`coder:${result.coder}`),
         modelId,
       },
-      inputs: input.inputArtifactId
-        ? [{ artifactId: input.inputArtifactId, version: 1 }]
-        : [],
+      inputs: (input.inputArtifactIds?.length
+        ? input.inputArtifactIds
+        : input.inputArtifactId
+          ? [input.inputArtifactId]
+          : []
+      ).map((artifactId) => ({ artifactId, version: 1 })),
       runId: input.runId,
       stageId: `${input.stageId}:coder:${suffix}`,
       runMode: input.runMode,

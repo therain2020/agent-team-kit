@@ -30,6 +30,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { WorkflowGraph } from "./workflow-graph";
 
 type Tab = "agents" | "workflows" | "approvals" | "autopilot";
 
@@ -736,22 +737,9 @@ export function PackStudio({
           </div>
           <div className="space-y-3 rounded-lg border border-border bg-card p-4">
             <div className="flex items-center justify-between">
-              <div className="flex flex-wrap gap-1.5">
-                {currentWorkflow?.stages.map((stage) => (
-                  <span
-                    key={stage.id}
-                    className="flex items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] text-zinc-400"
-                  >
-                    {stage.approval ? (
-                      <Lock className="size-3 text-amber-300" />
-                    ) : null}
-                    {stage.id}
-                    <span className="text-zinc-600">
-                      {stage.agent ?? stage.type}
-                    </span>
-                  </span>
-                ))}
-              </div>
+              <span className="font-mono text-xs text-zinc-300">
+                {currentWorkflow?.id}
+              </span>
               <div className="flex items-center gap-1">
                 <Button
                   size="sm"
@@ -775,6 +763,15 @@ export function PackStudio({
                 </Button>
               </div>
             </div>
+            {currentWorkflow ? (
+              <WorkflowGraph
+                key={currentWorkflow.file}
+                dirName={data.dirName}
+                file={currentWorkflow.file}
+                stages={currentWorkflow.stages}
+                onSaved={(content) => setWorkflowRaw(content)}
+              />
+            ) : null}
             <Textarea
               value={workflowRaw}
               onChange={(event) => setWorkflowRaw(event.target.value)}

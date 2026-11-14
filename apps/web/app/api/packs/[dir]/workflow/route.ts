@@ -1,10 +1,12 @@
 import { sameOriginError } from "@/lib/http";
 import { resolvePackDir } from "@/lib/paths";
 import {
+  type StagePosition,
   createWorkflow,
   deleteWorkflow,
   listWorkflows,
   renameWorkflow,
+  setStagePositions,
   writeWorkflowFile,
 } from "@kit/pack";
 import { NextResponse } from "next/server";
@@ -78,19 +80,20 @@ export async function PUT(
     return NextResponse.json({ error: "invalid pack" }, { status: 400 });
   }
 
-  let body: { file?: unknown; content?: unknown };
+  let body: {
+    file?: unknown;
+    content?: unknown;
+    positions?: unknown;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
-  if (typeof body.file !== "string" || typeof body.content !== "string") {
-    return NextResponse.json(
-      { error: "file and content are required" },
-      { status: 400 },
-    );
+  if (typeof body.file !== "string") {
+    return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
-  if (body.content.length > 256 * 1024) {
+  if (typeof body.content === "string" && body.content.length > 256 * 1024) {
     return NextResponse.json(
       { error: "content exceeds 256KB" },
       { status: 400 },
@@ -98,8 +101,19 @@ export async function PUT(
   }
 
   try {
-    await writeWorkflowFile(packDir, body.file, body.content);
-    return NextResponse.json({ ok: true });
+    if (typeof body.content === "string") {
+      await writeWorkflowFile(packDir, body.file, body.content);
+      return NextResponse.json({ ok: true });
+    }
+    const positions = parsePositions(body.positions);
+    if (!positions) {
+      return NextResponse.json(
+        { error: "content or positions are required" },
+        { status: 400 },
+      );
+    }
+    const content = await setStagePositions(packDir, body.file, positions);
+    return NextResponse.json({ ok: true, content });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "save failed" },
@@ -180,4 +194,24 @@ export async function DELETE(
 async function packDirFrom(params: Promise<{ dir: string }>) {
   const { dir } = await params;
   return resolvePackDir(decodeURIComponent(dir));
+}
+
+function parsePositions(value: unknown): Record<string, StagePosition> | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const positions: Record<string, StagePosition> = {};
+  for (const [stageId, raw] of Object.entries(
+    value as Record<string, unknown>,
+  )) {
+    if (typeof raw !== "object" || raw === null) {
+      return null;
+    }
+    const { x, y } = raw as { x?: unknown; y?: unknown };
+    if (typeof x !== "number" || typeof y !== "number") {
+      return null;
+    }
+    positions[stageId] = { x, y };
+  }
+  return Object.keys(positions).length > 0 ? positions : null;
 }

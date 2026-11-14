@@ -20,9 +20,13 @@ export interface StudioAgent {
 
 export interface StudioStage {
   id: string;
-  type: "workflow" | "agent";
+  type: "workflow" | "agent" | "coder";
   agent?: string;
+  coder?: string;
   gate?: string;
+  inputFrom?: string;
+  inputsFrom?: string[];
+  position?: { x: number; y: number };
   approval?: {
     mode: "required" | "auto" | "never";
     position: "before" | "after";
@@ -151,12 +155,36 @@ export async function loadStudioData(
                   };
                 })
               : undefined;
+          const position =
+            typeof value.position === "object" && value.position !== null
+              ? (value.position as { x?: unknown; y?: unknown })
+              : undefined;
           return [
             {
               id: value.id,
-              type: value.type === "workflow" ? "workflow" : "agent",
+              type:
+                value.type === "workflow"
+                  ? "workflow"
+                  : value.type === "coder"
+                    ? "coder"
+                    : "agent",
               agent: typeof value.agent === "string" ? value.agent : undefined,
+              coder: typeof value.coder === "string" ? value.coder : undefined,
               gate: typeof value.gate === "string" ? value.gate : undefined,
+              inputFrom:
+                typeof value.inputFrom === "string"
+                  ? value.inputFrom
+                  : undefined,
+              inputsFrom: Array.isArray(value.inputsFrom)
+                ? value.inputsFrom.filter(
+                    (item): item is string => typeof item === "string",
+                  )
+                : undefined,
+              ...(position &&
+              typeof position.x === "number" &&
+              typeof position.y === "number"
+                ? { position: { x: position.x, y: position.y } }
+                : {}),
               ...(approval
                 ? {
                     approval: {

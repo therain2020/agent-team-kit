@@ -105,6 +105,14 @@ export async function buildPackRun(
     if (stage.inputFrom) {
       stageSpec.inputFromStageId = `${runId}:${stage.inputFrom}`;
     }
+    if (stage.inputsFrom) {
+      stageSpec.inputsFromStageIds = stage.inputsFrom.map(
+        (upstream) => `${runId}:${upstream}`,
+      );
+    }
+    if (stage.position) {
+      stageSpec.position = stage.position;
+    }
 
     if (stage.approval) {
       stageSpec.approval = {
@@ -135,10 +143,14 @@ export async function buildPackRun(
 
       stageSpec.gate = { ref: stage.gate, dimensions: rubric.dimensions };
 
-      const previous = workflow.stages[index - 1];
+      const upstreamId =
+        stage.inputFrom ??
+        stage.inputsFrom?.[0] ??
+        workflow.stages[index - 1]?.id;
+      const upstream = workflow.stages.find((item) => item.id === upstreamId);
       const revisionId =
         stage.revisionAgent ??
-        (previous?.type === "agent" ? previous.agent : undefined);
+        (upstream?.type === "agent" ? upstream.agent : undefined);
 
       if (revisionId) {
         const revisionAgent = loaded.agents.get(revisionId);

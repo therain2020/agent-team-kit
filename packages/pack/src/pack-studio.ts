@@ -643,6 +643,43 @@ export async function renameWorkflow(
   return { file: input.newFile, id: nextId };
 }
 
+export interface StagePosition {
+  x: number;
+  y: number;
+}
+
+export async function setStagePositions(
+  packDir: string,
+  relative: string,
+  positions: Record<string, StagePosition>,
+): Promise<string> {
+  const raw = await readPackFile(packDir, relative);
+  const doc = parse(raw) as {
+    stages?: Array<Record<string, unknown>>;
+  };
+  const stages = doc.stages;
+  if (!Array.isArray(stages)) {
+    throw new Error("workflow stages missing");
+  }
+  for (const [stageId, position] of Object.entries(positions)) {
+    if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+      throw new Error(`invalid position for stage: ${stageId}`);
+    }
+    const index = stages.findIndex((stage) => stage.id === stageId);
+    const stage = index >= 0 ? stages[index] : undefined;
+    if (!stage) {
+      continue;
+    }
+    stage.position = {
+      x: Math.round(position.x),
+      y: Math.round(position.y),
+    };
+  }
+  const content = stringify(doc);
+  await writeWorkflowFile(packDir, relative, content);
+  return content;
+}
+
 export async function setStageApproval(
   packDir: string,
   relative: string,
