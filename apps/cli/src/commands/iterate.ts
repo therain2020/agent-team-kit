@@ -14,6 +14,7 @@ export function registerIterate(program: Command): void {
     .description("Plan and run a task-centric self-iteration")
     .requiredOption("--goal <text>", "iteration goal")
     .option("--acceptance <text>", "overall acceptance criteria")
+    .option("--domain <name>", "restrict the plan to one domain")
     .option("--pack <dir>", "iteration pack directory", "packs/self-improve")
     .option("--max-tasks <n>", "maximum tasks to plan", "4")
     .option("--max-repair <n>", "repair attempts per task", "2")
@@ -26,6 +27,7 @@ export function registerIterate(program: Command): void {
       async (options: {
         goal: string;
         acceptance?: string;
+        domain?: string;
         pack: string;
         maxTasks: string;
         maxRepair: string;
@@ -70,6 +72,7 @@ export function registerIterate(program: Command): void {
           packDir,
           goal: options.goal,
           ...(options.acceptance ? { acceptance: options.acceptance } : {}),
+          ...(options.domain ? { domain: options.domain } : {}),
           maxTasks: clampInt(options.maxTasks, 1, 20, 4),
           maxRepair: clampInt(options.maxRepair, 0, 5, 2),
           runMode: options.live ? "LIVE" : "DRY_RUN",

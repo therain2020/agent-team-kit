@@ -27,6 +27,17 @@ domains:
       clarity problem in the Manager Console task flow, make the smallest
       improvement, and keep the existing visual language.
 
+  docs:
+    workflow: ux-improvement
+    coder: dsh
+    agent: patcher
+    riskCeiling: low
+    verification: [lint]
+    instructions: |
+      You are the builder for a documentation task. Update only documentation
+      (README/CHANGELOG/docs). Do not change code or tests. Keep the edit small
+      and consistent with the 0.9.0 autonomy preview.
+
 autoApply:
   low: true
   medium: false

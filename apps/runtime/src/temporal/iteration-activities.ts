@@ -109,6 +109,12 @@ ${context}`,
   }
 
   plan.tasks = plan.tasks.slice(0, maxTasks);
+  if (input.domain) {
+    plan.tasks = plan.tasks.filter((task) => task.domain === input.domain);
+    if (plan.tasks.length === 0) {
+      throw new Error(`planner produced no tasks for domain: ${input.domain}`);
+    }
+  }
   for (const task of plan.tasks) {
     if (!iteration.domains[task.domain]) {
       throw new Error(`planner selected unknown domain: ${task.domain}`);
@@ -190,7 +196,7 @@ export async function runIterationCoder(
       context,
       repoRoot,
       sandboxRoot: sandboxDir,
-      timeoutMs: 25 * 60 * 1000,
+      timeoutMs: Number(process.env.KIT_CODER_TIMEOUT_MS ?? 25 * 60 * 1000),
       installDeps: process.env.KIT_CODER_INSTALL !== "0",
       keepSandbox: true,
     });
@@ -832,7 +838,7 @@ function stubPlan(
     tasks.push({
       id: "security-audit",
       domain: "cyber",
-      goal: "Audit this repository for security weaknesses (static scan and dependency risks) and fix the highest-impact issue you can verify in the sandbox.",
+      goal: "Audit the Pack loader for unsafe path resolution (path traversal / escaping the pack directory), fix one concrete case, and add a focused test.",
       acceptance:
         "The fix is minimal, introduces no secrets, and typecheck/lint/tests pass.",
       filesHint: [],
@@ -844,11 +850,23 @@ function stubPlan(
     tasks.push({
       id: "ux-improvement",
       domain: "ux",
-      goal: "Audit the Manager Console task/office flow for a concrete UX problem (clarity, hierarchy, or interaction) and implement the smallest improvement.",
+      goal: "Audit one Manager Console page (Office or Inbox) for a concrete clarity or hierarchy problem and implement the smallest copy/layout improvement.",
       acceptance:
         "The change is small and understandable, and typecheck/lint/tests pass.",
       filesHint: [],
       risk: "medium",
+      dependsOn: [],
+    });
+  }
+  if (domains.docs) {
+    tasks.push({
+      id: "docs-update",
+      domain: "docs",
+      goal: "Update the README or CHANGELOG so the documented behavior matches the current 0.9.0 autonomy preview.",
+      acceptance:
+        "The documentation is accurate, concise, and lint passes; no code changes.",
+      filesHint: ["README.md", "CHANGELOG.md"],
+      risk: "low",
       dependsOn: [],
     });
   }

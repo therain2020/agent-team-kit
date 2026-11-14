@@ -6,6 +6,7 @@ export interface IterationInput {
   packDir: string;
   goal: string;
   acceptance?: string;
+  domain?: string;
   maxTasks: number;
   maxRepair: number;
   runMode: "DRY_RUN" | "LIVE";
