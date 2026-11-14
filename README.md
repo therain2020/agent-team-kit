@@ -2,6 +2,7 @@
 
 **Own a private team of AI agents — with approvals, audit and rollback.**
 
+[![ci](https://github.com/therain2020/agent-team-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/therain2020/agent-team-kit/actions/workflows/ci.yml)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![status](https://img.shields.io/badge/status-0.9.0_preview-orange)
 ![runtime](https://img.shields.io/badge/runtime-Bun%201.4%2B-black)
@@ -15,6 +16,7 @@ real work.
 - **Your data stays yours** — local-first, no telemetry, explicit approval for external effects.
 
 **Start here**
+- Live sample run: https://therain2020.github.io/agent-team-kit/
 - First hour: `bun run kit demo` (no Docker) · zero-config: `kit bootstrap` → `/welcome`
 - Create a team: `kit init my-team --template research` · [docs/pack-authoring.md](./docs/pack-authoring.md)
 - Docs: [docs/install.md](./docs/install.md) · Community: [CONTRIBUTING.md](./CONTRIBUTING.md) · [SUPPORT.md](./SUPPORT.md) · [ROADMAP.md](./ROADMAP.md)
