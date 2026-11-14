@@ -27,7 +27,10 @@
 - First autonomy pilot: DSH found a CWE-22 path traversal in the Pack loader
   and produced a fix plus a regression test; it was human-approved and landed
   in `3e8f586` (74 tests pass). A low-risk docs iteration was verified and
-  auto-applied as `c092472` (`autonomy: docs-update (docs)`).
+  auto-applied as `c092472` (`autonomy: docs-update (docs)`). A UX iteration
+  produced a verified Inbox hierarchy fix
+  (`apps/web/app/(console)/inbox/page.tsx`) classified as medium risk; it
+  remains pending rather than auto-applied.
 - Known issue: DSH's `pwsh` tool hits `SetNamedSecurityInfoW ... grantWrite
   (Win32 5)` inside the copied sandbox, so the coder cannot run shell checks
   itself; the external Verifier still runs `typecheck`/`lint`/`test`. Fix the
