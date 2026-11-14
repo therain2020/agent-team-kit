@@ -29,8 +29,9 @@ Flow: Planner → task plan → external coder (DSH by default) in an isolated
 repository copy → `typecheck`/`lint`/`test` → repair with feedback → risk
 classify → low-risk apply with commit + backup → report.
 
-- Domains: `cyber` (patcher) and `ux` (frontend-builder).
-- `--stub` uses a deterministic security + UX plan; the coder still runs.
+- Domains: `cyber` (patcher), `ux` (frontend-builder), and `docs` (patcher;
+  `lint` only).
+- `--stub` uses a deterministic security + UX + docs plan; the coder still runs.
 - High-risk changes are never auto-applied; they remain pending approval.
 - Codex/OpenCode are available through `--coder` and the
   `KIT_CODER_CODEX_CMD` / `KIT_CODER_OPENCODE_CMD` templates.

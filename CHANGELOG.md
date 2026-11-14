@@ -20,8 +20,8 @@
 - `kit iterate`: Planner → task plan → external coder → verify → repair →
   risk classifier → low-risk apply with commit + backup → report; evidence is
   stored as artifacts.
-- `packs/self-improve/iteration.yaml`: Cyber/UX domain routing for the system
-  to improve itself.
+- `packs/self-improve/iteration.yaml`: Cyber/UX/docs domain routing for the
+  system to improve itself.
 - Version reset: workspace packages and compatibility checks are `0.9.0`;
   task-centric features remain, but 1.0 is reserved for unattended operation.
 - First autonomy pilot: DSH found a CWE-22 path traversal in the Pack loader

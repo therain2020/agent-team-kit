@@ -37,6 +37,11 @@ describe("classifyRisk", () => {
     expect(result.forbidden).toBe(false);
   });
 
+  it("treats pack README files as low-risk docs", () => {
+    const result = classifyRisk(["packs/self-improve/README.md"], "low", "low");
+    expect(result.risk).toBe("low");
+  });
+
   it("marks core paths high", () => {
     const result = classifyRisk(
       ["packages/core/src/workflow.ts"],

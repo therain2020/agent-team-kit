@@ -857,7 +857,7 @@ export function classifyRisk(
       continue;
     }
     if (
-      /^(docs\/|README\.md$|CHANGELOG\.md$|apps\/web\/messages\/|.*\.test\.ts$|.*\/test\/)/.test(
+      /^(docs\/|.*README\.md$|.*CHANGELOG\.md$|apps\/web\/messages\/|.*\.test\.ts$|.*\/test\/)/.test(
         normalized,
       )
     ) {

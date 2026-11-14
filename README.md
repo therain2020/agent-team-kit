@@ -129,8 +129,8 @@ isolated repository copy under `%TEMP%/agent-team-kit` (override with
 `KIT_CODER_SANDBOX_ROOT`) → independent `typecheck`/`lint`/`test` → repair with
 feedback → risk classifier → low-risk apply with commit + backup → report.
 
-- `--stub` uses a deterministic two-task plan (security + UX) without a
-  planner model call; the coder still runs for real.
+- `--stub` uses a deterministic three-task plan (security + UX + docs) without
+  a planner model call; the coder still runs for real.
 - `--apply none|low|low-medium` controls auto-apply. High-risk changes are
   never auto-applied.
 - Coder overrides: `--coder dsh|codex|opencode|command`. Codex/OpenCode commands
