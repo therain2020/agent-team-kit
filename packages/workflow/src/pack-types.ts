@@ -46,6 +46,12 @@ export interface PackStageSpec {
   failureMode?: "fail_open" | "fail_closed";
 }
 
+export interface PackRunVariant {
+  role: "champion" | "canary";
+  variantId: string;
+  trafficPercent: number;
+}
+
 export interface PackRunInput {
   runId: string;
   eventId: string;
@@ -57,6 +63,7 @@ export interface PackRunInput {
   stages: PackStageSpec[];
   stub: boolean;
   maxConcurrency?: number;
+  variant?: PackRunVariant;
   delivery?: {
     channel: "im" | "email" | "local_file" | "webhook";
     approval?: "never" | "required_if_published";

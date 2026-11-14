@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   type EvolutionCycleRecord,
+  type EvolutionDecisionRecord,
   type EvolutionRecord,
   StoreEvolutionRepository,
   type VariantMeta,
@@ -136,13 +137,69 @@ describe("sqlite evolution repository", () => {
     expect(cycles[0]?.candidatePass).toBe(false);
     expect(cycles[0]?.signals).toEqual(["quality"]);
 
-    expect(await repo.setState({ champion: { path: a.dir } })).toBe(true);
+    expect(
+      await repo.setState({
+        workspaceId: "default",
+        champion: { path: a.dir },
+      }),
+    ).toBe(true);
     const state = await repo.getState();
     expect(state?.state.champion.path).toBe(path.resolve(a.dir));
+    expect(state?.state.workspaceId).toBe("default");
     expect(state?.version).toBe(0);
     expect(
-      await repo.setState({ champion: { path: a.dir } }, state?.version),
+      await repo.setState(
+        { workspaceId: "default", champion: { path: a.dir } },
+        state?.version,
+      ),
     ).toBe(true);
+
+    const current = await repo.getState();
+    const decision: EvolutionDecisionRecord = {
+      decisionId: "dec_1",
+      workspaceId: "default",
+      kind: "traffic_change",
+      variantId: "var_a",
+      agentId: "docs",
+      fromStatus: "shadow",
+      toStatus: "canary",
+      fromTrafficPercent: 0,
+      toTrafficPercent: 20,
+      trigger: "manual",
+      reason: "ramp traffic",
+      actor: "operator",
+      createdAt: new Date().toISOString(),
+    };
+    expect(
+      await repo.setStateWithDecision(
+        { workspaceId: "default", champion: { path: a.dir } },
+        decision,
+        current?.version,
+      ),
+    ).toBe(true);
+
+    const decisions = await repo.listDecisions(10);
+    expect(decisions[0]?.decisionId).toBe("dec_1");
+    expect(decisions[0]?.fromStatus).toBe("shadow");
+    expect(decisions[0]?.toTrafficPercent).toBe(20);
+
+    const stale: EvolutionDecisionRecord = {
+      ...decision,
+      decisionId: "dec_2",
+    };
+    const beforeStale = await repo.getState();
+    expect(
+      await repo.setStateWithDecision(
+        { workspaceId: "default", champion: { path: a.dir } },
+        stale,
+        (beforeStale?.version ?? 0) + 100,
+      ),
+    ).toBe(false);
+    expect(
+      (await repo.listDecisions(10)).some(
+        (record) => record.decisionId === "dec_2",
+      ),
+    ).toBe(false);
 
     expect(await repo.withLock("evolution-test", async () => 42)).toBe(42);
   }, 60_000);

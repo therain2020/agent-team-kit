@@ -42,17 +42,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const percent = typeof body.percent === "number" ? body.percent : 20;
+  const percent = typeof body.percent === "number" ? body.percent : 0;
   const statePath = path.join(getRepoRoot(), "variants", "state.json");
 
   try {
-    const state = await startCanary(
-      baseline,
-      variant,
-      percent,
+    const state = await startCanary(baseline, variant, {
+      trafficPercent: percent,
       statePath,
-      await getEvolutionRepo(),
-    );
+      repo: await getEvolutionRepo(),
+    });
     return NextResponse.json({ ok: true, state });
   } catch (error) {
     return NextResponse.json(

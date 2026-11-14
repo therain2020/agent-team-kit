@@ -1,9 +1,13 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import type { EventEnvelope } from "@kit/core";
-import { isExecutionBlocked } from "@kit/core";
+import { type EventEnvelope, isExecutionBlocked, newId } from "@kit/core";
 import { activeModeForWorkspace, auditBlockedExecution } from "@kit/engine";
+import {
+  type CanaryState,
+  type EvolutionRepository,
+  selectRunVariant,
+} from "@kit/evolution";
 import {
   type LoadedPack,
   buildPackRun,
@@ -17,7 +21,12 @@ type Store = Awaited<ReturnType<typeof initStore>>;
 type Temporal = Awaited<ReturnType<typeof createTemporalClient>>;
 
 export interface RouteResult {
-  started: Array<{ pack: string; workflow: string; runId: string }>;
+  started: Array<{
+    pack: string;
+    workflow: string;
+    runId: string;
+    variant?: "canary";
+  }>;
   skipped: Array<{ pack: string; workflow: string; reason: string }>;
   errors: string[];
 }
@@ -32,13 +41,73 @@ export interface BudgetUsage {
   costCny: number;
 }
 
+export interface RunVariantSelection {
+  path: string;
+  variantId: string;
+  trafficPercent: number;
+}
+
+export interface RunVariantSelector {
+  select(
+    workspaceId: string,
+    runId: string,
+  ): Promise<RunVariantSelection | null>;
+}
+
+export class EvolutionRunVariantSelector implements RunVariantSelector {
+  private cached?: { at: number; state: CanaryState | null };
+
+  constructor(
+    private readonly repo: EvolutionRepository,
+    private readonly ttlMs = 15_000,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  async select(
+    workspaceId: string,
+    runId: string,
+  ): Promise<RunVariantSelection | null> {
+    const route = selectRunVariant(
+      await this.canaryState(),
+      runId,
+      workspaceId,
+    );
+    if (!route || !existsSync(path.join(route.path, "team.yaml"))) {
+      return null;
+    }
+    return {
+      path: route.path,
+      variantId: route.variantId,
+      trafficPercent: route.trafficPercent,
+    };
+  }
+
+  private async canaryState(): Promise<CanaryState | null> {
+    const now = this.now();
+    if (this.cached && now - this.cached.at < this.ttlMs) {
+      return this.cached.state;
+    }
+    // Routing state is advisory: a store hiccup must not block champion
+    // traffic, so failures fall back to the live pack.
+    const state = await this.repo
+      .getState()
+      .then((stored) => stored?.state ?? null)
+      .catch(() => null);
+    this.cached = { at: now, state };
+    return state;
+  }
+}
+
 export class EventRouter {
   private cache?: { at: number; packs: LoadedPack[] };
+  private variantCache = new Map<string, { at: number; pack: LoadedPack }>();
 
   constructor(
     private readonly store: Store,
     private readonly temporal: Temporal,
     private readonly repoRoot: string,
+    private readonly variantSelector: RunVariantSelector | null = null,
+    private readonly workspaceId = "default",
   ) {}
 
   async route(event: EventEnvelope, payload: unknown): Promise<RouteResult> {
@@ -125,12 +194,30 @@ export class EventRouter {
         }
 
         try {
-          const built = await buildPackRun(pack, {
+          const runId = newId("run");
+          const selected = this.variantSelector
+            ? await this.variantSelector.select(this.workspaceId, runId)
+            : null;
+          const source = selected
+            ? await this.loadVariantPack(selected.path)
+            : pack;
+          const built = await buildPackRun(source, {
             workflow: workflow.id,
             input: JSON.stringify({ event, payload: payload ?? null }),
             runMode:
               process.env.KIT_EVENT_RUN_MODE === "live" ? "LIVE" : "DRY_RUN",
             stub: process.env.KIT_MODEL_MODE === "stub",
+            runId,
+            workspaceId: this.workspaceId,
+            ...(selected
+              ? {
+                  variant: {
+                    role: "canary" as const,
+                    variantId: selected.variantId,
+                    trafficPercent: selected.trafficPercent,
+                  },
+                }
+              : {}),
           });
           built.input.eventId = event.eventId;
 
@@ -147,6 +234,7 @@ export class EventRouter {
             pack: packName,
             workflow: workflow.id,
             runId: built.input.runId,
+            ...(selected ? { variant: "canary" as const } : {}),
           });
         } catch (error) {
           const message =
@@ -202,6 +290,19 @@ export class EventRouter {
       total += manifest?.cost.amount ?? 0;
     }
     return total;
+  }
+
+  private async loadVariantPack(dir: string): Promise<LoadedPack> {
+    const cached = this.variantCache.get(dir);
+    if (cached && Date.now() - cached.at < 30_000) {
+      return cached.pack;
+    }
+    const loaded = await loadPack(dir);
+    if (!loaded.ok) {
+      throw new Error(`canary variant invalid: ${loaded.errors.join("; ")}`);
+    }
+    this.variantCache.set(dir, { at: Date.now(), pack: loaded });
+    return loaded;
   }
 
   private async loadPacks(): Promise<LoadedPack[]> {

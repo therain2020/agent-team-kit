@@ -2,6 +2,7 @@ import path from "node:path";
 import {
   type CanaryState,
   type EvolutionCycleRecord,
+  type EvolutionDecisionRecord,
   type EvolutionRecord,
   StoreEvolutionRepository,
   type VariantMeta,
@@ -23,6 +24,7 @@ export interface EvolutionData {
   state: CanaryState | null;
   variants: VariantView[];
   cycles: EvolutionCycleRecord[];
+  decisions: EvolutionDecisionRecord[];
   archivePath: string;
   statePath: string;
   cyclesPath: string;
@@ -36,12 +38,14 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
   const repo = new StoreEvolutionRepository(getStore(), { variantsRoot });
   await repo.ensureReady();
 
-  const [storedState, records, cycles, storedVariants] = await Promise.all([
-    repo.getState(),
-    repo.latestScores(),
-    repo.listCycles(50),
-    repo.listVariants(),
-  ]);
+  const [storedState, records, cycles, storedVariants, decisions] =
+    await Promise.all([
+      repo.getState(),
+      repo.latestScores(),
+      repo.listCycles(50),
+      repo.listVariants(),
+      repo.listDecisions(20),
+    ]);
 
   const state = storedState?.state ?? null;
   const byVariant = new Map(
@@ -78,6 +82,7 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
     state,
     variants,
     cycles,
+    decisions,
     archivePath: path.join(variantsRoot, "archive.jsonl"),
     statePath: path.join(variantsRoot, "state.json"),
     cyclesPath: path.join(variantsRoot, "cycles.jsonl"),

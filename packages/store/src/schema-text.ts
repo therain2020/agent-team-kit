@@ -184,6 +184,22 @@ CREATE TABLE IF NOT EXISTS evolution_state (
   PRIMARY KEY (workspace_id, pack_dir)
 );
 
+CREATE TABLE IF NOT EXISTS evolution_decisions (
+  decision_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  variant_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL DEFAULT '',
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  from_traffic_percent INTEGER NOT NULL DEFAULT 0,
+  to_traffic_percent INTEGER NOT NULL DEFAULT 0,
+  trigger_kind TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS evolution_meta (
   workspace_id TEXT NOT NULL,
   key TEXT NOT NULL,
@@ -370,6 +386,7 @@ CREATE INDEX IF NOT EXISTS idx_run_requests_status ON run_requests(status, creat
 CREATE INDEX IF NOT EXISTS idx_evolution_scores_variant ON evolution_scores(variant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_variants_pack ON evolution_variants(pack_dir, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_cycles_created ON evolution_cycles(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evolution_decisions_created ON evolution_decisions(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_merge_tickets_status ON merge_tickets(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_runs_updated ON iteration_runs(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_id, task_id);
@@ -562,6 +579,22 @@ CREATE TABLE IF NOT EXISTS evolution_state (
   PRIMARY KEY (workspace_id, pack_dir)
 );
 
+CREATE TABLE IF NOT EXISTS evolution_decisions (
+  decision_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  variant_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL DEFAULT '',
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  from_traffic_percent INTEGER NOT NULL DEFAULT 0,
+  to_traffic_percent INTEGER NOT NULL DEFAULT 0,
+  trigger_kind TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS evolution_meta (
   workspace_id TEXT NOT NULL,
   key TEXT NOT NULL,
@@ -747,6 +780,7 @@ CREATE INDEX IF NOT EXISTS idx_run_requests_status ON run_requests(status, creat
 CREATE INDEX IF NOT EXISTS idx_evolution_scores_variant ON evolution_scores(variant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_variants_pack ON evolution_variants(pack_dir, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_cycles_created ON evolution_cycles(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evolution_decisions_created ON evolution_decisions(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_merge_tickets_status ON merge_tickets(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_runs_updated ON iteration_runs(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_id, task_id);

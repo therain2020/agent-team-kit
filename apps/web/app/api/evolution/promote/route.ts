@@ -3,7 +3,7 @@ import path from "node:path";
 import { getEvolutionRepo } from "@/lib/evolution-repo";
 import { sameOriginError } from "@/lib/http";
 import { resolvePackDir, resolveVariantDir } from "@/lib/paths";
-import { promoteVariant } from "@kit/evolution";
+import { markCanaryPromoted, promoteVariant } from "@kit/evolution";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -59,13 +59,35 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await promoteVariant(
-      variantDir,
-      targetDir,
-      apply,
-      await getEvolutionRepo(),
-    );
-    return NextResponse.json({ ok: true, ...result });
+    const repo = await getEvolutionRepo();
+    const result = await promoteVariant(variantDir, targetDir, apply, repo);
+
+    let state: Awaited<ReturnType<typeof markCanaryPromoted>> | undefined;
+    let stateError: string | undefined;
+    if (apply) {
+      const stored = await repo.getState();
+      if (
+        stored?.state.canary &&
+        path.resolve(stored.state.canary.path) === path.resolve(variantDir)
+      ) {
+        try {
+          state = await markCanaryPromoted(
+            `promoted to ${path.basename(targetDir)} from console`,
+            { repo },
+          );
+        } catch (error) {
+          stateError =
+            error instanceof Error ? error.message : "state update failed";
+        }
+      }
+    }
+
+    return NextResponse.json({
+      ok: true,
+      ...result,
+      ...(state ? { state } : {}),
+      ...(stateError ? { stateError } : {}),
+    });
   } catch (error) {
     return NextResponse.json(
       {

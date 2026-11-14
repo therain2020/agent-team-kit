@@ -3,6 +3,7 @@ import path from "node:path";
 import { newId, rubricSetSchema } from "@kit/core";
 import type {
   PackRunInput,
+  PackRunVariant,
   PackStageSpec,
   WorkflowDefinition,
 } from "@kit/workflow";
@@ -15,6 +16,9 @@ export interface BuildPackRunOptions {
   inputFile?: string;
   stub?: boolean;
   runMode?: "DRY_RUN" | "LIVE";
+  runId?: string;
+  workspaceId?: string;
+  variant?: PackRunVariant;
 }
 
 export interface BuiltPackRun {
@@ -35,7 +39,7 @@ export async function buildPackRun(
     throw new Error(`workflow not found: ${options.workflow ?? "<first>"}`);
   }
 
-  const runId = newId("run");
+  const runId = options.runId ?? newId("run");
   const eventId = newId("evt");
   const now = new Date().toISOString();
   const stages: PackStageSpec[] = [];
@@ -192,7 +196,7 @@ export async function buildPackRun(
     input: {
       runId,
       eventId,
-      workspaceId: "default",
+      workspaceId: options.workspaceId ?? "default",
       workflowId: workflow.id,
       workflowVersion: workflow.version,
       runMode: options.runMode ?? "DRY_RUN",
@@ -200,6 +204,7 @@ export async function buildPackRun(
       stages,
       stub: options.stub ?? false,
       ...(maxConcurrency ? { maxConcurrency } : {}),
+      ...(options.variant ? { variant: options.variant } : {}),
       ...(workflow.delivery ? { delivery: workflow.delivery } : {}),
     },
   };

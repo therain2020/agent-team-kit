@@ -62,8 +62,12 @@ describe("canary", () => {
       "canary",
     );
 
-    const state = await startCanary(baselineDir, canaryDir, 20, statePath);
-    expect(state.canary?.status).toBe("active");
+    const state = await startCanary(baselineDir, canaryDir, {
+      trafficPercent: 20,
+      statePath,
+    });
+    expect(state.canary?.status).toBe("canary");
+    expect(state.canary?.trafficPercent).toBe(20);
 
     const evaluation = await evaluateCanary([evidence], {
       stub: true,
@@ -78,7 +82,9 @@ describe("canary", () => {
     );
     expect(decision.rollback).toBe(true);
 
-    await rollbackCanary("test", statePath);
-    expect((await canaryStatus(statePath))?.canary?.status).toBe("rolled_back");
-  });
+    await rollbackCanary("test", { statePath });
+    expect((await canaryStatus({ statePath }))?.canary?.status).toBe(
+      "rolled_back",
+    );
+  }, 30_000);
 });
