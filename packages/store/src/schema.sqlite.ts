@@ -161,3 +161,22 @@ export const autopilotState = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
 );
+
+export const managerSessions = sqliteTable(
+  "manager_sessions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    sessionId: text("session_id").notNull(),
+    windowStartedAt: text("window_started_at").notNull(),
+    windowEndsAt: text("window_ends_at").notNull(),
+    firstAt: text("first_at").notNull(),
+    lastAt: text("last_at").notNull(),
+    tokens: integer("tokens").notNull().default(0),
+    costCny: real("cost_cny").notNull().default(0),
+    exchanges: integer("exchanges").notNull().default(0),
+    rejections: integer("rejections").notNull().default(0),
+    lastRejectionReason: text("last_rejection_reason"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.workspaceId, table.sessionId] })],
+);

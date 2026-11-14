@@ -11,6 +11,8 @@ import type {
 import { and, asc, desc, eq, lt, or, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
+  applyManagerSessionRejection,
+  applyManagerSessionUsage,
   fromArtifactRow,
   fromBlobRow,
   fromDegradationAuditRow,
@@ -37,6 +39,10 @@ import type {
   DegradationStateRecord,
   DegradationStore,
   EventStore,
+  ManagerSessionRecord,
+  ManagerSessionRejectionInput,
+  ManagerSessionStore,
+  ManagerSessionUsageInput,
   ManifestStore,
   RunRequestRecord,
   RunRequestStore,
@@ -51,6 +57,7 @@ import {
   blobs,
   degradationAudit,
   degradationState,
+  managerSessions,
   manifests,
   runRequests,
   runs,
@@ -374,6 +381,68 @@ export class SqliteAutopilotStateStore implements AutopilotStateStore {
   }
 }
 
+export class SqliteManagerSessionStore implements ManagerSessionStore {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async get(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<ManagerSessionRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(managerSessions)
+      .where(
+        and(
+          eq(managerSessions.workspaceId, workspaceId),
+          eq(managerSessions.sessionId, sessionId),
+        ),
+      )
+      .limit(1);
+    return row ? fromSqliteManagerSessionRow(row) : null;
+  }
+
+  async addUsage(
+    input: ManagerSessionUsageInput,
+  ): Promise<ManagerSessionRecord> {
+    const existing = await this.get(input.workspaceId, input.sessionId);
+    const record = applyManagerSessionUsage(existing, input);
+    await this.db
+      .insert(managerSessions)
+      .values(toSqliteManagerSessionRow(record))
+      .onConflictDoUpdate({
+        target: [managerSessions.workspaceId, managerSessions.sessionId],
+        set: sqliteManagerSessionUpdateSet(record),
+      });
+    return record;
+  }
+
+  async recordRejection(
+    input: ManagerSessionRejectionInput,
+  ): Promise<ManagerSessionRecord> {
+    const existing = await this.get(input.workspaceId, input.sessionId);
+    const record = applyManagerSessionRejection(existing, input);
+    await this.db
+      .insert(managerSessions)
+      .values(toSqliteManagerSessionRow(record))
+      .onConflictDoUpdate({
+        target: [managerSessions.workspaceId, managerSessions.sessionId],
+        set: sqliteManagerSessionUpdateSet(record),
+      });
+    return record;
+  }
+
+  async reset(workspaceId: string, sessionId: string): Promise<void> {
+    await this.db
+      .delete(managerSessions)
+      .where(
+        and(
+          eq(managerSessions.workspaceId, workspaceId),
+          eq(managerSessions.sessionId, sessionId),
+        ),
+      );
+  }
+}
+
 export class SqliteRunRequestStore implements RunRequestStore {
   constructor(private readonly db: SqliteDatabase) {}
 
@@ -607,4 +676,55 @@ export class SqliteDegradationStore implements DegradationStore {
       .limit(limit);
     return rows.map(fromDegradationAuditRow);
   }
+}
+
+function toSqliteManagerSessionRow(record: ManagerSessionRecord) {
+  return {
+    workspaceId: record.workspaceId,
+    sessionId: record.sessionId,
+    windowStartedAt: record.windowStartedAt,
+    windowEndsAt: record.windowEndsAt,
+    firstAt: record.firstAt,
+    lastAt: record.lastAt,
+    tokens: record.tokens,
+    costCny: record.costCny,
+    exchanges: record.exchanges,
+    rejections: record.rejections,
+    lastRejectionReason: record.lastRejectionReason,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function fromSqliteManagerSessionRow(
+  row: typeof managerSessions.$inferSelect,
+): ManagerSessionRecord {
+  return {
+    workspaceId: row.workspaceId,
+    sessionId: row.sessionId,
+    windowStartedAt: row.windowStartedAt,
+    windowEndsAt: row.windowEndsAt,
+    firstAt: row.firstAt,
+    lastAt: row.lastAt,
+    tokens: Number(row.tokens ?? 0),
+    costCny: Number(row.costCny ?? 0),
+    exchanges: Number(row.exchanges ?? 0),
+    rejections: Number(row.rejections ?? 0),
+    lastRejectionReason: row.lastRejectionReason ?? null,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function sqliteManagerSessionUpdateSet(record: ManagerSessionRecord) {
+  return {
+    windowStartedAt: record.windowStartedAt,
+    windowEndsAt: record.windowEndsAt,
+    firstAt: record.firstAt,
+    lastAt: record.lastAt,
+    tokens: record.tokens,
+    costCny: record.costCny,
+    exchanges: record.exchanges,
+    rejections: record.rejections,
+    lastRejectionReason: record.lastRejectionReason,
+    updatedAt: record.updatedAt,
+  };
 }

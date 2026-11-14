@@ -347,6 +347,22 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
 
+CREATE TABLE IF NOT EXISTS manager_sessions (
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  window_started_at TIMESTAMPTZ NOT NULL,
+  window_ends_at TIMESTAMPTZ NOT NULL,
+  first_at TIMESTAMPTZ NOT NULL,
+  last_at TIMESTAMPTZ NOT NULL,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  cost_cny NUMERIC NOT NULL DEFAULT 0,
+  exchanges INTEGER NOT NULL DEFAULT 0,
+  rejections INTEGER NOT NULL DEFAULT 0,
+  last_rejection_reason TEXT,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, session_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
@@ -697,6 +713,22 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS manager_sessions (
+  workspace_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  window_started_at TEXT NOT NULL,
+  window_ends_at TEXT NOT NULL,
+  first_at TEXT NOT NULL,
+  last_at TEXT NOT NULL,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  cost_cny REAL NOT NULL DEFAULT 0,
+  exchanges INTEGER NOT NULL DEFAULT 0,
+  rejections INTEGER NOT NULL DEFAULT 0,
+  last_rejection_reason TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, session_id)
+);
 
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 

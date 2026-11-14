@@ -1,12 +1,14 @@
 import { EmptyState } from "@/components/kit/empty-state";
 import { PageHeader } from "@/components/kit/page-header";
 import { RunModeBadge, RunStatusBadge } from "@/components/kit/status-badge";
+import { BudgetResetButton } from "@/components/manager/budget-reset-button";
 import { ManagerChat } from "@/components/manager/chat";
 import { RunPicker } from "@/components/manager/run-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadManagerExchanges } from "@/lib/manager";
+import { loadManagerBudget } from "@/lib/manager-budget";
 import { loadRunDetail } from "@/lib/runs";
 import { getStore } from "@/lib/store";
 import { formatCny, timeAgo } from "@/lib/utils";
@@ -15,6 +17,7 @@ import {
   ArrowUpRight,
   Coins,
   FileText,
+  Gauge,
   MessageSquare,
   ShieldAlert,
 } from "lucide-react";
@@ -70,6 +73,11 @@ export default async function ManagerPage({
   const { messages } = await loadManagerExchanges(selectedRunId, store);
   const { brief } = await buildManagerBrief(store, selectedRunId, {
     publish: false,
+  });
+  const budget = await loadManagerBudget({
+    workspaceId: detail.run.workspaceId,
+    sessionId: selectedRunId,
+    store,
   });
   const failedGates = detail.gates.filter((gate) => !gate.pass);
   const stubMode =
@@ -158,6 +166,53 @@ export default async function ManagerPage({
             </CardContent>
           </Card>
 
+          <Card
+            className={budget.blockedReason ? "border-red-500/30" : undefined}
+          >
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Gauge className="size-4 text-sky-400" />
+                {t("budgetTitle")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-[11px] text-zinc-400">
+              <div className="flex items-center justify-between">
+                <span>{t("budgetTokens")}</span>
+                <span className="font-mono text-zinc-200">
+                  {budget.tokens} / {budget.tokenLimit}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>{t("budgetCost")}</span>
+                <span className="font-mono text-zinc-200">
+                  {formatCny(budget.costCny)} / {formatCny(budget.costLimitCny)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>{t("budgetRollsIn")}</span>
+                <span className="font-mono text-zinc-200">
+                  {formatWindow(budget.remainingMs)}
+                </span>
+              </div>
+              {budget.blockedReason ? (
+                <p className="text-red-300">
+                  {t("budgetBlocked", {
+                    reason:
+                      budget.blockedReason === "tokens"
+                        ? t("budgetReasonTokens")
+                        : t("budgetReasonCost"),
+                  })}
+                </p>
+              ) : null}
+              <p className="text-zinc-500">{t("budgetHint")}</p>
+              <BudgetResetButton
+                runId={selectedRunId}
+                label={t("budgetReset")}
+                errorLabel={t("budgetResetFailed")}
+              />
+            </CardContent>
+          </Card>
+
           {detail.approval && detail.run.status === "paused" ? (
             <Card className="border-amber-500/30">
               <CardHeader>
@@ -215,4 +270,11 @@ export default async function ManagerPage({
       </div>
     </div>
   );
+}
+
+function formatWindow(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }

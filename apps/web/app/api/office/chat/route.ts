@@ -1,4 +1,8 @@
 import { publishManagerExchange } from "@/lib/manager";
+import {
+  checkManagerBudget,
+  recordManagerRejection,
+} from "@/lib/manager-budget";
 import { buildOfficeChatContext } from "@/lib/office-chat";
 import { getStore } from "@/lib/store";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -51,6 +55,31 @@ export async function POST(request: Request) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   const stub = process.env.KIT_MODEL_MODE === "stub" || !apiKey;
   const store = await getStore();
+
+  const budget = await checkManagerBudget({
+    workspaceId: "default",
+    sessionId: context.threadId,
+    store,
+  });
+  if (!budget.allowed) {
+    await recordManagerRejection({
+      workspaceId: "default",
+      sessionId: context.threadId,
+      runId: context.threadId,
+      reason: budget.reason,
+      store,
+    });
+    return NextResponse.json(
+      {
+        error: budget.message,
+        code: "manager_budget_exceeded",
+        reason: budget.reason,
+        windowEndsAt: budget.snapshot.windowEndsAt,
+        retryAfterSeconds: Math.ceil(budget.snapshot.remainingMs / 1000),
+      },
+      { status: 429, headers: { "x-kit-budget-reason": budget.reason } },
+    );
+  }
 
   if (stub) {
     const answer = `**Manager (stub mode)**\n\nThe team **${context.packName}** is ready. Ask about agents, missions, or approvals. Set \`DEEPSEEK_API_KEY\` for a live answer. Your question: “${question}”`;

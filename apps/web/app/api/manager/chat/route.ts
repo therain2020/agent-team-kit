@@ -1,4 +1,8 @@
 import { buildChatContext, publishManagerExchange } from "@/lib/manager";
+import {
+  checkManagerBudget,
+  recordManagerRejection,
+} from "@/lib/manager-budget";
 import { getStore } from "@/lib/store";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
@@ -44,6 +48,31 @@ export async function POST(request: Request) {
   const run = await store.runs.get(body.runId);
   if (!run) {
     return NextResponse.json({ error: "run not found" }, { status: 404 });
+  }
+
+  const budget = await checkManagerBudget({
+    workspaceId: run.workspaceId,
+    sessionId: run.runId,
+    store,
+  });
+  if (!budget.allowed) {
+    await recordManagerRejection({
+      workspaceId: run.workspaceId,
+      sessionId: run.runId,
+      runId: run.runId,
+      reason: budget.reason,
+      store,
+    });
+    return NextResponse.json(
+      {
+        error: budget.message,
+        code: "manager_budget_exceeded",
+        reason: budget.reason,
+        windowEndsAt: budget.snapshot.windowEndsAt,
+        retryAfterSeconds: Math.ceil(budget.snapshot.remainingMs / 1000),
+      },
+      { status: 429, headers: { "x-kit-budget-reason": budget.reason } },
+    );
   }
 
   const { system, brief } = await buildChatContext(body.runId, store);
