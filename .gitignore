@@ -4,6 +4,7 @@ node_modules/
 dist/
 .next/
 .next-bench/
+.next-prod/
 *.tsbuildinfo
 .tmp/
 .backup/
