@@ -45,7 +45,17 @@ export function registerWorkshop(program: Command): void {
     .option("--ref <ref>", "commit or branch")
     .option("--target <dir>", "target root (default: ./workshop)")
     .option("--yes", "accept third-party content", false)
+    .option(
+      "--accept-unsigned",
+      "install items without a verified signature",
+      false,
+    )
     .option("--allow-code", "allow items with executable code", false)
+    .option(
+      "--accept-risk",
+      "accept high-risk permissions (network/code)",
+      false,
+    )
     .action(
       async (
         repo: string,
@@ -53,7 +63,9 @@ export function registerWorkshop(program: Command): void {
           ref?: string;
           target?: string;
           yes: boolean;
+          acceptUnsigned: boolean;
           allowCode: boolean;
+          acceptRisk: boolean;
         },
       ) => {
         if (!options.yes) {
@@ -66,7 +78,9 @@ export function registerWorkshop(program: Command): void {
           ref: options.ref,
           root: options.target,
           acceptThirdParty: true,
+          acceptUnsigned: options.acceptUnsigned,
           allowCode: options.allowCode,
+          acceptHighRisk: options.acceptRisk,
           token: process.env.GITHUB_TOKEN,
         });
         console.log(JSON.stringify(installed, null, 2));

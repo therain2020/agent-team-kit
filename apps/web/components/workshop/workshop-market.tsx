@@ -17,6 +17,7 @@ import type {
   WorkshopInstallRecord,
   WorkshopManifest,
   WorkshopPreview,
+  WorkshopTrust,
 } from "@kit/workshop";
 import {
   AlertTriangle,
@@ -45,6 +46,21 @@ function riskLevel(manifest: WorkshopManifest): "low" | "medium" | "high" {
   return "low";
 }
 
+const TRUST_VARIANT: Record<
+  WorkshopTrust["level"],
+  "success" | "info" | "warning"
+> = {
+  builtin: "success",
+  verified: "info",
+  community: "warning",
+};
+
+const PERMISSION_RISK_VARIANT = {
+  low: "outline",
+  medium: "warning",
+  high: "danger",
+} as const;
+
 export function WorkshopMarket({
   installed,
 }: {
@@ -62,7 +78,27 @@ export function WorkshopMarket({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [allowCode, setAllowCode] = useState(false);
+  const [acceptUnsigned, setAcceptUnsigned] = useState(false);
+  const [acceptHighRisk, setAcceptHighRisk] = useState(false);
   const [installing, setInstalling] = useState(false);
+
+  const trustLabels: Record<WorkshopTrust["level"], string> = {
+    builtin: t("trustBuiltin"),
+    verified: t("trustVerified"),
+    community: t("trustCommunity"),
+  };
+  const signatureLabels: Record<WorkshopTrust["signature"], string> = {
+    valid: t("signatureValid"),
+    invalid: t("signatureInvalid"),
+    "unknown-key": t("signatureUnknownKey"),
+    missing: t("signatureMissing"),
+  };
+  const permissionLabels: Record<string, string> = {
+    network: t("permNetwork"),
+    "filesystem:readonly": t("permFilesystemReadonly"),
+    "filesystem:workspace": t("permFilesystemWorkspace"),
+    code: t("permCode"),
+  };
 
   async function search() {
     setSearching(true);
@@ -98,6 +134,8 @@ export function WorkshopMarket({
     setPreviewError(null);
     setConfirmed(false);
     setAllowCode(false);
+    setAcceptUnsigned(false);
+    setAcceptHighRisk(false);
     setPreviewing(true);
     try {
       const response = await fetch(
@@ -125,13 +163,24 @@ export function WorkshopMarket({
     setPreviewError(null);
     setConfirmed(false);
     setAllowCode(false);
+    setAcceptUnsigned(false);
+    setAcceptHighRisk(false);
   }
 
   async function install() {
     if (!preview || !confirmed) {
       return;
     }
+    if (preview.secretFindings.length > 0) {
+      return;
+    }
     if (preview.manifest.permissions.code && !allowCode) {
+      return;
+    }
+    if (preview.trust.level === "community" && !acceptUnsigned) {
+      return;
+    }
+    if (preview.permissions.highRisk.length > 0 && !acceptHighRisk) {
       return;
     }
     setInstalling(true);
@@ -144,6 +193,8 @@ export function WorkshopMarket({
           ref: preview.commit,
           confirm: true,
           allowCode,
+          acceptUnsigned,
+          acceptHighRisk,
         }),
       });
       const payload = (await response.json()) as {
@@ -181,6 +232,13 @@ export function WorkshopMarket({
         ? t("riskMediumReason")
         : t("riskLowReason");
   const codeBlocked = Boolean(preview?.manifest.permissions.code && !allowCode);
+  const secretBlocked = Boolean(preview && preview.secretFindings.length > 0);
+  const unsignedBlocked = Boolean(
+    preview && preview.trust.level === "community" && !acceptUnsigned,
+  );
+  const highRiskBlocked = Boolean(
+    preview && preview.permissions.highRisk.length > 0 && !acceptHighRisk,
+  );
 
   return (
     <div className="space-y-4">
@@ -230,6 +288,9 @@ export function WorkshopMarket({
                     </span>
                     <Badge variant="outline">v{record.version}</Badge>
                     <Badge variant="outline">{record.kind}</Badge>
+                    <Badge variant={TRUST_VARIANT[record.trust.level]}>
+                      {trustLabels[record.trust.level]}
+                    </Badge>
                     <Badge variant="warning">{t("thirdParty")}</Badge>
                   </div>
                   <p className="mt-1 font-mono text-[10px] text-zinc-500">
@@ -343,6 +404,11 @@ export function WorkshopMarket({
                     ) : (
                       <Badge variant="danger">{t("invalidManifest")}</Badge>
                     )}
+                    {candidate.trust ? (
+                      <Badge variant={TRUST_VARIANT[candidate.trust.level]}>
+                        {trustLabels[candidate.trust.level]}
+                      </Badge>
+                    ) : null}
                     {installedRepo ? (
                       <Badge variant="info">{t("installedLabel")}</Badge>
                     ) : null}
@@ -425,6 +491,12 @@ export function WorkshopMarket({
                 </span>
                 <Badge variant="outline">{preview.manifest.kind}</Badge>
                 <Badge variant="outline">v{preview.manifest.version}</Badge>
+                <Badge variant={TRUST_VARIANT[preview.trust.level]}>
+                  {trustLabels[preview.trust.level]}
+                </Badge>
+                <Badge variant="outline">
+                  {signatureLabels[preview.trust.signature]}
+                </Badge>
                 {preview.manifest.license ? (
                   <Badge variant="outline">{preview.manifest.license}</Badge>
                 ) : null}
@@ -447,30 +519,20 @@ export function WorkshopMarket({
               <div>
                 <p className="text-zinc-500">{t("permissionsTitle")}</p>
                 <div className="mt-1 flex flex-wrap gap-1.5">
-                  <Badge variant="outline">
-                    {t("network")}:{" "}
-                    {preview.manifest.permissions.network
-                      ? t("enabled")
-                      : t("disabled")}
-                  </Badge>
-                  <Badge variant="outline">
-                    {t("filesystem")}:{" "}
-                    {preview.manifest.permissions.filesystem === "none"
-                      ? t("fsNone")
-                      : preview.manifest.permissions.filesystem === "readonly"
-                        ? t("fsReadonly")
-                        : t("fsWorkspace")}
-                  </Badge>
-                  <Badge
-                    variant={
-                      preview.manifest.permissions.code ? "danger" : "outline"
-                    }
-                  >
-                    {t("code")}:{" "}
-                    {preview.manifest.permissions.code
-                      ? t("enabled")
-                      : t("disabled")}
-                  </Badge>
+                  {preview.permissions.entries.length === 0 ? (
+                    <span className="text-[10px] text-zinc-500">
+                      {t("noPermissions")}
+                    </span>
+                  ) : (
+                    preview.permissions.entries.map((entry) => (
+                      <Badge
+                        key={entry.id}
+                        variant={PERMISSION_RISK_VARIANT[entry.risk]}
+                      >
+                        {permissionLabels[entry.id] ?? entry.label}
+                      </Badge>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -488,6 +550,29 @@ export function WorkshopMarket({
                   {riskLabel}
                 </Badge>
                 <span className="text-[10px] text-zinc-500">{riskReason}</span>
+              </div>
+
+              <div>
+                <p className="text-zinc-500">{t("secretTitle")}</p>
+                {preview.secretFindings.length === 0 ? (
+                  <p className="mt-1 text-[10px] text-emerald-300/90">
+                    {t("secretClean")}
+                  </p>
+                ) : (
+                  <ul className="mt-1 space-y-1 text-[10px] text-red-300">
+                    {preview.secretFindings.map((finding) => (
+                      <li
+                        key={`${finding.file}:${finding.line}:${finding.label}`}
+                      >
+                        {t("secretBlocked", {
+                          file: finding.file,
+                          line: finding.line,
+                          label: finding.label,
+                        })}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               <details>
@@ -520,6 +605,34 @@ export function WorkshopMarket({
                 <span>{t("confirmCheckbox")}</span>
               </label>
 
+              {preview.trust.level === "community" ? (
+                <label className="flex items-start gap-2 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-[10px] text-amber-200/90">
+                  <input
+                    type="checkbox"
+                    checked={acceptUnsigned}
+                    onChange={(event) =>
+                      setAcceptUnsigned(event.target.checked)
+                    }
+                    className="mt-0.5 size-3.5 accent-amber-500"
+                  />
+                  <span>{t("confirmUnsigned")}</span>
+                </label>
+              ) : null}
+
+              {preview.permissions.highRisk.length > 0 ? (
+                <label className="flex items-start gap-2 rounded border border-red-500/25 bg-red-500/5 p-2 text-[10px] text-red-200/90">
+                  <input
+                    type="checkbox"
+                    checked={acceptHighRisk}
+                    onChange={(event) =>
+                      setAcceptHighRisk(event.target.checked)
+                    }
+                    className="mt-0.5 size-3.5 accent-red-500"
+                  />
+                  <span>{t("confirmHighRisk")}</span>
+                </label>
+              ) : null}
+
               {preview.manifest.permissions.code ? (
                 <label className="flex items-start gap-2 rounded border border-red-500/25 bg-red-500/5 p-2 text-[10px] text-red-200/90">
                   <input
@@ -545,7 +658,15 @@ export function WorkshopMarket({
             </Button>
             <Button
               onClick={install}
-              disabled={!preview || !confirmed || installing || codeBlocked}
+              disabled={
+                !preview ||
+                !confirmed ||
+                installing ||
+                codeBlocked ||
+                secretBlocked ||
+                unsignedBlocked ||
+                highRiskBlocked
+              }
             >
               {installing ? t("installing") : t("installButton")}
             </Button>

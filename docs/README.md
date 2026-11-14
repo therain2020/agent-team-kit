@@ -90,6 +90,7 @@
   evaluator change approval, snapshot verification.
 - `packs/self-improve/` — Cyber and UX squads for this repo.
 - `examples/sources/` — publish a declarative source to the market.
+- `examples/workshop/` — publish a declarative workshop item.
 
 The planning source of truth lives outside this repository at
 `D:\GitHub\plans\agent-pipeline` (not git-tracked by design).

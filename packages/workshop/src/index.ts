@@ -17,14 +17,30 @@ import {
   toolPackSchema,
   workshopManifestSchema,
 } from "@kit/core";
-import { loadPack, scanSecrets } from "@kit/pack";
+import { loadPack } from "@kit/pack";
 import { parse, stringify } from "yaml";
+import {
+  type WorkshopFileContent,
+  type WorkshopPermissionSummary,
+  type WorkshopSecretFinding,
+  scanWorkshopSecrets,
+  summarizeWorkshopPermissions,
+} from "./security";
+import {
+  type WorkshopTrust,
+  type WorkshopTrustedKey,
+  loadWorkshopTrustedKeys,
+  verifyWorkshopSignature,
+} from "./trust";
 
 export type { WorkshopManifest } from "@kit/core";
+export * from "./security";
+export * from "./trust";
 
 const USER_AGENT = "agent-team-kit/0.9";
 const WORKSHOP_TOPIC = "agent-team-workshop";
 const CACHE_MS = 60_000;
+const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_TOTAL_BYTES = 5 * 1024 * 1024;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -64,6 +80,7 @@ export interface WorkshopCandidate {
   updatedAt: string;
   manifest?: WorkshopManifest;
   manifestError?: string;
+  trust?: WorkshopTrust;
 }
 
 export interface WorkshopPreview {
@@ -71,6 +88,9 @@ export interface WorkshopPreview {
   commit: string;
   manifest: WorkshopManifest;
   entryPreview: string;
+  trust: WorkshopTrust;
+  permissions: WorkshopPermissionSummary;
+  secretFindings: WorkshopSecretFinding[];
 }
 
 export interface WorkshopInstall {
@@ -80,6 +100,8 @@ export interface WorkshopInstall {
   manifest: WorkshopManifest;
   manifestSha256: string;
   files: string[];
+  trust: WorkshopTrust;
+  permissions: WorkshopPermissionSummary;
 }
 
 export interface WorkshopInstallRecord {
@@ -96,6 +118,7 @@ export interface WorkshopInstallRecord {
   installedAt: string;
   permissions: WorkshopManifest["permissions"];
   fileCount: number;
+  trust: WorkshopTrust;
 }
 
 export interface WorkshopPublishFile {
@@ -144,6 +167,7 @@ export async function searchWorkshop(
     topic?: string;
     limit?: number;
     token?: string;
+    keys?: WorkshopTrustedKey[];
   } = {},
 ): Promise<WorkshopCandidate[]> {
   const topic = options.topic ?? WORKSHOP_TOPIC;
@@ -157,6 +181,7 @@ export async function searchWorkshop(
     return cached.candidates;
   }
 
+  const keys = options.keys ?? (await loadTrustedKeysOrEmpty());
   const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(
     query,
   )}&sort=stars&order=desc&per_page=${limit}`;
@@ -190,6 +215,7 @@ export async function searchWorkshop(
         const parsed = workshopManifestSchema.safeParse(parse(raw));
         if (parsed.success) {
           candidate.manifest = parsed.data;
+          candidate.trust = verifyWorkshopSignature(parsed.data, keys);
         } else {
           candidate.manifestError = parsed.error.issues
             .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
@@ -214,18 +240,42 @@ export async function previewWorkshop(input: {
   repo: string;
   ref?: string;
   token?: string;
+  keys?: WorkshopTrustedKey[];
 }): Promise<WorkshopPreview> {
   assertRepo(input.repo);
+  const keys = input.keys ?? (await loadWorkshopTrustedKeys());
   const commit = await resolveCommit(
     input.repo,
     input.ref ?? (await defaultBranch(input.repo, input.token)),
     input.token,
   );
-  const manifest = await fetchManifest(input.repo, commit, input.token);
+  const { manifest, raw } = await fetchManifest(
+    input.repo,
+    commit,
+    input.token,
+  );
+  const contents = await fetchWorkshopFiles(
+    input.repo,
+    commit,
+    manifest,
+    input.token,
+  );
   const entryPreview = (
-    await fetchRaw(input.repo, commit, manifest.entry, input.token)
+    contents.find((file) => file.file === manifest.entry)?.content ?? ""
   ).slice(0, 4096);
-  return { repo: input.repo, commit, manifest, entryPreview };
+
+  return {
+    repo: input.repo,
+    commit,
+    manifest,
+    entryPreview,
+    trust: verifyWorkshopSignature(manifest, keys),
+    permissions: summarizeWorkshopPermissions(manifest),
+    secretFindings: scanWorkshopSecrets([
+      { file: "workshop.yaml", content: raw },
+      ...contents,
+    ]),
+  };
 }
 
 export async function installWorkshop(input: {
@@ -235,32 +285,67 @@ export async function installWorkshop(input: {
   root?: string;
   acceptThirdParty: boolean;
   allowCode?: boolean;
+  acceptUnsigned?: boolean;
+  acceptHighRisk?: boolean;
+  keys?: WorkshopTrustedKey[];
 }): Promise<WorkshopInstall> {
   assertRepo(input.repo);
   if (!input.acceptThirdParty) {
     throw new Error("third-party workshop items require explicit confirmation");
   }
+  const keys = input.keys ?? (await loadWorkshopTrustedKeys());
   const commit = await resolveCommit(
     input.repo,
     input.ref ?? (await defaultBranch(input.repo, input.token)),
     input.token,
   );
-  const manifest = await fetchManifest(input.repo, commit, input.token);
+  const { manifest, raw } = await fetchManifest(
+    input.repo,
+    commit,
+    input.token,
+  );
   const manifestSha256 = sha256(JSON.stringify(manifest));
+  const trust = verifyWorkshopSignature(manifest, keys);
+  if (trust.level === "community" && input.acceptUnsigned !== true) {
+    throw new Error(
+      "workshop item is unsigned or its signature cannot be verified; pass acceptUnsigned to install it",
+    );
+  }
   if (manifest.permissions.code && !input.allowCode) {
     throw new Error(
       "workshop item contains code; pass allowCode to install it",
     );
   }
-  if (manifest.files.length > 200) {
-    throw new Error("workshop item has too many files");
+  const permissions = summarizeWorkshopPermissions(manifest);
+  if (permissions.highRisk.length > 0 && input.acceptHighRisk !== true) {
+    throw new Error(
+      `workshop item requests high-risk permissions (${permissions.highRisk
+        .map((entry) => entry.id)
+        .join(", ")}); pass acceptHighRisk to install it`,
+    );
   }
 
-  const target = path.join(workshopRoot(input.root), manifest.id);
-  if (
-    !target.startsWith(`${workshopRoot(input.root)}${path.sep}`) ||
-    target === workshopRoot(input.root)
-  ) {
+  const contents = await fetchWorkshopFiles(
+    input.repo,
+    commit,
+    manifest,
+    input.token,
+  );
+  const secretFindings = scanWorkshopSecrets([
+    { file: "workshop.yaml", content: raw },
+    ...contents,
+  ]);
+  if (secretFindings.length > 0) {
+    throw new Error(
+      `workshop item contains secret-like content: ${secretFindings
+        .map((finding) => `${finding.file}:${finding.line} (${finding.label})`)
+        .join("; ")}`,
+    );
+  }
+
+  const root = workshopRoot(input.root);
+  const target = path.join(root, manifest.id);
+  if (!target.startsWith(`${root}${path.sep}`) || target === root) {
     throw new Error("invalid workshop target");
   }
   await rm(target, { recursive: true, force: true });
@@ -268,23 +353,8 @@ export async function installWorkshop(input: {
 
   const files: string[] = [];
   const hashes: Record<string, string> = {};
-  let total = 0;
   try {
-    for (const file of manifest.files) {
-      const content = await fetchRaw(input.repo, commit, file, input.token);
-      const bytes = Buffer.byteLength(content, "utf8");
-      if (bytes > MAX_FILE_BYTES) {
-        throw new Error(`file exceeds 256KB: ${file}`);
-      }
-      total += bytes;
-      if (total > MAX_TOTAL_BYTES) {
-        throw new Error("workshop item exceeds 5MB");
-      }
-      const secretErrors: string[] = [];
-      scanSecrets(content, file, secretErrors);
-      if (secretErrors.length > 0) {
-        throw new Error(secretErrors.join("; "));
-      }
+    for (const { file, content } of contents) {
       const destination = path.resolve(target, file);
       if (!destination.startsWith(`${target}${path.sep}`)) {
         throw new Error(`unsafe workshop path: ${file}`);
@@ -355,9 +425,18 @@ export async function installWorkshop(input: {
           repo: input.repo,
           commit,
           manifestSha256,
+          manifest: {
+            id: manifest.id,
+            name: manifest.name,
+            version: manifest.version,
+            kind: manifest.kind,
+            description: manifest.description,
+          },
           files: hashes,
           installedAt: new Date().toISOString(),
           permissions: manifest.permissions,
+          trust,
+          secretScan: "passed",
         },
         null,
         2,
@@ -376,6 +455,8 @@ export async function installWorkshop(input: {
     manifest,
     manifestSha256,
     files,
+    trust,
+    permissions,
   };
 }
 
@@ -424,6 +505,7 @@ export async function listInstalledWorkshop(
           rawFiles && typeof rawFiles === "object" && !Array.isArray(rawFiles)
             ? Object.keys(rawFiles).length
             : 0,
+        trust: normalizeTrust(raw.trust),
       });
     } catch {
       // corrupt install records stay on disk but are skipped by the console
@@ -833,12 +915,10 @@ async function fetchManifest(
   repo: string,
   ref: string,
   token?: string,
-): Promise<WorkshopManifest> {
+): Promise<{ manifest: WorkshopManifest; raw: string }> {
   const raw = await fetchRaw(repo, ref, "workshop.yaml", token);
-  const secretErrors: string[] = [];
-  scanSecrets(raw, "workshop.yaml", secretErrors);
-  if (secretErrors.length > 0) {
-    throw new Error(secretErrors.join("; "));
+  if (Buffer.byteLength(raw, "utf8") > MAX_MANIFEST_BYTES) {
+    throw new Error("workshop.yaml exceeds 64KB");
   }
   const parsed = workshopManifestSchema.safeParse(parse(raw));
   if (!parsed.success) {
@@ -848,7 +928,84 @@ async function fetchManifest(
         .join("\n"),
     );
   }
-  return parsed.data;
+  return { manifest: parsed.data, raw };
+}
+
+async function fetchWorkshopFiles(
+  repo: string,
+  ref: string,
+  manifest: WorkshopManifest,
+  token?: string,
+): Promise<WorkshopFileContent[]> {
+  const files: WorkshopFileContent[] = [];
+  let total = 0;
+  for (const file of manifest.files) {
+    const content = await fetchRaw(repo, ref, file, token);
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (bytes > MAX_FILE_BYTES) {
+      throw new Error(`file exceeds 256KB: ${file}`);
+    }
+    total += bytes;
+    if (total > MAX_TOTAL_BYTES) {
+      throw new Error("workshop item exceeds 5MB");
+    }
+    files.push({ file, content });
+  }
+  return files;
+}
+
+function normalizeTrust(value: unknown): WorkshopTrust {
+  if (value && typeof value === "object") {
+    const { level, signature, keyId } = value as Record<string, unknown>;
+    const levels = ["builtin", "verified", "community"];
+    const statuses = ["valid", "invalid", "unknown-key", "missing"];
+    if (
+      typeof level === "string" &&
+      levels.includes(level) &&
+      typeof signature === "string" &&
+      statuses.includes(signature)
+    ) {
+      return {
+        level: level as WorkshopTrust["level"],
+        signature: signature as WorkshopTrust["signature"],
+        ...(typeof keyId === "string" ? { keyId } : {}),
+      };
+    }
+  }
+  return { level: "community", signature: "missing" };
+}
+
+function normalizeManifestSummary(
+  value: unknown,
+): InstalledWorkshop["manifest"] {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.id !== "string" ||
+    typeof record.name !== "string" ||
+    typeof record.version !== "string" ||
+    typeof record.kind !== "string"
+  ) {
+    return null;
+  }
+  return {
+    id: record.id,
+    name: record.name,
+    version: record.version,
+    kind: record.kind as WorkshopManifest["kind"],
+    description:
+      typeof record.description === "string" ? record.description : "",
+  };
+}
+
+async function loadTrustedKeysOrEmpty(): Promise<WorkshopTrustedKey[]> {
+  try {
+    return await loadWorkshopTrustedKeys();
+  } catch {
+    return [];
+  }
 }
 
 function assertRepo(repo: string): void {
