@@ -16,7 +16,25 @@ export type EngineRunStatus =
   | "terminated"
   | "timed_out"
   | "continued_as_new"
+  | "missing"
   | "unknown";
+
+/**
+ * `WorkflowNotFoundError` (or gRPC NOT_FOUND) is deterministic: the execution
+ * does not exist, so the projection is stale. Other probe failures may be
+ * transient (network, permissions) and must not rewrite the run.
+ */
+export function probeErrorStatus(error: unknown): EngineRunStatus {
+  if (error instanceof Error && error.name === "WorkflowNotFoundError") {
+    return "missing";
+  }
+  const code = (error as { cause?: { code?: number } } | undefined)?.cause
+    ?.code;
+  if (code === 5) {
+    return "missing";
+  }
+  return "unknown";
+}
 
 export interface EngineProbe {
   describe(workflowId: string): Promise<EngineRunStatus>;
@@ -55,6 +73,7 @@ export function reconcileTarget(
     case "failed":
     case "terminated":
     case "timed_out":
+    case "missing":
       return "failed";
     case "cancelled":
       return "cancelled";
