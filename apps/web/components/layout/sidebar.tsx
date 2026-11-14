@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Siren,
   Store,
+  Wallet,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
@@ -40,6 +41,7 @@ const NAV = [
   { href: "/workshop", labelKey: "workshop", icon: Store },
   { href: "/autopilot", labelKey: "autopilot", icon: ShieldCheck },
   { href: "/degradation", labelKey: "degradation", icon: ShieldAlert },
+  { href: "/budgets", labelKey: "budgets", icon: Wallet },
   { href: "/evolution", labelKey: "evolution", icon: FlaskConical },
   { href: "/traces", labelKey: "traces", icon: Activity },
   { href: "/kill-switch", labelKey: "killSwitch", icon: Power },

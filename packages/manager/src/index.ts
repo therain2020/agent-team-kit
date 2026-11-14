@@ -236,7 +236,11 @@ export interface ApprovalRequestView {
   runId: string;
   stageId: string;
   stageName: string;
-  requestType: "stage_before" | "stage_after" | "gate_failure";
+  requestType:
+    | "stage_before"
+    | "stage_after"
+    | "gate_failure"
+    | "budget_exceeded";
   draftArtifactId: string | null;
   draftVersion: number;
   summary: string;
@@ -344,7 +348,8 @@ export async function findApprovalRequest(
     stageName: String(content.stageName ?? ""),
     requestType:
       content.requestType === "stage_before" ||
-      content.requestType === "stage_after"
+      content.requestType === "stage_after" ||
+      content.requestType === "budget_exceeded"
         ? content.requestType
         : "gate_failure",
     draftArtifactId:

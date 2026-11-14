@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { newId, rubricSetSchema } from "@kit/core";
+import { type RunBudgetSpec, newId, rubricSetSchema } from "@kit/core";
 import type {
   PackRunInput,
   PackRunVariant,
@@ -19,6 +19,7 @@ export interface BuildPackRunOptions {
   runId?: string;
   workspaceId?: string;
   variant?: PackRunVariant;
+  budget?: RunBudgetSpec;
 }
 
 export interface BuiltPackRun {
@@ -212,6 +213,7 @@ export async function buildPackRun(
       stub: options.stub ?? false,
       ...(maxConcurrency ? { maxConcurrency } : {}),
       ...(options.variant ? { variant: options.variant } : {}),
+      ...(options.budget ? { budget: options.budget } : {}),
       ...(workflow.delivery ? { delivery: workflow.delivery } : {}),
     },
   };

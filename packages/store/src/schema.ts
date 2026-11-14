@@ -272,3 +272,173 @@ export const killSwitches = pgTable(
     ),
   ],
 );
+
+
+export const degradationAudit = pgTable("degradation_audit", {
+  auditId: text("audit_id").primaryKey(),
+  occurredAt: timestamp("occurred_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+  actor: text("actor").notNull(),
+  action: text("action").notNull(),
+  scope: text("scope").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  modeId: text("mode_id").notNull(),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull(),
+});
+
+export const autopilotState = pgTable(
+  "autopilot_state",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    packDir: text("pack_dir").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    lastTickAt: timestamp("last_tick_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    nextRuns: jsonb("next_runs")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    day: date("day", { mode: "string" }),
+    runsToday: integer("runs_today").notNull().default(0),
+    spentToday: numeric("spent_today").notNull().default("0"),
+    lastError: text("last_error"),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    version: integer("version").notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
+);
+
+export const budgets = pgTable(
+  "budgets",
+  {
+    budgetId: text("budget_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    scope: text("scope").notNull(),
+    targetKey: text("target_key").notNull(),
+    period: text("period"),
+    dayKey: text("day_key"),
+    monthKey: text("month_key"),
+    limitCnyMicro: bigint("limit_cny_micro", { mode: "number" }),
+    limitTokens: bigint("limit_tokens", { mode: "number" }),
+    spentCnyMicro: bigint("spent_cny_micro", { mode: "number" })
+      .notNull()
+      .default(0),
+    spentTokens: bigint("spent_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    reservedCnyMicro: bigint("reserved_cny_micro", { mode: "number" })
+      .notNull()
+      .default(0),
+    reservedTokens: bigint("reserved_tokens", { mode: "number" })
+      .notNull()
+      .default(0),
+    hard: boolean("hard").notNull().default(true),
+    alert80Cny: boolean("alert80_cny").notNull().default(false),
+    alert80Tokens: boolean("alert80_tokens").notNull().default(false),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("budgets_scope_target_idx").on(
+      table.workspaceId,
+      table.scope,
+      table.targetKey,
+    ),
+  ],
+);
+
+export const budgetReservations = pgTable("budget_reservations", {
+  reservationId: text("reservation_id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  runId: text("run_id").notNull(),
+  stageId: text("stage_id"),
+  agentId: text("agent_id"),
+  purpose: text("purpose").notNull(),
+  budgetIds: jsonb("budget_ids").$type<string[]>().notNull(),
+  amountCnyMicro: bigint("amount_cny_micro", { mode: "number" }).notNull(),
+  amountTokens: bigint("amount_tokens", { mode: "number" }).notNull(),
+  status: text("status").notNull(),
+  expiresAt: timestamp("expires_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+  createdAt: timestamp("created_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+  updatedAt: timestamp("updated_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+});
+
+export const budgetCharges = pgTable(
+  "budget_charges",
+  {
+    chargeId: text("charge_id").primaryKey(),
+    reservationId: text("reservation_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    stageId: text("stage_id"),
+    agentId: text("agent_id"),
+    purpose: text("purpose").notNull(),
+    costCnyMicro: bigint("cost_cny_micro", { mode: "number" })
+      .notNull()
+      .default(0),
+    tokens: bigint("tokens", { mode: "number" }).notNull().default(0),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("budget_charges_reservation_idx").on(table.reservationId),
+  ],
+);
+
+export const managerSessions = pgTable(
+  "manager_sessions",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    sessionId: text("session_id").notNull(),
+    windowStartedAt: timestamp("window_started_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    windowEndsAt: timestamp("window_ends_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    firstAt: timestamp("first_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    lastAt: timestamp("last_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    tokens: integer("tokens").notNull().default(0),
+    costCny: numeric("cost_cny").notNull().default("0"),
+    exchanges: integer("exchanges").notNull().default(0),
+    rejections: integer("rejections").notNull().default(0),
+    lastRejectionReason: text("last_rejection_reason"),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.workspaceId, table.sessionId] })],
+);

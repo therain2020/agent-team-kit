@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   type CoderId,
+  type RunBudgetSpec,
+  cnyToMicro,
   eventEnvelopeSchema,
   missionAssignmentSchema,
   newId,
@@ -12,9 +14,10 @@ import {
   loadPack,
   planAgents,
   rolePlanForAgents,
+  simulatePack,
   validateRolePlan,
 } from "@kit/pack";
-import type { initStore } from "@kit/store";
+import type { AdmitRunInput, initStore } from "@kit/store";
 import {
   type IterationInput,
   createTemporalClient,
@@ -298,6 +301,7 @@ async function startPackRunJob(
     mission && typeof mission.goal === "string" ? mission.goal : undefined;
   const goal = input.goal?.trim() ?? missionGoal;
 
+  const budget = resolveBudgetSpec(input);
   let built: Awaited<ReturnType<typeof buildPackRun>>;
   try {
     built = await buildPackRun(loaded, {
@@ -305,6 +309,7 @@ async function startPackRunJob(
       input: evidenceText ?? goal,
       stub: input.stub === true,
       runMode,
+      ...(budget ? { budget } : {}),
     });
   } catch (error) {
     throw new JobError(
@@ -312,6 +317,18 @@ async function startPackRunJob(
       error instanceof Error ? error.message : "failed to build run",
     );
   }
+
+  await admitRunOrThrow(store, {
+    workspaceId: built.input.workspaceId,
+    runId: built.input.runId,
+    ...(budget ? { spec: budget } : {}),
+    stages: built.input.stages.map((stage) => ({
+      stageId: stage.stageId,
+      stageName: stage.stageName,
+      ...(stage.agentId ? { agentId: stage.agentId } : {}),
+    })),
+    ...estimateWorkflowBudget(loaded, workflowId),
+  });
 
   const now = new Date().toISOString();
   const event = eventEnvelopeSchema.parse({
@@ -447,6 +464,15 @@ async function startIterationJob(
     }
   }
 
+  const budget = resolveBudgetSpec(input);
+  await admitRunOrThrow(store, {
+    workspaceId: "default",
+    runId: iterationId,
+    ...(budget ? { spec: budget } : {}),
+    estimateCnyMicro: 0,
+    estimateTokens: 0,
+  });
+
   const iterationInput: IterationInput = {
     iterationId,
     workflowId,
@@ -463,6 +489,7 @@ async function startIterationJob(
     ...(coder ? { coder } : {}),
     stub: input.stub === true,
     ...(input.budgetCny !== undefined ? { budgetCny: input.budgetCny } : {}),
+    ...(budget ? { budget } : {}),
     ...(dedupeKey ? { dedupeKey } : {}),
   };
 
@@ -727,6 +754,49 @@ function clampInt(
     return fallback;
   }
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function resolveBudgetSpec(input: StartJobInput): RunBudgetSpec | undefined {
+  if (input.budgetCny === undefined) {
+    return input.budget;
+  }
+  const base = input.budget ?? {};
+  return {
+    ...base,
+    run: { ...base.run, cny: input.budgetCny },
+  };
+}
+
+async function admitRunOrThrow(
+  store: Store,
+  input: AdmitRunInput,
+): Promise<void> {
+  const admitted = await store.budgetService.admitRun(input);
+  if (!admitted.ok) {
+    throw new JobError(
+      "budget_exceeded",
+      admitted.reason ?? "budget exceeded",
+      409,
+    );
+  }
+}
+
+function estimateWorkflowBudget(
+  loaded: Extract<Awaited<ReturnType<typeof loadPack>>, { ok: true }>,
+  workflowId: string,
+): { estimateCnyMicro: number; estimateTokens: number } {
+  const report = simulatePack(loaded);
+  const workflow = report.workflows.find((item) => item.id === workflowId);
+  let cny = 0;
+  let tokens = 0;
+  for (const stage of workflow?.stages ?? []) {
+    cny += stage.estimatedCostCny;
+    tokens += stage.estimatedInputTokens + stage.estimatedOutputTokens;
+  }
+  return {
+    estimateCnyMicro: cnyToMicro(cny),
+    estimateTokens: tokens,
+  };
 }
 
 function hash(value: string): string {

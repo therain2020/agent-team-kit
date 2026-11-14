@@ -1,4 +1,4 @@
-import type { CoderId } from "@kit/core";
+import type { CoderId, RunBudgetSpec } from "@kit/core";
 
 export type JobKind = "packRun" | "iteration";
 export type JobOrigin = "cli" | "web" | "api" | "autopilot" | "event";
@@ -29,6 +29,7 @@ export interface StartJobInput {
   coder?: CoderId;
   stub?: boolean;
   budgetCny?: number;
+  budget?: RunBudgetSpec;
   dedupeKey?: string;
   origin?: JobOrigin;
   evidenceText?: string;

@@ -35,6 +35,10 @@
 - `scripts/recovery-drill.ps1`: `plan` (preflight), `kill-worker` (supervisor
   restart RTO) and `rollback -Force` (injected failure → kitd rollback) drills
   with evidence in `%USERPROFILE%\.agent-team-kit\audit`.
+- Budget ledger and four-level hard caps: workspace/month/day/run/stage/agent
+  budgets in integer micro-CNY plus tokens, per-model-call reserve/commit,
+  pre-run estimates, 80% alerts, and `budget_exceeded` approvals that pause a
+  run until an operator raises the cap. Adds the `/budgets` console and API.
 
 ## 0.9.0 — 2026-11-14
 

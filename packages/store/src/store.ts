@@ -1,5 +1,6 @@
 import { ArtifactService } from "./artifact-service";
 import { type BlobClient, FsBlobClient, S3BlobClient } from "./blob";
+import { BudgetService } from "./budget-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
 import { createDb } from "./db";
 import { ensureSchema } from "./migrate";
@@ -80,6 +81,10 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     ...repositories,
     blobClient,
     artifactService: new ArtifactService(blobs, artifactStore, blobClient),
+    budgetService: new BudgetService({
+      sql: handle.sql,
+      driver: handle.driver,
+    }),
   };
 }
 
