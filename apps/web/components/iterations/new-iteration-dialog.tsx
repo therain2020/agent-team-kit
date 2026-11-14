@@ -394,7 +394,7 @@ export function NewIterationDialog({
                 <span className="block text-[10px] text-zinc-500">
                   {liveAllowed
                     ? "允许按自动落地策略提交改动；高风险仍会进入待审批。"
-                    : "服务端未开启 LIVE（需要 KIT_UI_ALLOW_LIVE=1）。"}
+                    : "服务端未开启 LIVE（运行 kit autonomy enable 或设置 KIT_UI_ALLOW_LIVE=1）。"}
                 </span>
               </span>
             </label>

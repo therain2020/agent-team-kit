@@ -1,3 +1,4 @@
+export * from "./autonomy";
 export * from "./gate";
 export * from "./models";
 export * from "./repo";

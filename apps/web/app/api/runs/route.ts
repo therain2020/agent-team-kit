@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   const runMode =
     body.mode === "LIVE" || body.mode === "DRY_RUN" ? body.mode : "DRY_RUN";
-  const gate = liveGateError(body.mode);
+  const gate = await liveGateError(body.mode);
   if (gate) {
     return NextResponse.json({ error: gate }, { status: 403 });
   }

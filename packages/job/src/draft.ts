@@ -83,7 +83,7 @@ export async function draftJob(input: DraftJobInput): Promise<DraftJobResult> {
   }
   if (env.KIT_UI_ALLOW_LIVE !== "1") {
     warnings.push(
-      "LIVE 未开启：只能以 DRY_RUN 运行（KIT_UI_ALLOW_LIVE=1 可开启）。",
+      "LIVE 未开启：只能以 DRY_RUN 运行（可用 kit autonomy enable 或 KIT_UI_ALLOW_LIVE=1 开启）。",
     );
   }
 
