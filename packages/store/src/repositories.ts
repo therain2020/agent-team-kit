@@ -8,6 +8,7 @@
   DegradedModeStatus,
   EventEnvelope,
   ExitCriteria,
+  KillSwitch,
   Manifest,
   QualityFloor,
   Run,
@@ -26,6 +27,7 @@ import {
   blobs,
   degradationAudit,
   degradationState,
+  killSwitches,
   manifests,
   runRequests,
   runs,
@@ -118,6 +120,24 @@ export interface RunRequestRecord {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface KillSwitchActivation {
+  record: KillSwitch;
+  changed: boolean;
+}
+
+export interface KillSwitchStore {
+  activate(record: KillSwitch): Promise<KillSwitchActivation>;
+  release(
+    switchId: string,
+    releasedBy: string,
+    releaseReason: string,
+    releasedAt: string,
+  ): Promise<KillSwitchActivation | null>;
+  get(switchId: string): Promise<KillSwitch | null>;
+  listActive(): Promise<KillSwitch[]>;
+  list(limit?: number): Promise<KillSwitch[]>;
 }
 
 export interface RunRequestStore {
@@ -1006,5 +1026,192 @@ export class PostgresDegradationStore implements DegradationStore {
       .orderBy(desc(degradationAudit.occurredAt))
       .limit(limit);
     return rows.map(fromDegradationAuditRow);
+  }
+}
+
+interface KillSwitchRowLike {
+  switchId: string;
+  scope: string;
+  target: string;
+  workspaceId: string;
+  state: string;
+  activatedBy: string;
+  reason: string;
+  activatedAt: string;
+  releasedBy: string | null;
+  releasedAt: string | null;
+  releaseReason: string | null;
+  version: number;
+  updatedAt: string;
+}
+
+export function toKillSwitchRow(record: KillSwitch) {
+  return {
+    switchId: record.switchId,
+    scope: record.scope,
+    target: record.target,
+    workspaceId: record.workspaceId ?? "",
+    state: record.state,
+    activatedBy: record.activatedBy,
+    reason: record.reason,
+    activatedAt: record.activatedAt,
+    releasedBy: record.releasedBy,
+    releasedAt: record.releasedAt,
+    releaseReason: record.releaseReason,
+    version: record.version,
+    updatedAt: record.updatedAt,
+  };
+}
+
+export function fromKillSwitchRow(row: KillSwitchRowLike): KillSwitch {
+  return {
+    switchId: row.switchId,
+    scope: row.scope as KillSwitch["scope"],
+    target: row.target,
+    workspaceId: row.workspaceId.length > 0 ? row.workspaceId : null,
+    state: row.state as KillSwitch["state"],
+    activatedBy: row.activatedBy,
+    reason: row.reason,
+    activatedAt: row.activatedAt,
+    releasedBy: row.releasedBy ?? null,
+    releasedAt: row.releasedAt ?? null,
+    releaseReason: row.releaseReason ?? null,
+    version: Number(row.version),
+    updatedAt: row.updatedAt,
+  };
+}
+
+export class PostgresKillSwitchStore implements KillSwitchStore {
+  constructor(private readonly db: Database) {}
+
+  private identity(
+    record: Pick<KillSwitch, "scope" | "target" | "workspaceId">,
+  ) {
+    return and(
+      eq(killSwitches.scope, record.scope),
+      eq(killSwitches.target, record.target),
+      eq(killSwitches.workspaceId, record.workspaceId ?? ""),
+    );
+  }
+
+  async activate(record: KillSwitch): Promise<KillSwitchActivation> {
+    const [existing] = await this.db
+      .select()
+      .from(killSwitches)
+      .where(this.identity(record))
+      .limit(1);
+
+    if (existing) {
+      if (existing.state === "active") {
+        return { record: fromKillSwitchRow(existing), changed: false };
+      }
+      const [updated] = await this.db
+        .update(killSwitches)
+        .set({
+          state: "active",
+          activatedBy: record.activatedBy,
+          reason: record.reason,
+          activatedAt: record.activatedAt,
+          releasedBy: null,
+          releasedAt: null,
+          releaseReason: null,
+          updatedAt: record.updatedAt,
+          version: sql`${killSwitches.version} + 1`,
+        })
+        .where(
+          and(
+            eq(killSwitches.switchId, existing.switchId),
+            eq(killSwitches.state, "released"),
+          ),
+        )
+        .returning();
+      if (updated) {
+        return { record: fromKillSwitchRow(updated), changed: true };
+      }
+      const [current] = await this.db
+        .select()
+        .from(killSwitches)
+        .where(eq(killSwitches.switchId, existing.switchId))
+        .limit(1);
+      return {
+        record: fromKillSwitchRow(current ?? existing),
+        changed: false,
+      };
+    }
+
+    const [inserted] = await this.db
+      .insert(killSwitches)
+      .values(toKillSwitchRow(record))
+      .onConflictDoNothing()
+      .returning();
+    if (inserted) {
+      return { record: fromKillSwitchRow(inserted), changed: true };
+    }
+    const [raced] = await this.db
+      .select()
+      .from(killSwitches)
+      .where(this.identity(record))
+      .limit(1);
+    if (!raced) {
+      throw new Error("failed to activate kill switch");
+    }
+    return { record: fromKillSwitchRow(raced), changed: false };
+  }
+
+  async release(
+    switchId: string,
+    releasedBy: string,
+    releaseReason: string,
+    releasedAt: string,
+  ): Promise<KillSwitchActivation | null> {
+    const [updated] = await this.db
+      .update(killSwitches)
+      .set({
+        state: "released",
+        releasedBy,
+        releaseReason,
+        releasedAt,
+        updatedAt: releasedAt,
+        version: sql`${killSwitches.version} + 1`,
+      })
+      .where(
+        and(
+          eq(killSwitches.switchId, switchId),
+          eq(killSwitches.state, "active"),
+        ),
+      )
+      .returning();
+    if (updated) {
+      return { record: fromKillSwitchRow(updated), changed: true };
+    }
+    const existing = await this.get(switchId);
+    return existing ? { record: existing, changed: false } : null;
+  }
+
+  async get(switchId: string): Promise<KillSwitch | null> {
+    const [row] = await this.db
+      .select()
+      .from(killSwitches)
+      .where(eq(killSwitches.switchId, switchId))
+      .limit(1);
+    return row ? fromKillSwitchRow(row) : null;
+  }
+
+  async listActive(): Promise<KillSwitch[]> {
+    const rows = await this.db
+      .select()
+      .from(killSwitches)
+      .where(eq(killSwitches.state, "active"))
+      .orderBy(asc(killSwitches.scope), desc(killSwitches.activatedAt));
+    return rows.map(fromKillSwitchRow);
+  }
+
+  async list(limit = 50): Promise<KillSwitch[]> {
+    const rows = await this.db
+      .select()
+      .from(killSwitches)
+      .orderBy(desc(killSwitches.updatedAt))
+      .limit(Math.max(1, Math.min(limit, 200)));
+    return rows.map(fromKillSwitchRow);
   }
 }

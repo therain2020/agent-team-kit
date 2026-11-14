@@ -1,3 +1,4 @@
+import { isKillSwitchTrippedError } from "@kit/core";
 import type {
   PackRunInput,
   PackRunResult,
@@ -303,10 +304,17 @@ export async function runPackPipeline(
 
     return { runId: input.runId, artifactIds };
   } catch (error) {
-    await activity.failPackRun({
-      runId: input.runId,
-      reason: error instanceof Error ? error.message : String(error),
-    });
+    if (isKillSwitchTrippedError(error)) {
+      await activity.setPackRunStatus({
+        runId: input.runId,
+        status: "paused",
+      });
+    } else {
+      await activity.failPackRun({
+        runId: input.runId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
     throw error;
   }
 }

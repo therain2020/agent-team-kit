@@ -1,4 +1,5 @@
 import { DegradationBanner } from "@/components/layout/degradation-banner";
+import { KillSwitchBanner } from "@/components/layout/kill-switch-banner";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { loadActiveModes } from "@/lib/degradation";
@@ -42,6 +43,7 @@ export default async function ConsoleLayout({
       <Sidebar pausedCount={pausedCount} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
+        <KillSwitchBanner />
         <DegradationBanner
           initialModes={activeModes.map((mode) => ({
             modeId: mode.modeId,

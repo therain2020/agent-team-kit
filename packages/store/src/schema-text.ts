@@ -107,6 +107,27 @@ ALTER TABLE autopilot_state
 
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS repo_root TEXT;
 
+CREATE TABLE IF NOT EXISTS kill_switches (
+  switch_id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '',
+  workspace_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  activated_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  activated_at TIMESTAMPTZ NOT NULL,
+  released_by TEXT,
+  released_at TIMESTAMPTZ,
+  release_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kill_switches_identity
+  ON kill_switches(scope, target, workspace_id);
+CREATE INDEX IF NOT EXISTS idx_kill_switches_state
+  ON kill_switches(state, scope, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS evolution_variants (
   variant_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -468,6 +489,27 @@ CREATE TABLE IF NOT EXISTS run_requests (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS kill_switches (
+  switch_id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '',
+  workspace_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  activated_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  activated_at TEXT NOT NULL,
+  released_by TEXT,
+  released_at TEXT,
+  release_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kill_switches_identity
+  ON kill_switches(scope, target, workspace_id);
+CREATE INDEX IF NOT EXISTS idx_kill_switches_state
+  ON kill_switches(state, scope, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS evolution_variants (
   variant_id TEXT PRIMARY KEY,

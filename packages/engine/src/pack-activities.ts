@@ -26,6 +26,7 @@ import type {
 } from "@kit/workflow";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { heartbeat } from "./heartbeat";
+import { assertKillSwitchClear } from "./kill-switch";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -62,6 +63,7 @@ export async function preparePackRun(
   input: PreparePackRunInput,
 ): Promise<void> {
   const store = await getStore();
+  await assertKillSwitchClear(store, { workspaceId: input.workspaceId }, "run");
   const now = new Date().toISOString();
 
   await store.runs.create({
@@ -135,6 +137,16 @@ async function executePackStageInner(
   input: PackStageExecutionInput,
 ): Promise<PackStageExecutionResult> {
   const store = await getStore();
+  await assertKillSwitchClear(
+    store,
+    {
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      stageId: input.stageId,
+      stageName: input.stageName,
+    },
+    "stage",
+  );
 
   const existing = await store.artifactStore.findCommittedByRunStage(
     input.runId,
@@ -229,6 +241,16 @@ async function executePackStageInner(
       costAmount = result.costCny;
       tokens = result.tokens;
     } else {
+      await assertKillSwitchClear(
+        store,
+        {
+          workspaceId: input.workspaceId,
+          agentId: input.agentId,
+          stageId: input.stageId,
+          stageName: input.stageName,
+        },
+        "model",
+      );
       const gateway = input.stub
         ? new StubModelGateway()
         : createModelGateway();
@@ -258,6 +280,16 @@ async function executePackStageInner(
     }
     modelId = modelAlias;
   } else if (input.type === "coder") {
+    await assertKillSwitchClear(
+      store,
+      {
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+        stageId: input.stageId,
+        stageName: input.stageName,
+      },
+      "tool",
+    );
     const heartbeatTimer = setInterval(() => {
       heartbeat();
     }, 30_000);
@@ -384,6 +416,11 @@ export async function deliverPackRun(input: {
   runMode: "DRY_RUN" | "LIVE";
 }): Promise<void> {
   const store = await getStore();
+  await assertKillSwitchClear(
+    store,
+    { workspaceId: input.workspaceId },
+    "delivery",
+  );
   let result: Awaited<ReturnType<typeof deliverArtifact>>;
 
   try {
@@ -714,6 +751,16 @@ async function runAgentWithTools(input: {
 
   for (let step = 0; step < maxSteps; step += 1) {
     heartbeat();
+    await assertKillSwitchClear(
+      input.store,
+      {
+        workspaceId: input.input.workspaceId,
+        agentId: input.input.agentId,
+        stageId: input.input.stageId,
+        stageName: input.input.stageName,
+      },
+      "model",
+    );
     const response = await gateway.completeWithTools({
       model: input.modelAlias,
       messages,
@@ -766,6 +813,16 @@ async function runAgentWithTools(input: {
       const started = Date.now();
       let content = "";
       let isError = false;
+      await assertKillSwitchClear(
+        input.store,
+        {
+          workspaceId: input.input.workspaceId,
+          agentId: input.input.agentId,
+          stageId: input.input.stageId,
+          stageName: input.input.stageName,
+        },
+        "tool",
+      );
       await safeActivity(input.store, {
         workspaceId: input.input.workspaceId,
         runId: input.input.runId,
@@ -828,6 +885,16 @@ async function runAgentWithTools(input: {
     content:
       "Tool budget reached. Do not call more tools. Give the final summary with findings, files changed, commands run, risks, and next action.",
   });
+  await assertKillSwitchClear(
+    input.store,
+    {
+      workspaceId: input.input.workspaceId,
+      agentId: input.input.agentId,
+      stageId: input.input.stageId,
+      stageName: input.input.stageName,
+    },
+    "model",
+  );
   const final = await gateway.completeWithTools({
     model: input.modelAlias,
     messages,
@@ -1409,6 +1476,16 @@ async function evaluateGate(
   let tokens = 0;
 
   if (!input.stub) {
+    await assertKillSwitchClear(
+      store,
+      {
+        workspaceId: input.workspaceId,
+        agentId: input.agentId,
+        stageId: input.stageId,
+        stageName: input.stageName,
+      },
+      "model",
+    );
     judgeModel = "deepseek-pro";
     const gateway = createModelGateway();
     const dimensions = Object.entries(input.gate.dimensions)
@@ -1505,6 +1582,16 @@ async function reviseDraft(
     throw new Error("revision spec missing");
   }
 
+  await assertKillSwitchClear(
+    store,
+    {
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      stageId: input.stageId,
+      stageName: input.stageName,
+    },
+    "model",
+  );
   const gateway = input.stub ? new StubModelGateway() : createModelGateway();
   const response = await gateway.complete({
     model: input.revision.modelAlias,

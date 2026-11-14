@@ -15,6 +15,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 type Cost = { currency: "CNY"; amount: number; tokens: number };
@@ -201,4 +202,39 @@ export const autopilotState = pgTable(
     version: integer("version").notNull().default(0),
   },
   (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
+);
+
+export const killSwitches = pgTable(
+  "kill_switches",
+  {
+    switchId: text("switch_id").primaryKey(),
+    scope: text("scope").notNull(),
+    target: text("target").notNull().default(""),
+    workspaceId: text("workspace_id").notNull().default(""),
+    state: text("state").notNull(),
+    activatedBy: text("activated_by").notNull(),
+    reason: text("reason").notNull(),
+    activatedAt: timestamp("activated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    releasedBy: text("released_by"),
+    releasedAt: timestamp("released_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    releaseReason: text("release_reason"),
+    version: integer("version").notNull().default(1),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_kill_switches_identity").on(
+      table.scope,
+      table.target,
+      table.workspaceId,
+    ),
+  ],
 );

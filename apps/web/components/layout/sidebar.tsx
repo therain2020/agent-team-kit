@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Package,
   Play,
+  Power,
   ScrollText,
   ShieldAlert,
   ShieldCheck,
@@ -37,6 +38,7 @@ const NAV = [
   { href: "/degradation", labelKey: "degradation", icon: ShieldAlert },
   { href: "/evolution", labelKey: "evolution", icon: FlaskConical },
   { href: "/traces", labelKey: "traces", icon: Activity },
+  { href: "/kill-switch", labelKey: "killSwitch", icon: Power },
 ];
 
 export function Sidebar({ pausedCount = 0 }: { pausedCount?: number }) {

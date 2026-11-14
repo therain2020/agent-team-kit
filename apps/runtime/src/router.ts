@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import type { EventEnvelope } from "@kit/core";
-import { isExecutionBlocked } from "@kit/core";
+import {
+  type EventEnvelope,
+  isExecutionBlocked,
+  resolveKillSwitch,
+} from "@kit/core";
 import { activeModeForWorkspace, auditBlockedExecution } from "@kit/engine";
 import { type LoadedPack, buildPackRun, loadPack } from "@kit/pack";
 import type { initStore } from "@kit/store";
@@ -39,6 +42,10 @@ export class EventRouter {
         eventType: event.type,
       });
     }
+    const blockingSwitch = resolveKillSwitch(
+      await this.store.killSwitches.listActive(),
+      { workspaceId: event.workspaceId },
+    );
 
     for (const pack of packs) {
       for (const workflow of pack.workflows) {
@@ -47,6 +54,16 @@ export class EventRouter {
         }
 
         const packName = pack.pack.metadata.name;
+        if (blockingSwitch) {
+          result.skipped.push({
+            pack: packName,
+            workflow: workflow.id,
+            reason: `kill switch ${blockingSwitch.scope}/${
+              blockingSwitch.target || "*"
+            }`,
+          });
+          continue;
+        }
         if (readOnly) {
           result.skipped.push({
             pack: packName,

@@ -85,6 +85,7 @@
         "@kit/activity": "workspace:*",
         "@kit/autopilot": "workspace:*",
         "@kit/core": "workspace:*",
+        "@kit/engine": "workspace:*",
         "@kit/evolution": "workspace:*",
         "@kit/job": "workspace:*",
         "@kit/manager": "workspace:*",

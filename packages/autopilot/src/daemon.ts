@@ -7,6 +7,7 @@ import {
   type AutopilotSchedule,
   eventEnvelopeSchema,
   newId,
+  resolveKillSwitch,
 } from "@kit/core";
 import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
 import {
@@ -36,6 +37,7 @@ export interface TickResult {
   autoApproved: string[];
   aborted: string[];
   errors: string[];
+  blocked?: { scope: string; target: string; reason: string };
 }
 
 interface PackContext {
@@ -83,6 +85,18 @@ export async function runAutopilotTick(
   let temporal: Awaited<ReturnType<typeof createTemporalClient>> | undefined;
 
   try {
+    const hit = resolveKillSwitch(await store.killSwitches.listActive(), {
+      workspaceId: WORKSPACE_ID,
+    });
+    if (hit) {
+      result.blocked = {
+        scope: hit.scope,
+        target: hit.target,
+        reason: hit.reason,
+      };
+      return result;
+    }
+
     const acquired = await withStoreLock(
       store,
       `kit:autopilot:${WORKSPACE_ID}`,

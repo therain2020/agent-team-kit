@@ -10,6 +10,7 @@ import {
   real,
   sqliteTable,
   text,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 type Cost = { currency: "CNY"; amount: number; tokens: number };
@@ -160,4 +161,30 @@ export const autopilotState = sqliteTable(
     version: integer("version").notNull().default(0),
   },
   (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
+);
+
+export const killSwitches = sqliteTable(
+  "kill_switches",
+  {
+    switchId: text("switch_id").primaryKey(),
+    scope: text("scope").notNull(),
+    target: text("target").notNull().default(""),
+    workspaceId: text("workspace_id").notNull().default(""),
+    state: text("state").notNull(),
+    activatedBy: text("activated_by").notNull(),
+    reason: text("reason").notNull(),
+    activatedAt: text("activated_at").notNull(),
+    releasedBy: text("released_by"),
+    releasedAt: text("released_at"),
+    releaseReason: text("release_reason"),
+    version: integer("version").notNull().default(1),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_kill_switches_identity").on(
+      table.scope,
+      table.target,
+      table.workspaceId,
+    ),
+  ],
 );
