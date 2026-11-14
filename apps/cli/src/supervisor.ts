@@ -1,7 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import {
   closeSync,
-  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -9,7 +8,6 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { FileLockTimeoutError, acquireFileLock } from "@kit/core";
-import { resolveWebMode, webRunArgs } from "./web-mode";
 
 interface ChildSpec {
   name: string;
@@ -56,11 +54,9 @@ try {
   throw error;
 }
 const withWeb = process.env.KIT_SUPERVISOR_WEB === "1";
-const webMode = resolveWebMode(process.env.KIT_WEB_MODE);
 const children = new Map<string, ChildRecord>();
 const processes = new Map<string, ChildProcess>();
 const backoff = new Map<string, number>();
-let webBuildProcess: ChildProcess | undefined;
 let stopping = false;
 
 const bun = process.versions.bun ? process.execPath : "bun";
@@ -95,26 +91,18 @@ const specs: ChildSpec[] = [
   },
 ];
 
-const webSpec: ChildSpec | null = withWeb
-  ? {
-      name: "web",
-      command: bun,
-      args: webRunArgs(webMode),
-      health: "http://localhost:3000/api/health",
-    }
-  : null;
-if (webSpec) {
-  specs.push(webSpec);
+if (withWeb) {
+  specs.push({
+    name: "web",
+    command: bun,
+    args: ["run", "--cwd", "apps/web", "dev"],
+    health: "http://localhost:3000/api/health",
+  });
 }
 
-console.log(
-  `[supervisor] started pid=${process.pid} repo=${repoRoot} web=${withWeb ? webMode : "off"}`,
-);
+console.log(`[supervisor] started pid=${process.pid} repo=${repoRoot}`);
 writeState();
 for (const spec of specs) {
-  if (spec.name === "web") {
-    continue;
-  }
   startChild(spec);
 }
 
@@ -127,10 +115,6 @@ const stateTimer = setInterval(() => {
 
 process.once("SIGINT", () => shutdown());
 process.once("SIGTERM", () => shutdown());
-
-if (webSpec) {
-  void startWeb(webSpec);
-}
 
 async function checkHealth(): Promise<void> {
   for (const spec of specs) {
@@ -166,68 +150,6 @@ async function fetchHealth(url: string): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
-  }
-}
-
-async function startWeb(spec: ChildSpec): Promise<void> {
-  if (webMode === "production" && !(await ensureWebBuild())) {
-    console.error(
-      "[supervisor] web not started: production build failed; see .tmp/supervisor/web-build.log",
-    );
-    return;
-  }
-  if (!stopping) {
-    startChild(spec);
-  }
-}
-
-async function ensureWebBuild(): Promise<boolean> {
-  const distDir = path.join(
-    repoRoot,
-    "apps",
-    "web",
-    process.env.KIT_WEB_DIST_DIR ?? ".next",
-  );
-  const buildIdPath = path.join(distDir, "BUILD_ID");
-  if (existsSync(buildIdPath)) {
-    return true;
-  }
-
-  console.log("[supervisor] building Manager Console for production...");
-  const logPath = path.join(stateDir, "web-build.log");
-  const fd = openSync(logPath, "a");
-  try {
-    const child = spawn(bun, ["run", "web:build"], {
-      cwd: repoRoot,
-      env: { ...process.env, KIT_WEB_MODE: "production" },
-      stdio: ["ignore", fd, fd],
-      windowsHide: true,
-    });
-    webBuildProcess = child;
-    const code = await new Promise<number | null>((resolve) => {
-      child.once("error", (error) => {
-        console.error(`[supervisor] web build error: ${error.message}`);
-        resolve(null);
-      });
-      child.once("exit", (exitCode) => resolve(exitCode));
-    });
-    webBuildProcess = undefined;
-    if (code !== 0) {
-      console.error(`[supervisor] web build failed; see ${logPath}`);
-      return false;
-    }
-    if (!existsSync(buildIdPath)) {
-      console.error(`[supervisor] web build produced no ${buildIdPath}`);
-      return false;
-    }
-    console.log("[supervisor] Manager Console build ready");
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[supervisor] web build error: ${message}`);
-    return false;
-  } finally {
-    closeSync(fd);
   }
 }
 
@@ -343,7 +265,6 @@ function writeState(): void {
     startedAt,
     repoRoot,
     web: withWeb,
-    webMode: withWeb ? webMode : null,
     children: [...children.values()],
     updatedAt: new Date().toISOString(),
   };
@@ -360,9 +281,6 @@ function shutdown(): void {
   clearInterval(stateTimer);
   for (const child of processes.values()) {
     killChild(child);
-  }
-  if (webBuildProcess) {
-    killChild(webBuildProcess);
   }
   writeState();
   supervisorLock?.release();
