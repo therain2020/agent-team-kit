@@ -1,3 +1,4 @@
+import path from "node:path";
 import { eventEnvelopeSchema, newId } from "@kit/core";
 import { buildPackRun, loadPack, simulatePack } from "@kit/pack";
 import { initStore } from "@kit/store";
@@ -15,9 +16,16 @@ export function registerPack(program: Command): void {
       const result = await loadPack(dir);
 
       if (!result.ok) {
-        console.error("✖ validate failed");
+        console.error(`✖ validate failed: ${path.resolve(dir)}`);
         for (const error of result.errors) {
           console.error(`  - ${error}`);
+        }
+        if (
+          result.errors.some((error) => error.includes("team.yaml not found"))
+        ) {
+          console.error(
+            "  use the directory that contains team.yaml (try `kit init <dir>` first)",
+          );
         }
         process.exitCode = 1;
         return;
@@ -42,9 +50,16 @@ export function registerPack(program: Command): void {
       const result = await loadPack(dir);
 
       if (!result.ok) {
-        console.error("✖ simulate failed");
+        console.error(`✖ simulate failed: ${path.resolve(dir)}`);
         for (const error of result.errors) {
           console.error(`  - ${error}`);
+        }
+        if (
+          result.errors.some((error) => error.includes("team.yaml not found"))
+        ) {
+          console.error(
+            "  use the directory that contains team.yaml (try `kit init <dir>` first)",
+          );
         }
         process.exitCode = 1;
         return;

@@ -1,5 +1,11 @@
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { listTemplates, loadTemplate } from "../src/templates";
+import {
+  getTemplatesRoot,
+  listTemplates,
+  loadTemplate,
+} from "../src/templates";
 
 describe("template registry", () => {
   it("lists the built-in templates from data", async () => {
@@ -34,5 +40,26 @@ describe("template registry", () => {
   it("rejects unknown or escaping template ids", async () => {
     await expect(loadTemplate("missing")).rejects.toThrow();
     await expect(loadTemplate("../research")).rejects.toThrow();
+  });
+
+  it("honours KIT_TEMPLATES_ROOT", () => {
+    const previous = process.env.KIT_TEMPLATES_ROOT;
+    const configured = path.join(os.tmpdir(), "kit-templates-root");
+    process.env.KIT_TEMPLATES_ROOT = configured;
+    try {
+      expect(getTemplatesRoot()).toBe(path.resolve(configured));
+    } finally {
+      if (previous === undefined) {
+        Reflect.deleteProperty(process.env, "KIT_TEMPLATES_ROOT");
+      } else {
+        process.env.KIT_TEMPLATES_ROOT = previous;
+      }
+    }
+  });
+
+  it("resolves templates relative to the package, not the cwd", () => {
+    expect(getTemplatesRoot()).toBe(
+      path.resolve(import.meta.dirname, "../../../templates"),
+    );
   });
 });

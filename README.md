@@ -1,6 +1,24 @@
 # Agent Team Kit
 
-A distributable, self-hosted kit for building private agent teams.
+**Own a private team of AI agents — with approvals, audit and rollback.**
+
+![license](https://img.shields.io/badge/license-Apache--2.0-blue)
+![status](https://img.shields.io/badge/status-0.9.0_preview-orange)
+![runtime](https://img.shields.io/badge/runtime-Bun%201.4%2B-black)
+
+Self-hosted, file-based agent teams you can run, inspect, approve and improve.
+Not another agent library: a runtime plus a governance layer for teams that do
+real work.
+
+- **Teams are files** — a Team Pack is YAML and Markdown; diff it, review it, roll it back.
+- **Glass box by default** — every artifact carries provenance, gates and cost.
+- **Your data stays yours** — local-first, no telemetry, explicit approval for external effects.
+
+**Start here**
+- First hour: `bun run kit demo` (no Docker) · zero-config: `kit bootstrap` → `/welcome`
+- Create a team: `kit init my-team --template research` · [docs/pack-authoring.md](./docs/pack-authoring.md)
+- Docs: [docs/install.md](./docs/install.md) · Community: [CONTRIBUTING.md](./CONTRIBUTING.md) · [SUPPORT.md](./SUPPORT.md) · [ROADMAP.md](./ROADMAP.md)
+- 中文说明: [README.zh-CN.md](./README.zh-CN.md)
 
 The kit provides:
 - **Runtime Core** — events, orchestration, durable execution, artifact store, model/tool gateway.
@@ -28,25 +46,34 @@ and applies low-risk changes.
 **1.0 is not claimed yet.** 1.0 means the system runs without the operator and
 optimizes itself: a goal and budget go in, tasks are planned and executed,
 low-risk changes land automatically, and the operator only handles high-risk
-approval and release confirmation. The acceptance gate and current gaps are
-documented in `D:\GitHub\plans\agent-pipeline\85-autonomy-1.0.md`.
+approval and release confirmation. The acceptance gate is public in
+[ROADMAP.md](./ROADMAP.md).
 
 ## Requirements
 
 - Bun 1.4+
-- Docker Desktop (for the local stack)
+- Node 24 (the Temporal worker runs on Node/tsx)
+- Docker Desktop (for the local stack; `kit demo` runs without it)
 - Windows / macOS / Linux
 - Optional: DSH, Codex or OpenCode CLI for external coder tasks
+
+Run `bun run kit doctor` to check all of the above.
 
 ## Quick start
 
 ```bash
 bun install
-bun run kit up              # infra + runtime + worker + autopilot + gateway
+bun run kit doctor          # Bun, Node, Docker, ports and model key
+bun run kit demo            # demo team + static plan (no Docker required)
+bun run kit init packs/my-team --template research
+bun run kit up --web        # infra + runtime + worker + autopilot + gateway + console
 bun run kit up status       # supervisor, children and gateway health
-bun run web:dev             # optional Manager Console → http://localhost:3000
+bun run web:dev             # console only → http://localhost:3000
 bun run kit down            # stop the supervisor (and compose unless --keep-infra)
 ```
+
+For the zero-config path, run `kit bootstrap` (or open `/welcome` after
+`kit up --web`) and paste a model API key.
 
 `kit up` starts a detached supervisor with restart-on-exit, health checks and
 logs under `.tmp/supervisor/`. It starts Postgres, MinIO, NATS, Temporal,
@@ -565,6 +592,16 @@ bun run typecheck
 bun run test
 bun run lint
 ```
+
+## Community
+
+- **Contribute:** [CONTRIBUTING.md](./CONTRIBUTING.md) — teams, docs, translations and code.
+- **Questions:** [SUPPORT.md](./SUPPORT.md) and GitHub Discussions.
+- **Security:** [SECURITY.md](./SECURITY.md) — private reports only.
+- **Roadmap:** [ROADMAP.md](./ROADMAP.md).
+- **Share a team:** publish a pack in your own repository and open a "Team pack submission"
+  issue, or tag it with the `agent-team-workshop` topic so `kit workshop search` finds it.
+- **中文说明:** [README.zh-CN.md](./README.zh-CN.md).
 
 ## License
 

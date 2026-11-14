@@ -272,7 +272,7 @@ export async function createPack(
   }
   await writeFile(
     path.join(dir, "README.md"),
-    `# ${input.name}\n\n${input.description || `${input.name} agent team`}\n\nTeam Pack for Agent Team Kit. Start with \`bun run kit pack validate packs/${input.dirName}\`.\n`,
+    `# ${input.name}\n\n${input.description || `${input.name} agent team`}\n\nTeam Pack for Agent Team Kit.\n\nNext steps (run from this directory):\n\n\`\`\`bash\nkit pack validate .\nkit pack simulate .\n\`\`\`\n\nOpen the Manager Console, pick this team under /packs, and run it.\n`,
     "utf8",
   );
 

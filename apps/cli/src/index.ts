@@ -2,7 +2,9 @@
 import { Command } from "commander";
 import { registerApprove } from "./commands/approve";
 import { registerBootstrap } from "./commands/bootstrap";
+import { registerDemo } from "./commands/demo";
 import { registerDev } from "./commands/dev";
+import { registerDoctor } from "./commands/doctor";
 import { registerEvent } from "./commands/event";
 import { registerEvolve } from "./commands/evolve";
 import { registerInit } from "./commands/init";
@@ -17,13 +19,37 @@ import { registerSource } from "./commands/source";
 import { registerStatus } from "./commands/status";
 import { registerUp } from "./commands/up";
 import { registerWorkshop } from "./commands/workshop";
+import { kitCommand } from "./repo";
 
 const program = new Command();
 
-program.name("kit").description("Agent Team Kit CLI").version("0.9.0");
+program
+  .name("kit")
+  .description("Private agent teams with approvals and audit")
+  .version("0.9.0")
+  .action(() => {
+    const command = kitCommand();
+    console.log(
+      [
+        "Agent Team Kit 0.9.0 — private agent teams with approvals and audit.",
+        "",
+        "Start here:",
+        `  ${command} bootstrap      connect a model with one API key`,
+        `  ${command} doctor         check Bun, Node, Docker, ports and keys`,
+        `  ${command} demo           create a demo team and a static plan (no Docker)`,
+        `  ${command} init my-team   create a team from a template (--list)`,
+        `  ${command} up --web       start the stack and the console`,
+        "",
+        "Docs: README.md · docs/install.md",
+        "Community: CONTRIBUTING.md · SUPPORT.md",
+      ].join("\n"),
+    );
+  });
 
 registerInit(program);
 registerBootstrap(program);
+registerDoctor(program);
+registerDemo(program);
 registerPack(program);
 registerPatch(program);
 registerRun(program);
@@ -40,4 +66,7 @@ registerIterate(program);
 registerSignals(program);
 registerWorkshop(program);
 
-program.parse();
+await program.parseAsync().catch((error: unknown) => {
+  console.error(`✖ ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+});

@@ -124,7 +124,10 @@
     "evolutionLab": "evolution lab →",
     "stagesProgress": "{done}/{total} stages",
     "starting": "starting",
-    "allRuns": "all runs"
+    "allRuns": "all runs",
+    "backendDownTitle": "Backend offline",
+    "backendDownDescription": "The console cannot reach Postgres. Start it with bun run kit up, then reload. Packs and Studio still work.",
+    "openPacks": "Open Packs"
   },
   "runs": {
     "title": "Runs",

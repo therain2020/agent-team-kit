@@ -1,8 +1,11 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { type TemplateDefinition, templateDefinitionSchema } from "@kit/core";
 import { parse } from "yaml";
+
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 export interface TemplateSummary {
   id: string;
@@ -18,11 +21,26 @@ export interface TemplateSummary {
 }
 
 export function getTemplatesRoot(root?: string): string {
-  return path.resolve(
-    root ??
-      process.env.KIT_TEMPLATES_ROOT ??
-      path.join(process.cwd(), "templates"),
-  );
+  if (root) {
+    return path.resolve(root);
+  }
+  const configured = process.env.KIT_TEMPLATES_ROOT;
+  if (configured) {
+    return path.resolve(configured);
+  }
+  const candidates = [
+    // Repo checkout: packages/pack/src -> <repo>/templates
+    path.resolve(moduleDir, "../../../templates"),
+    // Published layout: packages/pack/dist -> packages/pack/templates
+    path.resolve(moduleDir, "../templates"),
+    path.join(process.cwd(), "templates"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return path.join(process.cwd(), "templates");
 }
 
 export async function listTemplates(root?: string): Promise<TemplateSummary[]> {

@@ -1,0 +1,58 @@
+name: Bug report
+description: Something is broken in the runtime, CLI, console or a pack.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please include the `kit doctor` output — it makes most triage instant.
+        Do not paste API keys, tokens, connection strings or private data.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Commands, inputs and the smallest pack that shows the problem.
+      placeholder: |
+        1. kit init my-team --template research
+        2. kit pack validate my-team
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: kit doctor output
+      description: Run `kit doctor --json` (or `bun run kit doctor --json`) and paste the result.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Bun, Node, Docker versions.
+      placeholder: Windows 11 · Bun 1.4.4 · Node 24.19 · Docker 29.6
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or artifacts
+      description: Relevant console output, run id, artifact id or digest. Redact secrets.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed API keys, tokens and private data from this report.
+          required: true
+        - label: I searched existing issues.
+          required: true

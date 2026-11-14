@@ -7,6 +7,19 @@
 - Docker Desktop (Postgres, MinIO, NATS, Temporal, OTel collector, Jaeger)
 - Optional: DSH, Codex or OpenCode CLI for external coder tasks
 
+## First five minutes
+
+```bash
+bun install
+bun run kit doctor          # Bun, Node, Docker, ports, model key
+bun run kit demo            # demo team + static plan (no Docker)
+bun run kit init packs/my-team --template research
+bun run kit pack simulate packs/my-team
+bun run kit up --web        # console at http://localhost:3000
+```
+
+Open `/welcome` to store a model key, or run `bun run kit bootstrap`.
+
 ## Local stack
 
 ```bash

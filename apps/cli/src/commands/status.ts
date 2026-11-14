@@ -6,7 +6,20 @@ export function registerStatus(program: Command): void {
     .command("status [runId]")
     .description("Show runs, stages and artifacts")
     .action(async (runId?: string) => {
-      const store = await initStore();
+      let store: Awaited<ReturnType<typeof initStore>>;
+      try {
+        store = await initStore();
+      } catch (error) {
+        console.error("✖ cannot reach the kit database");
+        console.error(
+          `  ${error instanceof Error ? error.message : String(error)}`,
+        );
+        console.error(
+          "  start the stack with `kit up`, or point KIT_DB_URL at a running Postgres",
+        );
+        process.exitCode = 1;
+        return;
+      }
 
       try {
         if (!runId) {

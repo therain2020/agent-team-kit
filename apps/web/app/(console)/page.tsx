@@ -32,11 +32,37 @@ export default async function CommandCenterPage() {
   const common = await getTranslations("common");
   const locale = await getLocale();
   const store = await getStore();
-  const [summaries, paused, recentArtifacts] = await Promise.all([
+  const loaded = await Promise.all([
     loadRunSummaries(30, store),
     loadPausedRuns(store),
     store.artifactStore.listRecent("default", 8),
-  ]);
+  ]).catch((error: unknown) => {
+    console.error("command center backend unreachable", error);
+    return null;
+  });
+
+  if (!loaded) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title={t("title")} description={t("description")} />
+        <EmptyState
+          icon={AlertTriangle}
+          title={t("backendDownTitle")}
+          description={t("backendDownDescription")}
+          action={
+            <Link
+              className="rounded border border-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-800"
+              href="/packs"
+            >
+              {t("openPacks")} →
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
+
+  const [summaries, paused, recentArtifacts] = loaded;
 
   const recentArtifactViews = await Promise.all(
     recentArtifacts.map(async (artifact) => ({
