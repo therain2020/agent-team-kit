@@ -221,7 +221,6 @@
     "noFailed": "最近没有失败的运行。",
     "failed": "失败",
     "artifactsCost": "{count} 个产物 · {cost}",
-    "failedAgo": "已失败 {time}",
     "fyi": "通知",
     "fyiBody": "灰度回滚和预算告警会出现在这里。当前没有待处理项。"
   },
