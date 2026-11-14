@@ -1,3 +1,5 @@
+import { loadApiKey, loadModelDefaults } from "@kit/bootstrap";
+
 export interface ModelRequest {
   model: string;
   instructions: string;
@@ -91,14 +93,23 @@ export function calculateCostCny(
 export function loadModelConfig(
   env: Record<string, string | undefined> = process.env,
 ): ModelConfig {
+  // Injected env objects stay hermetic; only the real process falls back to
+  // the bootstrap profile and key stored by `kit bootstrap`.
+  const useBootstrap = env === process.env;
+  const defaults = useBootstrap ? loadModelDefaults(env) : {};
+  const apiKey =
+    env.DEEPSEEK_API_KEY ?? (useBootstrap ? loadApiKey(env) : undefined);
+
   return {
-    mode:
-      env.KIT_MODEL_MODE === "live" || env.DEEPSEEK_API_KEY ? "live" : "stub",
-    baseUrl: env.DEEPSEEK_BASE_URL ?? "https://api.deepseek.com",
-    apiKey: env.DEEPSEEK_API_KEY,
+    mode: env.KIT_MODEL_MODE === "live" || apiKey ? "live" : "stub",
+    baseUrl:
+      env.DEEPSEEK_BASE_URL ?? defaults.baseUrl ?? "https://api.deepseek.com",
+    apiKey,
     aliases: {
-      "deepseek-flash": env.DEEPSEEK_MODEL_FLASH ?? "deepseek-flash",
-      "deepseek-pro": env.DEEPSEEK_MODEL_PRO ?? "deepseek-v4-pro",
+      "deepseek-flash":
+        env.DEEPSEEK_MODEL_FLASH ?? defaults.flash ?? "deepseek-flash",
+      "deepseek-pro":
+        env.DEEPSEEK_MODEL_PRO ?? defaults.pro ?? "deepseek-v4-pro",
     },
   };
 }
@@ -184,7 +195,9 @@ export class OpenAiCompatibleGateway implements ModelGateway {
     signal?: AbortSignal,
   ): Promise<ModelResponse> {
     if (!this.config.apiKey) {
-      throw new Error("DEEPSEEK_API_KEY is required for live model calls");
+      throw new Error(
+        "model API key is required: run `kit bootstrap --key <key>` or set DEEPSEEK_API_KEY",
+      );
     }
 
     const model = this.config.aliases[request.model] ?? request.model;
@@ -237,7 +250,9 @@ export class OpenAiCompatibleGateway implements ModelGateway {
     signal?: AbortSignal,
   ): Promise<ToolCompletionResponse> {
     if (!this.config.apiKey) {
-      throw new Error("DEEPSEEK_API_KEY is required for live model calls");
+      throw new Error(
+        "model API key is required: run `kit bootstrap --key <key>` or set DEEPSEEK_API_KEY",
+      );
     }
     const model = this.config.aliases[request.model] ?? request.model;
     const response = await fetch(

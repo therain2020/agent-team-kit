@@ -834,5 +834,30 @@
     "running": "执行中…",
     "done": "周期完成：{decision}",
     "failed": "演化周期失败"
+  },
+  "welcome": {
+    "title": "一个 key，剩下的交给 Kit 自己配置。",
+    "description": "粘贴模型 API key。Kit 会验证它、保存在本机，并生成所有 agent 使用的模型配置。",
+    "keyLabel": "模型 API key",
+    "keyPlaceholder": "sk-…",
+    "keyHint": "仅存本机（Windows 走 DPAPI 加密），不写日志、不进产物。",
+    "advanced": "高级：服务地址与模型名",
+    "baseUrlLabel": "Base URL",
+    "flashLabel": "快模型",
+    "proLabel": "推理模型",
+    "connect": "验证并继续",
+    "connecting": "验证中…",
+    "probeFailed": "key 验证失败",
+    "error_auth": "服务拒绝了这个 key。",
+    "error_quota": "余额不足或触发限流。",
+    "error_bad_request": "服务拒绝了请求，请检查 Base URL 与模型名。",
+    "error_network": "连不上模型服务，请检查网络与 Base URL。",
+    "error_unknown": "验证未通过。",
+    "savedTitle": "key 已验证并保存",
+    "savedBody": "保存方式：{backend}；模型：{flash} / {pro}；探测延迟 {ms}ms。",
+    "nextSteps": "下一步",
+    "goConsole": "进入控制台",
+    "alreadyBody": "本机已有 key，提交新 key 会覆盖它。",
+    "securityNote": "key 只留在这台机器上；本地服务默认只监听 127.0.0.1。"
   }
 }

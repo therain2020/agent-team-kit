@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { registerApprove } from "./commands/approve";
+import { registerBootstrap } from "./commands/bootstrap";
 import { registerDev } from "./commands/dev";
 import { registerEvent } from "./commands/event";
 import { registerEvolve } from "./commands/evolve";
@@ -22,6 +23,7 @@ const program = new Command();
 program.name("kit").description("Agent Team Kit CLI").version("0.9.0");
 
 registerInit(program);
+registerBootstrap(program);
 registerPack(program);
 registerPatch(program);
 registerRun(program);

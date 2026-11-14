@@ -19,6 +19,7 @@
         "kit": "./src/index.ts",
       },
       "dependencies": {
+        "@kit/bootstrap": "workspace:*",
         "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
         "@kit/evolution": "workspace:*",
@@ -124,6 +125,13 @@
         "@kit/workflow": "workspace:*",
       },
     },
+    "packages/bootstrap": {
+      "name": "@kit/bootstrap",
+      "version": "0.9.0",
+      "dependencies": {
+        "zod": "^3.24.1",
+      },
+    },
     "packages/coder": {
       "name": "@kit/coder",
       "version": "0.9.0",
@@ -158,6 +166,9 @@
     "packages/model": {
       "name": "@kit/model",
       "version": "0.9.0",
+      "dependencies": {
+        "@kit/bootstrap": "workspace:*",
+      },
     },
     "packages/pack": {
       "name": "@kit/pack",
@@ -502,6 +513,8 @@
     "@jsonjoy.com/util": ["@jsonjoy.com/util@1.9.0", "https://registry.npmmirror.com/@jsonjoy.com/util/-/util-1.9.0.tgz", { "dependencies": { "@jsonjoy.com/buffers": "^1.0.0", "@jsonjoy.com/codegen": "^1.0.0" }, "peerDependencies": { "tslib": "2" } }, "sha512-pLuQo+VPRnN8hfPqUTLTHk126wuYdXVxE6aDmjSeV4NCAgyxWbiOIeNJVtID3h1Vzpoi9m4jXezf73I6LgabgQ=="],
 
     "@kit/autopilot": ["@kit/autopilot@workspace:packages/autopilot"],
+
+    "@kit/bootstrap": ["@kit/bootstrap@workspace:packages/bootstrap"],
 
     "@kit/cli": ["@kit/cli@workspace:apps/cli"],
 

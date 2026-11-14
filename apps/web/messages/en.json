@@ -834,5 +834,30 @@
     "running": "Running…",
     "done": "Cycle finished: {decision}",
     "failed": "Evolution cycle failed"
+  },
+  "welcome": {
+    "title": "One key. Then the kit configures itself.",
+    "description": "Paste a model API key. The kit verifies it, stores it on this machine, and prepares the model profile used by every agent.",
+    "keyLabel": "Model API key",
+    "keyPlaceholder": "sk-…",
+    "keyHint": "Stored locally (DPAPI-encrypted on Windows). Never written to logs or artifacts.",
+    "advanced": "Advanced: provider and model names",
+    "baseUrlLabel": "Base URL",
+    "flashLabel": "Fast model",
+    "proLabel": "Reasoning model",
+    "connect": "Verify and continue",
+    "connecting": "Verifying…",
+    "probeFailed": "Could not verify the key",
+    "error_auth": "The provider rejected this key.",
+    "error_quota": "No quota left or rate limited.",
+    "error_bad_request": "The provider rejected the request. Check the base URL and model names.",
+    "error_network": "Could not reach the provider. Check the network and base URL.",
+    "error_unknown": "Verification failed.",
+    "savedTitle": "Key verified and stored",
+    "savedBody": "Stored with {backend}. Models: {flash} / {pro}. Probe latency {ms}ms.",
+    "nextSteps": "Next steps",
+    "goConsole": "Open the console",
+    "alreadyBody": "A key is already stored. Submitting a new key replaces it.",
+    "securityNote": "The key stays on this machine. Local services bind to 127.0.0.1 by default."
   }
 }
