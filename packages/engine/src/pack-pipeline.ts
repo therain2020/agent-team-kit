@@ -1,4 +1,4 @@
-import { isKillSwitchTrippedError } from "@kit/core";
+import { isKillSwitchTrippedError } from "@kit/core/kill-switch";
 import type {
   PackRunInput,
   PackRunResult,

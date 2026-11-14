@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./cron": "./src/cron.ts"
+    "./cron": "./src/cron.ts",
+    "./kill-switch": "./src/kill-switch.ts"
   },
   "dependencies": {
     "ulid": "^2.3.0",
