@@ -2,8 +2,20 @@
   "version": 1,
   "title": "Agent Team Kit · Published runs",
   "description": "A public archive of runs from a private agent team: artifacts, stages, costs and provenance.",
-  "updatedAt": "2026-11-14T17:18:12.462Z",
+  "updatedAt": "2026-11-14T17:18:20.429Z",
   "runs": [
+    {
+      "runId": "run_01M7D5JSVVDPEQPNGAK02H23AK",
+      "title": "Findings",
+      "summary": "Sandbox was empty before the write, and after the write the only proposal is the new file — no other paths touched. The diff renders the file as an addition (@@ -0,0 +1,1 @@), i.e. notes/tool-smoke.md did not exist in t…",
+      "workflowId": "starter",
+      "status": "succeeded",
+      "runMode": "DRY_RUN",
+      "createdAt": "2026-11-14 13:57:34.995+00",
+      "artifactCount": 2,
+      "costCny": 0.0062699999999999995,
+      "path": "runs/run_01M7D5JSVVDPEQPNGAK02H23AK/index.html"
+    },
     {
       "runId": "run_01M7D53HFMBPVM8Y8N92M3XMS7",
       "title": "Report from root package.json",

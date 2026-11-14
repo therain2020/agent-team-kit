@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Findings · Agent Team Kit</title>
+<meta name="description" content="Sandbox was empty before the write, and after the write the only proposal is the new file — no other paths touched. The diff renders the file as an addition (@@ -0,0 +1,1 @@), i.e. notes/tool-smoke.md did not exist in t…" />
+<meta name="generator" content="Agent Team Kit" />
+<meta name="theme-color" content="#09090b" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Agent Team Kit · Published runs" />
+<meta property="og:title" content="Findings" />
+<meta property="og:description" content="Sandbox was empty before the write, and after the write the only proposal is the new file — no other paths touched. The diff renders the file as an addition (@@ -0,0 +1,1 @@), i.e. notes/tool-smoke.md did not exist in t…" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Findings" />
+<meta name="twitter:description" content="Sandbox was empty before the write, and after the write the only proposal is the new file — no other paths touched. The diff renders the file as an addition (@@ -0,0 +1,1 @@), i.e. notes/tool-smoke.md did not exist in t…" />
+<link rel="canonical" href="https://therain2020.github.io/agent-team-kit/runs/run_01M7D5JSVVDPEQPNGAK02H23AK/art_01M7D5K3H9P5ZRX84BK7AX1TNG.html" />
+<meta property="og:url" content="https://therain2020.github.io/agent-team-kit/runs/run_01M7D5JSVVDPEQPNGAK02H23AK/art_01M7D5K3H9P5ZRX84BK7AX1TNG.html" />
+<link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>Agent Team Kit</span></div>
+    <p class="brand-sub">Published runs</p>
+    <nav class="nav" aria-label="Site navigation">
+      <span class="nav-label">Archive</span>
+      <a href="../../index.html">All runs</a><a href="./index.html">Current run</a><a href="./art_01M7D5JSWJWC50PTF9XW07CP8E.html">Mission Assignment</a><a href="./art_01M7D5K3H9P5ZRX84BK7AX1TNG.html" class="active" aria-current="page">Findings</a>
+    </nav>
+    <div class="sidebar-foot">Static glass box<br/>No server · no telemetry</div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs"><a href="../../index.html">All runs</a><span class="sep">/</span><a href="./index.html">Findings</a><span class="sep">/</span><span class="current">Findings</span></div>
+      <div class="status"><span class="status-pill success">Succeeded</span></div>
+    </header>
+    <main class="content" id="main">
+      <div class="page-header">
+  <p class="eyebrow">Artifact · inspect</p>
+  <h1 class="page-title">Findings</h1>
+  <p class="page-summary">Sandbox was empty before the write, and after the write the only proposal is the new file — no other paths touched. The diff renders the file as an addition (@@ -0,0 +1,1 @@), i.e. notes/tool-smoke.md did not exist in t…</p>
+  <div class="badges">
+    <span class="badge outline">Report</span>
+    <span class="badge outline">DRY_RUN</span>
+    <span class="badge outline mono">inspect</span>
+    <span class="badge outline">14 Nov 2026, 13:57 UTC</span>
+  </div>
+</div>
+
+<div class="artifact-layout">
+  <div>
+    <article class="prose"><ul>
+<li>Sandbox was empty before the write, and after the write the only proposal is the new file — no other paths touched.</li>
+<li>The diff renders the file as an addition (<code>@@ -0,0 +1,1 @@</code>), i.e. <code>notes/tool-smoke.md</code> did not exist in the repository as far as the diff view shows.</li>
+<li>Caveat on &quot;read before writing&quot;: no read-only file-inspection tool was available in this session, so I substituted a baseline <code>workspace_diff</code> before writing rather than reading the target path directly. If <code>notes/tool-smoke.md</code> already exists upstream with content not visible to the diff, this proposal would overwrite it rather than append.</li>
+</ul>
+<h2>Diff</h2>
+<pre><code class="language-diff">===================================================================
+--- a/notes/tool-smoke.md	repository
++++ b/notes/tool-smoke.md	proposed
+@@ -0,0 +1,1 @@
++# Tool smoke
+</code></pre>
+<h2>Files changed</h2>
+<ul>
+<li><code>notes/tool-smoke.md</code> — new file, 13 bytes, single line <code># Tool smoke</code> (plus trailing newline). Written to the run sandbox only.</li>
+</ul>
+<p>The real repository was <strong>not</strong> modified. The content exists solely as a proposal inside the run sandbox.</p>
+<h2>Tests / commands run</h2>
+<ul>
+<li><code>workspace_diff</code> (baseline) → <code>(no sandbox changes)</code></li>
+<li><code>workspace_write</code> → <code>wrote sandbox file notes/tool-smoke.md (13 chars)</code></li>
+<li><code>workspace_diff</code> (after write) → one-file addition, shown above</li>
+<li>No build, lint, or test commands were run; none are meaningful for a markdown note.</li>
+</ul>
+<h2>Risks</h2>
+<ul>
+<li><strong>Overwrite risk</strong> as noted above — I could not verify pre-existing content at this path.</li>
+<li>Trivial blast radius otherwise: one documentation file, no code or config paths, nothing exported outside the sandbox.</li>
+<li>The diff tool normalizes trailing-newline/whitespace handling, so the exact byte-level ending (with vs. without final newline) is not guaranteed by the patch view alone, even though the write reported 13 chars.</li>
+</ul>
+<h2>Next action</h2>
+<p>If you want this landed for real, promote <code>notes/tool-smoke.md</code> from the sandbox into the working tree, and — before doing so — confirm the path is genuinely new (e.g. <code>ls notes/tool-smoke.md</code> or <code>git status notes/</code>). If it already exists, tell me whether to overwrite or append, and I'll re-propose accordingly.</p>
+</article>
+    <details class="raw"><summary>Raw Markdown</summary><pre>## Findings
+
+- Sandbox was empty before the write, and after the write the only proposal is the new file — no other paths touched.
+- The diff renders the file as an addition (`@@ -0,0 +1,1 @@`), i.e. `notes/tool-smoke.md` did not exist in the repository as far as the diff view shows.
+- Caveat on &quot;read before writing&quot;: no read-only file-inspection tool was available in this session, so I substituted a baseline `workspace_diff` before writing rather than reading the target path directly. If `notes/tool-smoke.md` already exists upstream with content not visible to the diff, this proposal would overwrite it rather than append.
+
+## Diff
+
+```diff
+===================================================================
+--- a/notes/tool-smoke.md	repository
++++ b/notes/tool-smoke.md	proposed
+@@ -0,0 +1,1 @@
++# Tool smoke
+```
+
+## Files changed
+
+- `notes/tool-smoke.md` — new file, 13 bytes, single line `# Tool smoke` (plus trailing newline). Written to the run sandbox only.
+
+The real repository was **not** modified. The content exists solely as a proposal inside the run sandbox.
+
+## Tests / commands run
+
+- `workspace_diff` (baseline) → `(no sandbox changes)`
+- `workspace_write` → `wrote sandbox file notes/tool-smoke.md (13 chars)`
+- `workspace_diff` (after write) → one-file addition, shown above
+- No build, lint, or test commands were run; none are meaningful for a markdown note.
+
+## Risks
+
+- **Overwrite risk** as noted above — I could not verify pre-existing content at this path.
+- Trivial blast radius otherwise: one documentation file, no code or config paths, nothing exported outside the sandbox.
+- The diff tool normalizes trailing-newline/whitespace handling, so the exact byte-level ending (with vs. without final newline) is not guaranteed by the patch view alone, even though the write reported 13 chars.
+
+## Next action
+
+If you want this landed for real, promote `notes/tool-smoke.md` from the sandbox into the working tree, and — before doing so — confirm the path is genuinely new (e.g. `ls notes/tool-smoke.md` or `git status notes/`). If it already exists, tell me whether to overwrite or append, and I'll re-propose accordingly.</pre></details>
+  </div>
+  <aside class="provenance" aria-label="Provenance">
+    <h2>Provenance</h2>
+    <div class="prov-row"><span class="prov-key">Agent</span><span class="prov-value">worker</span></div>
+    <div class="prov-row"><span class="prov-key">Model</span><span class="prov-value">deepseek-flash</span></div>
+    <div class="prov-row"><span class="prov-key">Stage</span><span class="prov-value">inspect</span></div>
+    <div class="prov-row"><span class="prov-key">Kind</span><span class="prov-value">Report</span></div>
+    <div class="prov-row"><span class="prov-key">Created</span><span class="prov-value">14 Nov 2026, 13:57 UTC</span></div>
+    <div class="prov-row"><span class="prov-key">Cost</span><span class="prov-value">¥0.0063</span></div>
+    <div class="prov-row"><span class="prov-key">Tokens</span><span class="prov-value">5,061</span></div>
+    <div class="prov-row"><span class="prov-key">Artifact</span><span class="prov-value">art_01M7D5K3H9P5ZRX84BK7AX1TNG</span></div>
+    <div class="prov-row"><span class="prov-key">Version</span><span class="prov-value">v1</span></div>
+    <div class="prov-row"><span class="prov-key">Run mode</span><span class="prov-value">DRY_RUN</span></div>
+  </aside>
+</div>
+    </main>
+    <footer class="footer">
+      <span>Generated by Agent Team Kit · artifacts published as-is · tool and approval internals excluded</span>
+      <a href="https://github.com/therain2020/agent-team-kit" target="_blank" rel="noreferrer noopener">Source repository</a>
+    </footer>
+  </div>
+</div>
+</body>
+</html>
