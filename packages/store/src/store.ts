@@ -14,7 +14,8 @@ import {
 import { createS3Client } from "./s3";
 
 export function createStore(config: StoreConfig = loadStoreConfig()) {
-  const { sql, db } = createDb(config.dbUrl);
+  const database = createDb(config);
+  const { sql, db } = database;
 
   const blobClient: BlobClient =
     config.blobBackend === "s3"
@@ -26,8 +27,11 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
 
   return {
     config,
+    driver: database.driver,
     sql,
     db,
+    exec: database.exec,
+    close: database.close,
     events: new PostgresEventStore(db),
     runs: new PostgresRunStore(db),
     stages: new PostgresStageStore(db),
@@ -41,7 +45,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
 
 export async function initStore(config: StoreConfig = loadStoreConfig()) {
   const store = createStore(config);
-  await ensureSchema(store.sql);
+  await ensureSchema(store.exec);
   await store.blobClient.ensure();
   return store;
 }

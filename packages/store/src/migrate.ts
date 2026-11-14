@@ -1,9 +1,10 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SqlClient } from "./db";
 
-export async function ensureSchema(sql: SqlClient): Promise<void> {
+export async function ensureSchema(
+  exec: (statement: string) => Promise<void>,
+): Promise<void> {
   const schemaPath = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     "schema.sql",
@@ -16,6 +17,6 @@ export async function ensureSchema(sql: SqlClient): Promise<void> {
     .filter(Boolean);
 
   for (const statement of statements) {
-    await sql.unsafe(statement);
+    await exec(statement);
   }
 }
