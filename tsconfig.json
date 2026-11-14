@@ -17,6 +17,7 @@
       "@kit/queue": ["./packages/queue/src/index.ts"],
       "@kit/workflow": ["./packages/workflow/src/index.ts"],
       "@kit/model": ["./packages/model/src/index.ts"],
+      "@kit/ops": ["./packages/ops/src/index.ts"],
       "@kit/manager": ["./packages/manager/src/index.ts"],
       "@kit/pack": ["./packages/pack/src/index.ts"],
       "@kit/publish": ["./packages/publish/src/index.ts"],

@@ -8,6 +8,7 @@ export interface ToolContext {
   runMode: string;
   allowNetwork: boolean;
   allowLocalhost: boolean;
+  readOnly?: boolean;
 }
 
 export interface ToolResult {

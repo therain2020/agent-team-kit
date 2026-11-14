@@ -17,6 +17,7 @@ import {
   ScrollText,
   ShieldAlert,
   ShieldCheck,
+  Siren,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
@@ -28,6 +29,7 @@ const NAV = [
   { href: "/manager", labelKey: "manager", icon: MessageSquare },
   { href: "/factory", labelKey: "factory", icon: Factory, badge: true },
   { href: "/inbox", labelKey: "inbox", icon: Inbox, badge: true },
+  { href: "/ops", labelKey: "ops", icon: Siren },
   { href: "/runs", labelKey: "runs", icon: Play },
   { href: "/iterations", labelKey: "iterations", icon: GitBranch },
   { href: "/activity", labelKey: "activity", icon: ScrollText },

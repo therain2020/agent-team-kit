@@ -347,6 +347,37 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
 
+CREATE TABLE IF NOT EXISTS ops_settings (
+  workspace_id TEXT PRIMARY KEY,
+  policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ops_alerts (
+  alert_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  run_id TEXT,
+  stage_id TEXT,
+  request_id TEXT,
+  source TEXT,
+  runbook_url TEXT,
+  notify_state TEXT NOT NULL DEFAULT 'none',
+  count INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TIMESTAMPTZ NOT NULL,
+  last_seen_at TIMESTAMPTZ NOT NULL,
+  acknowledged_at TIMESTAMPTZ,
+  acknowledged_by TEXT,
+  resolved_at TIMESTAMPTZ,
+  meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
@@ -363,6 +394,8 @@ CREATE INDEX IF NOT EXISTS idx_iteration_turns_run ON iteration_turns(iteration_
 CREATE INDEX IF NOT EXISTS idx_activity_run ON activity_events(run_id, event_id);
 CREATE INDEX IF NOT EXISTS idx_activity_agent ON activity_events(agent_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_kind ON activity_events(kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_alerts_workspace ON ops_alerts(workspace_id, status, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_alerts_dedupe ON ops_alerts(workspace_id, dedupe_key, last_seen_at DESC);
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -698,6 +731,37 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
 
+CREATE TABLE IF NOT EXISTS ops_settings (
+  workspace_id TEXT PRIMARY KEY,
+  policy TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ops_alerts (
+  alert_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  run_id TEXT,
+  stage_id TEXT,
+  request_id TEXT,
+  source TEXT,
+  runbook_url TEXT,
+  notify_state TEXT NOT NULL DEFAULT 'none',
+  count INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  acknowledged_at TEXT,
+  acknowledged_by TEXT,
+  resolved_at TEXT,
+  meta TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE iteration_runs ADD COLUMN repo_root TEXT;
@@ -724,4 +788,6 @@ CREATE INDEX IF NOT EXISTS idx_iteration_turns_run ON iteration_turns(iteration_
 CREATE INDEX IF NOT EXISTS idx_activity_run ON activity_events(run_id, event_id);
 CREATE INDEX IF NOT EXISTS idx_activity_agent ON activity_events(agent_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_kind ON activity_events(kind, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_alerts_workspace ON ops_alerts(workspace_id, status, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ops_alerts_dedupe ON ops_alerts(workspace_id, dedupe_key, last_seen_at DESC);
 `;

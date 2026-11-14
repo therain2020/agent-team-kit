@@ -59,6 +59,7 @@
         "@kit/engine": "workspace:*",
         "@kit/iteration": "workspace:*",
         "@kit/model": "workspace:*",
+        "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/queue": "workspace:*",
         "@kit/store": "workspace:*",
@@ -89,6 +90,7 @@
         "@kit/job": "workspace:*",
         "@kit/manager": "workspace:*",
         "@kit/model": "workspace:*",
+        "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/source": "workspace:*",
         "@kit/store": "workspace:*",
@@ -136,6 +138,7 @@
         "@kit/core": "workspace:*",
         "@kit/evolution": "workspace:*",
         "@kit/manager": "workspace:*",
+        "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/store": "workspace:*",
         "@kit/workflow": "workspace:*",
@@ -177,6 +180,7 @@
         "@kit/delivery": "workspace:*",
         "@kit/manager": "workspace:*",
         "@kit/model": "workspace:*",
+        "@kit/ops": "workspace:*",
         "@kit/store": "workspace:*",
         "@kit/tools": "workspace:*",
         "@kit/workflow": "workspace:*",
@@ -213,6 +217,7 @@
         "@kit/engine": "workspace:*",
         "@kit/iteration": "workspace:*",
         "@kit/model": "workspace:*",
+        "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/store": "workspace:*",
         "@kit/workflow": "workspace:*",
@@ -232,6 +237,17 @@
       "version": "0.9.0",
       "dependencies": {
         "@kit/bootstrap": "workspace:*",
+      },
+    },
+    "packages/ops": {
+      "name": "@kit/ops",
+      "version": "0.9.0",
+      "dependencies": {
+        "@kit/activity": "workspace:*",
+        "@kit/core": "workspace:*",
+        "@kit/delivery": "workspace:*",
+        "@kit/store": "workspace:*",
+        "zod": "^3.24.1",
       },
     },
     "packages/pack": {
@@ -614,6 +630,8 @@
     "@kit/manager": ["@kit/manager@workspace:packages/manager"],
 
     "@kit/model": ["@kit/model@workspace:packages/model"],
+
+    "@kit/ops": ["@kit/ops@workspace:packages/ops"],
 
     "@kit/pack": ["@kit/pack@workspace:packages/pack"],
 
