@@ -29,6 +29,7 @@
         "@kit/store": "workspace:*",
         "@kit/telemetry": "workspace:*",
         "@kit/workflow": "workspace:*",
+        "@kit/workshop": "workspace:*",
         "@opentelemetry/api": "^1.9.0",
         "commander": "^12.1.0",
         "jszip": "^3.10.1",
@@ -221,6 +222,15 @@
       "dependencies": {
         "@kit/core": "workspace:*",
         "@temporalio/client": "^1.15.0",
+      },
+    },
+    "packages/workshop": {
+      "name": "@kit/workshop",
+      "version": "0.9.0",
+      "dependencies": {
+        "@kit/core": "workspace:*",
+        "@kit/pack": "workspace:*",
+        "yaml": "^2.6.1",
       },
     },
   },
@@ -526,6 +536,8 @@
     "@kit/web": ["@kit/web@workspace:apps/web"],
 
     "@kit/workflow": ["@kit/workflow@workspace:packages/workflow"],
+
+    "@kit/workshop": ["@kit/workshop@workspace:packages/workshop"],
 
     "@next/env": ["@next/env@15.5.29", "https://registry.npmmirror.com/@next/env/-/env-15.5.29.tgz", {}, "sha512-9SrTiTsgORa+KfhlXXAGC1eSs847E+d2MQTPUX+n7R5XA8g/B6ZitfL6GoYHNMLwG3Hzs1wjDH0/ME5WrGMqBQ=="],
 

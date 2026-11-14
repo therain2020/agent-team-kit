@@ -151,6 +151,8 @@ bun run kit manager brief <runId>
 | `KIT_CODER_SANDBOX_ROOT` | `%TEMP%/agent-team-kit` | external coder sandbox root (outside the repo) |
 | `KIT_SIGNALS_ROOT` | `%USERPROFILE%/.agent-team-kit/signals` | iteration fitness JSONL root |
 | `KIT_PROPOSALS_ROOT` | `%USERPROFILE%/.agent-team-kit/proposals` | improvement proposal output |
+| `KIT_TEMPLATES_ROOT` | `./templates` | built-in template registry |
+| `KIT_WORKSHOP_ROOT` | `./workshop` | workshop install root |
 | `KIT_SUPERVISOR_WEB` | `0` | Set by `kit up --web` |
 
 ## Ports

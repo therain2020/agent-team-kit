@@ -138,6 +138,31 @@ feedback → risk classifier → low-risk apply with commit + backup → report.
 - Evidence is stored as artifacts (`plan`, `coder.result`, `coder.transcript`,
   `coder.diff`, `verification`, `risk`, `apply`, `report`).
 
+### Open templates and workshop
+
+Built-in teams are data, not code: `templates/<id>/template.yaml` is validated
+and listed by the CLI and the new-pack wizard.
+
+```bash
+bun run kit init .tmp/my-team --template research
+bun run kit init .tmp/list --list
+```
+
+Pack Studio can list, create, rename and delete workflows; every write is
+validated and `team.yaml` is updated atomically.
+
+The GitHub workshop is topic-indexed (`agent-team-workshop`) and uses a
+`workshop.yaml` manifest. Installs pin a commit, reject unsafe paths, enforce
+size limits, and require explicit consent for code-bearing items.
+
+```bash
+bun run kit workshop search --query "code review"
+bun run kit workshop preview acme/team-pack
+bun run kit workshop install acme/team-pack --target packs --yes
+```
+
+Items with `permissions.code: true` additionally require `--allow-code`.
+
 ### Fitness signals and proposals
 
 Each iteration publishes a `fitness` artifact and appends one JSONL line per
@@ -515,6 +540,7 @@ packages/store  Postgres repositories + fs/S3 blob adapters
 packages/queue  NATS JetStream adapter
 packages/workflow Temporal adapter
 packages/coder  external coding-agent adapters + sandbox/diff evidence
+packages/workshop GitHub workshop manifest/search/preview/install
 packages/model  model gateway (DeepSeek)
 packages/manager Manager briefs, decisions, approval lookup
 packages/pack   Pack loading/validation, run builder, simulation, Studio CRUD
@@ -523,6 +549,7 @@ packages/autopilot Cron parser, daemon, budgets, auto-approvals, state
 packages/evolution Variant lab, canary, self-evolution cycle
 packages/tools  Tool registry: repo, security scans, checks, sandbox patches, web
 packages/telemetry OpenTelemetry
+templates/      data-driven built-in team templates
 packs/minimal   minimal example Team Pack
 packs/tech-radar reference mold + sample autopilot policy
 packs/self-improve task-centric Cyber/UX squad + iteration.yaml routing

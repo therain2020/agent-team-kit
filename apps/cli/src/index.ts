@@ -15,6 +15,7 @@ import { registerSignals } from "./commands/signals";
 import { registerSource } from "./commands/source";
 import { registerStatus } from "./commands/status";
 import { registerUp } from "./commands/up";
+import { registerWorkshop } from "./commands/workshop";
 
 const program = new Command();
 
@@ -35,5 +36,6 @@ registerEvent(program);
 registerUp(program);
 registerIterate(program);
 registerSignals(program);
+registerWorkshop(program);
 
 program.parse();

@@ -135,3 +135,47 @@ export const templateDefinitionSchema = z.object({
 export type TemplateAgent = z.infer<typeof templateAgentSchema>;
 export type TemplateDefinition = z.infer<typeof templateDefinitionSchema>;
 export type TemplateRoles = z.infer<typeof templateRolesSchema>;
+
+const WORKSHOP_PATH = /^(?!\/)(?!.*\.\.)[A-Za-z0-9._/-]+$/;
+
+export const workshopManifestSchema = z
+  .object({
+    apiVersion: z.literal("agentteam/v1").default("agentteam/v1"),
+    kind: z.enum(["pack", "workflow", "agent", "toolpack", "skillpack"]),
+    id: z.string().regex(/^[a-z][a-z0-9-]*$/),
+    name: z.string().min(1),
+    version: z.string().regex(/^\d+\.\d+\.\d+/),
+    description: z.string().default(""),
+    license: z.string().optional(),
+    compatibility: z.object({ kit: z.string().min(1) }).optional(),
+    entry: z.string().regex(WORKSHOP_PATH),
+    files: z.array(z.string().regex(WORKSHOP_PATH)).min(1).max(200),
+    topics: z.array(z.string()).default([]),
+    permissions: z
+      .object({
+        network: z.boolean().default(false),
+        filesystem: z
+          .enum(["none", "readonly", "workspace"])
+          .default("workspace"),
+        code: z.boolean().default(false),
+      })
+      .default({ network: false, filesystem: "workspace", code: false }),
+  })
+  .superRefine((manifest, ctx) => {
+    if (!manifest.files.includes(manifest.entry)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "entry must be listed in files",
+        path: ["entry"],
+      });
+    }
+    if (manifest.files.length !== new Set(manifest.files).size) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "files must be unique",
+        path: ["files"],
+      });
+    }
+  });
+
+export type WorkshopManifest = z.infer<typeof workshopManifestSchema>;

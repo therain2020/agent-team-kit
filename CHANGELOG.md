@@ -53,9 +53,17 @@
   auto-reverted it when post-apply lint detected CRLF damage — proof that the
   gate catches sandbox-vs-main integration drift. A clean medium auto-apply is
   still pending because the final UX rerun hit the DSH 10-minute timeout.
-- Tests: 79 passing (coder sandbox/diff, coder stage, gateway signatures and
-  normalization, router matching, iteration plan/risk, autopilot iterations,
-  signals, plus the existing suite).
+- Open templates: built-in `minimal/research/content/product` are now data in
+  `templates/<id>/template.yaml`; `kit init --list` and the new-pack wizard read
+  from a validated registry instead of TypeScript enums.
+- Workflow CRUD: list/create/rename/delete APIs plus Studio controls; new
+  workflows are validated, written atomically, and referenced from `team.yaml`.
+- Creative workshop: `workshop.yaml` contract and `@kit/workshop` with GitHub
+  topic discovery (`agent-team-workshop`), preview, and commit-pinned install;
+  path traversal/size limits and explicit consent for code-bearing items.
+  CLI: `kit workshop search|preview|install`.
+- Tests: full suite passing (coder, gateway, iteration, signals, templates,
+  workflow CRUD, workshop; plus the existing suite).
 
 ## 1.0.0 — 2026-11-14 (not released)
 

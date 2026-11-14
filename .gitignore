@@ -10,3 +10,4 @@ variants/
 *.log
 .DS_Store
 .gstack/
+.claude/worktrees/

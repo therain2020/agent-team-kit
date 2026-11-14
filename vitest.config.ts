@@ -7,6 +7,7 @@ export default defineConfig({
       "**/dist/**",
       "**/.next/**",
       "**/.tmp/**",
+      "**/.claude/**",
       "**/variants/**",
     ],
   },

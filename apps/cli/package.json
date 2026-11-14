@@ -20,6 +20,7 @@
     "@kit/store": "workspace:*",
     "@kit/telemetry": "workspace:*",
     "@kit/workflow": "workspace:*",
+    "@kit/workshop": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "commander": "^12.1.0",
     "jszip": "^3.10.1",
