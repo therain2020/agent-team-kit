@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   appendFile,
@@ -23,11 +22,25 @@ import {
   type IterationConfig,
   type IterationTask,
   type TaskPlan,
-  applyPatchToRepo,
   newId,
   taskPlanSchema,
-  writeApplyPatch,
 } from "@kit/core";
+import {
+  allowedByApplyMode,
+  appendCoderEvent,
+  appendEvent,
+  applyDiffToRepo,
+  failIteration,
+  formatAppliedFiles,
+  publishIterationArtifact,
+  readArtifactText,
+  runPostApplyChecks,
+  safe,
+  startIteration,
+  touchHeartbeat,
+  updateRun,
+  updateTask,
+} from "@kit/iteration";
 import { createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
 import { initStore } from "@kit/store";
@@ -50,15 +63,6 @@ import type {
   VerifyTaskActivityInput,
 } from "@kit/workflow";
 import { Context } from "@temporalio/activity";
-import {
-  appendCoderEvent,
-  appendEvent,
-  failIteration,
-  startIteration,
-  touchHeartbeat,
-  updateRun,
-  updateTask,
-} from "./iteration-progress";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -144,7 +148,7 @@ ${context}`,
     }
   }
 
-  const artifactId = await publishArtifact(store, {
+  const artifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:plan`,
@@ -276,7 +280,7 @@ export async function runIterationCoder(
     clearInterval(heartbeat);
   }
 
-  const resultArtifactId = await publishArtifact(store, {
+  const resultArtifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:${input.task.id}:attempt-${input.attempt}:coder:result`,
@@ -300,7 +304,7 @@ export async function runIterationCoder(
     tokens: result.tokens ?? 0,
     runMode: input.runMode,
   });
-  const transcriptArtifactId = await publishArtifact(store, {
+  const transcriptArtifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:${input.task.id}:attempt-${input.attempt}:coder:transcript`,
@@ -309,7 +313,7 @@ export async function runIterationCoder(
     modelId: "none",
     runMode: input.runMode,
   });
-  const diffArtifactId = await publishArtifact(store, {
+  const diffArtifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:${input.task.id}:attempt-${input.attempt}:coder:diff`,
@@ -489,7 +493,7 @@ export async function verifyIterationTask(
         .join("\n\n")
         .slice(0, 8000);
 
-  const artifactId = await publishArtifact(store, {
+  const artifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:${input.task.id}:verification`,
@@ -538,7 +542,7 @@ export async function classifyIterationTask(
     ceiling,
   );
 
-  const artifactId = await publishArtifact(store, {
+  const artifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:${input.task.id}:risk`,
@@ -611,7 +615,7 @@ export async function applyIterationTask(
         error = EXCLUDED.error,
         updated_at = EXCLUDED.updated_at
     `;
-    const artifactId = await publishArtifact(store, {
+    const artifactId = await publishIterationArtifact(store, {
       iterationId: input.iterationId,
       workspaceId: input.workspaceId,
       stageId: `${input.iterationId}:${input.task.id}:apply`,
@@ -717,28 +721,22 @@ export async function applyIterationTask(
       return await publishApply("blocked", "diff is empty or truncated");
     }
 
-    const { patchFile, backupDir } = await writeApplyPatch(
+    const applied = await applyDiffToRepo({
       repoRoot,
-      safe(input.iterationId),
-      safe(input.task.id),
+      iterationId: input.iterationId,
+      taskId: input.task.id,
+      ticketId,
       diff,
-    );
-    const applied = await applyPatchToRepo({
-      repoRoot,
-      patchFile,
       baseSha: input.baselineSha,
       changedFiles: input.changedFiles,
-      ticketId,
+      risk: input.risk,
       commitMessage: `autonomy: ${input.task.id} (${input.task.domain})`,
-      format: (root) => formatAppliedFiles(root),
-      postCheck: (root) =>
-        runPostApplyChecks(root, input.risk, input.changedFiles),
     });
     headBefore = applied.headBefore;
     baseDrifted = applied.baseDrifted;
     return await publishApply(applied.status, applied.reason, {
       ...(applied.commitSha ? { commit: applied.commitSha } : {}),
-      details: { backupDir },
+      details: { backupDir: applied.backupDir },
     });
   } finally {
     clearInterval(heartbeat);
@@ -872,7 +870,7 @@ export async function reportIteration(
       error instanceof Error ? error.message : String(error);
   }
 
-  const fitnessArtifactId = await publishArtifact(store, {
+  const fitnessArtifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:fitness`,
@@ -943,7 +941,7 @@ export async function reportIteration(
   );
 
   const report = lines.join("\n");
-  const reportArtifactId = await publishArtifact(store, {
+  const reportArtifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:report`,
@@ -1220,7 +1218,7 @@ async function failVerification(
   reason: string,
   detail: string,
 ): Promise<IterationVerificationResult> {
-  const artifactId = await publishArtifact(store, {
+  const artifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
     stageId: `${input.iterationId}:${input.task.id}:verification`,
@@ -1256,79 +1254,6 @@ async function failVerification(
   };
 }
 
-async function formatAppliedFiles(repoRoot: string): Promise<void> {
-  const changed = await runGit(repoRoot, ["diff", "--name-only", "HEAD"]);
-  if (changed.exitCode !== 0) {
-    return;
-  }
-  const files = changed.stdout
-    .split(/\r?\n/)
-    .map((file) => file.trim())
-    .filter((file) => /\.(ts|tsx|js|jsx|json|css|md|yaml|yml)$/.test(file));
-  if (files.length === 0) {
-    return;
-  }
-  const bun = commandOnPath("bun") ?? "bun";
-  await runProcess(bun, ["x", "biome", "check", "--write", ...files], {
-    cwd: repoRoot,
-    timeoutMs: 120_000,
-    maxOutputBytes: 200_000,
-  });
-}
-
-async function runPostApplyChecks(
-  repoRoot: string,
-  risk: "low" | "medium" | "high",
-  changedFiles: string[] = [],
-): Promise<{
-  ok: boolean;
-  feedback: string;
-}> {
-  const bun = commandOnPath("bun") ?? "bun";
-  const failures: string[] = [];
-
-  const lintFiles = changedFiles.filter((file) =>
-    /\.(ts|tsx|js|jsx|json|jsonc|css|md|yaml|yml)$/.test(file),
-  );
-  if (lintFiles.length > 0) {
-    const result = await runProcess(
-      bun,
-      ["x", "biome", "check", ...lintFiles],
-      {
-        cwd: repoRoot,
-        timeoutMs: 5 * 60 * 1000,
-        maxOutputBytes: 100_000,
-      },
-    );
-    if (result.exitCode !== 0 || result.timedOut) {
-      failures.push(
-        `[lint:changed] exit=${result.exitCode} timeout=${result.timedOut}\n${[result.stdout, result.stderr].join("\n").slice(-3000)}`,
-      );
-    }
-  }
-
-  const checks = ["typecheck", "test"];
-  if (risk === "medium") {
-    checks.push("web:build");
-  }
-  for (const check of checks) {
-    const result = await runProcess(bun, ["run", check], {
-      cwd: repoRoot,
-      timeoutMs: 20 * 60 * 1000,
-      maxOutputBytes: 200_000,
-    });
-    if (result.exitCode !== 0 || result.timedOut) {
-      failures.push(
-        `[${check}] exit=${result.exitCode} timeout=${result.timedOut}\n${[result.stdout, result.stderr].join("\n").slice(-3000)}`,
-      );
-    }
-  }
-  return {
-    ok: failures.length === 0,
-    feedback: failures.join("\n\n"),
-  };
-}
-
 function scriptFor(check: string): string | null {
   switch (check) {
     case "typecheck":
@@ -1344,73 +1269,6 @@ function scriptFor(check: string): string | null {
     default:
       return null;
   }
-}
-
-function allowedByApplyMode(
-  risk: "low" | "medium" | "high",
-  mode: "none" | "low" | "low-medium",
-): boolean {
-  if (mode === "none" || risk === "high") {
-    return false;
-  }
-  if (risk === "low") {
-    return true;
-  }
-  return mode === "low-medium";
-}
-
-async function publishArtifact(
-  store: Store,
-  input: {
-    iterationId: string;
-    workspaceId: string;
-    stageId: string;
-    content: string;
-    agentId: string;
-    modelId: string;
-    tokens?: number;
-    costCny?: number;
-    runMode: "DRY_RUN" | "LIVE";
-  },
-): Promise<string> {
-  const published = await store.artifactService.publish({
-    workspaceId: input.workspaceId,
-    content: new TextEncoder().encode(input.content),
-    producer: {
-      agentId: input.agentId,
-      agentVersion: "0.9.0",
-      promptHash: hash(input.stageId),
-      modelId: input.modelId,
-    },
-    inputs: [],
-    runId: input.iterationId,
-    stageId: input.stageId,
-    runMode: input.runMode,
-    cost: {
-      currency: "CNY",
-      amount: input.costCny ?? 0,
-      tokens: input.tokens ?? 0,
-    },
-    sensitivity: "internal",
-    retentionClass: "artifact_365d",
-  });
-  return published.artifact.artifactId;
-}
-
-async function readArtifactText(
-  store: Store,
-  artifactId: string,
-): Promise<string> {
-  const artifact = await store.artifactStore.findById(artifactId);
-  if (!artifact) {
-    return "";
-  }
-  const blob = await store.blobs.findById(artifact.blobId);
-  if (!blob) {
-    return "";
-  }
-  const bytes = await store.blobClient.get(blob.storageKey);
-  return new TextDecoder().decode(bytes);
 }
 
 async function runGit(cwd: string, args: string[]) {
@@ -1432,16 +1290,8 @@ function resolveRepoRoot(): string {
   return cwd;
 }
 
-function safe(value: string): string {
-  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
 function stripFrontmatter(text: string): string {
   return text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
-}
-
-function hash(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 function riskRank(risk: "low" | "medium" | "high"): number {

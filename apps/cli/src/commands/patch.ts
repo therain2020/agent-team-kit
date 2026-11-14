@@ -32,6 +32,9 @@ export function registerPatch(program: Command): void {
     .description("Apply a run's sandbox patch to the repository (backup first)")
     .option("--apply", "write the changes (default is dry-run)", false)
     .action(async (runId: string, options: { apply: boolean }) => {
+      console.warn(
+        "[deprecated] `kit patch` handles workspace_write sandbox patches; iteration pending changes use `kit job changes` + `kit job apply`.",
+      );
       const writes = await loadWrites(runId);
       if (writes.size === 0) {
         console.error("✖ no workspace_write tool calls in this run");

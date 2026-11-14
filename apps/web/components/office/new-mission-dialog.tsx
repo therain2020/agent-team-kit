@@ -92,36 +92,39 @@ export function NewMissionDialog({
       const assigned = [
         ...new Set([...(seller ? [seller] : []), ...builders, ...specialists]),
       ];
-      const response = await fetch("/api/office/missions", {
+      const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          kind: "packRun",
           packDir,
           workflow,
-          manager,
-          sellers: seller ? [seller] : [],
-          builders,
-          specialists,
-          agents: assigned,
           acceptance,
           goal,
           evidenceText: evidence.trim() || undefined,
           stub,
+          mission: {
+            manager,
+            sellers: seller ? [seller] : [],
+            builders,
+            specialists,
+            agents: assigned,
+          },
         }),
       });
       const payload = (await response.json()) as {
-        runId?: string;
+        jobId?: string;
         error?: string;
         details?: string[];
       };
-      if (!response.ok || !payload.runId) {
+      if (!response.ok || !payload.jobId) {
         throw new Error(
           [payload.error, ...(payload.details ?? [])]
             .filter(Boolean)
             .join("\n") || t("failed"),
         );
       }
-      toast.success(t("started", { runId: payload.runId }));
+      toast.success(t("started", { runId: payload.jobId }));
       onOpenChange(false);
       setGoal("");
       setAcceptance("");

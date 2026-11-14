@@ -21,6 +21,9 @@ export function registerRun(program: Command): void {
     .requiredOption("--pack <dir>", "Team Pack directory")
     .option("--dry-run", "run without external side effects", false)
     .action(async (options: RunOptions) => {
+      console.warn(
+        "[deprecated] `kit run` uses the M0 demo workflow; use `kit pack run <dir> --dry-run` or `kit job start --kind pack-run --pack <dir>`.",
+      );
       if (!options.dryRun) {
         console.error("✖ M0 only supports --dry-run");
         process.exitCode = 1;

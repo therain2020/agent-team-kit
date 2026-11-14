@@ -24,6 +24,7 @@
         "@kit/core": "workspace:*",
         "@kit/engine": "workspace:*",
         "@kit/evolution": "workspace:*",
+        "@kit/job": "workspace:*",
         "@kit/manager": "workspace:*",
         "@kit/model": "workspace:*",
         "@kit/pack": "workspace:*",
@@ -56,6 +57,7 @@
         "@kit/core": "workspace:*",
         "@kit/delivery": "workspace:*",
         "@kit/engine": "workspace:*",
+        "@kit/iteration": "workspace:*",
         "@kit/model": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/queue": "workspace:*",
@@ -83,6 +85,7 @@
         "@kit/autopilot": "workspace:*",
         "@kit/core": "workspace:*",
         "@kit/evolution": "workspace:*",
+        "@kit/job": "workspace:*",
         "@kit/manager": "workspace:*",
         "@kit/model": "workspace:*",
         "@kit/pack": "workspace:*",
@@ -180,6 +183,29 @@
         "@kit/pack": "workspace:*",
         "@kit/store": "workspace:*",
         "yaml": "^2.6.1",
+      },
+    },
+    "packages/iteration": {
+      "name": "@kit/iteration",
+      "version": "0.9.0",
+      "dependencies": {
+        "@kit/coder": "workspace:*",
+        "@kit/core": "workspace:*",
+        "@kit/store": "workspace:*",
+        "@kit/workflow": "workspace:*",
+      },
+    },
+    "packages/job": {
+      "name": "@kit/job",
+      "version": "0.9.0",
+      "dependencies": {
+        "@kit/coder": "workspace:*",
+        "@kit/core": "workspace:*",
+        "@kit/engine": "workspace:*",
+        "@kit/iteration": "workspace:*",
+        "@kit/pack": "workspace:*",
+        "@kit/store": "workspace:*",
+        "@kit/workflow": "workspace:*",
       },
     },
     "packages/manager": {
@@ -568,6 +594,10 @@
     "@kit/evolution": ["@kit/evolution@workspace:packages/evolution"],
 
     "@kit/gateway": ["@kit/gateway@workspace:apps/gateway"],
+
+    "@kit/iteration": ["@kit/iteration@workspace:packages/iteration"],
+
+    "@kit/job": ["@kit/job@workspace:packages/job"],
 
     "@kit/manager": ["@kit/manager@workspace:packages/manager"],
 

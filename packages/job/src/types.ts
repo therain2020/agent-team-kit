@@ -1,0 +1,97 @@
+import type { CoderId } from "@kit/core";
+
+export type JobKind = "packRun" | "iteration";
+export type JobOrigin = "cli" | "web" | "api" | "autopilot" | "event";
+export type JobRunMode = "DRY_RUN" | "LIVE";
+export type JobApplyMode = "none" | "low" | "low-medium";
+
+export interface MissionInput {
+  manager?: string;
+  agents?: string[];
+  sellers?: string[];
+  builders?: string[];
+  specialists?: string[];
+}
+
+export interface StartJobInput {
+  kind: JobKind;
+  goal?: string;
+  acceptance?: string;
+  packDir: string;
+  workflow?: string;
+  domain?: string;
+  runMode?: JobRunMode;
+  applyMode?: JobApplyMode;
+  maxTasks?: number;
+  maxRepair?: number;
+  coder?: CoderId;
+  stub?: boolean;
+  budgetCny?: number;
+  dedupeKey?: string;
+  origin?: JobOrigin;
+  evidenceText?: string;
+  evidenceArtifactId?: string;
+  mission?: MissionInput;
+}
+
+export interface StartJobResult {
+  jobId: string;
+  kind: JobKind;
+  workflowId: string;
+  engine: "temporal" | "local";
+  runMode: JobRunMode;
+  applyMode?: JobApplyMode;
+  pack: string;
+  workflow?: string;
+  requestId?: string;
+  mission?: unknown;
+}
+
+export interface JobSummary {
+  jobId: string;
+  kind: JobKind;
+  goal: string | null;
+  status: string;
+  phase: string | null;
+  runMode: string;
+  workflowId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export interface PendingChange {
+  ticketId: string;
+  iterationId: string;
+  taskId: string;
+  domain: string | null;
+  goal: string | null;
+  risk: "low" | "medium" | "high";
+  changedFiles: string[];
+  baseSha: string;
+  diffArtifactId: string | null;
+  status: string;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApplyPendingResult {
+  ticketId: string;
+  status: "applied" | "blocked" | "reverted";
+  reason: string;
+  commit?: string;
+  backupDir: string;
+  artifactId: string;
+}
+
+export class JobError extends Error {
+  readonly code: string;
+  readonly status: number;
+
+  constructor(code: string, message: string, status = 400) {
+    super(message);
+    this.code = code;
+    this.status = status;
+  }
+}

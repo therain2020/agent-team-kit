@@ -1,5 +1,6 @@
 "use client";
 
+import { NewIterationDialog } from "@/components/iterations/new-iteration-dialog";
 import { EmptyState } from "@/components/kit/empty-state";
 import { PageHeader } from "@/components/kit/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -11,9 +12,10 @@ import type {
   IterationTaskView,
 } from "@/lib/iteration-types";
 import { cn } from "@/lib/utils";
-import { Activity, ChevronRight, Search } from "lucide-react";
+import { Activity, ChevronRight, Search, Square } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 const STATUSES = ["all", "running", "succeeded", "failed", "paused"];
 
@@ -25,6 +27,7 @@ export default function IterationsPage() {
   const [query, setQuery] = useState("");
   const [offset, setOffset] = useState(0);
   const [connection, setConnection] = useState<"live" | "reconnecting">("live");
+  const reloadRef = useRef<() => void>(() => {});
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -61,6 +64,7 @@ export default function IterationsPage() {
       }
     };
 
+    reloadRef.current = load;
     void load();
     const source = new EventSource(
       "/api/iterations/stream?iterationId=*&live=1",
@@ -87,6 +91,25 @@ export default function IterationsPage() {
 
   const runs = data?.runs ?? [];
 
+  const abortIteration = async (iterationId: string) => {
+    try {
+      const response = await fetch(
+        `/api/jobs/${encodeURIComponent(iterationId)}/abort?kind=iteration`,
+        { method: "POST", headers: { "content-type": "application/json" } },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `HTTP ${response.status}`);
+      }
+      toast.success(`Aborting ${iterationId}`);
+      reloadRef.current();
+    } catch (cause) {
+      toast.error(
+        cause instanceof Error ? cause.message : "failed to abort iteration",
+      );
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -99,6 +122,7 @@ export default function IterationsPage() {
             </Badge>
           </span>
         }
+        actions={<NewIterationDialog />}
       />
 
       <div className="flex flex-wrap items-center gap-2">
@@ -153,12 +177,19 @@ export default function IterationsPage() {
         <EmptyState
           icon={Activity}
           title="No iterations yet"
-          description="Run `kit iterate` in a pack domain. Turns, tools and diffs will appear here in real time."
+          description="Start an iteration here, or run `kit job start --kind iteration`. Turns, tools and diffs appear here in real time."
+          action={
+            <NewIterationDialog triggerLabel="Start the first iteration" />
+          }
         />
       ) : (
         <div className="space-y-4">
           {runs.map((item) => (
-            <RunCard key={item.run.iterationId} item={item} />
+            <RunCard
+              key={item.run.iterationId}
+              item={item}
+              onAbort={abortIteration}
+            />
           ))}
         </div>
       )}
@@ -188,8 +219,15 @@ export default function IterationsPage() {
   );
 }
 
-function RunCard({ item }: { item: IterationRunWithTasks }) {
+function RunCard({
+  item,
+  onAbort,
+}: {
+  item: IterationRunWithTasks;
+  onAbort: (iterationId: string) => void;
+}) {
   const { run, tasks, turns } = item;
+  const cancellable = ["running", "paused", "queued"].includes(run.status);
   return (
     <Card>
       <CardHeader className="space-y-2">
@@ -206,6 +244,16 @@ function RunCard({ item }: { item: IterationRunWithTasks }) {
             <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
             <Badge variant="outline">{run.phase}</Badge>
             {run.stalled ? <Badge variant="warning">stalled</Badge> : null}
+            {cancellable ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onAbort(run.iterationId)}
+              >
+                <Square className="size-3" />
+                Abort
+              </Button>
+            ) : null}
             <Link
               href={`/iterations/${encodeURIComponent(run.iterationId)}`}
               className="rounded p-1 text-zinc-500 hover:bg-accent hover:text-zinc-200"

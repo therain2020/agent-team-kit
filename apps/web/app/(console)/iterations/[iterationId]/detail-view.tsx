@@ -1,5 +1,6 @@
 "use client";
 
+import { PendingChanges } from "@/components/iterations/pending-changes";
 import { PageHeader } from "@/components/kit/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,10 +18,12 @@ import {
   CircleDot,
   ExternalLink,
   Radio,
+  Square,
   Wrench,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 type EventFilter = "all" | "tools" | "text" | "errors";
 
@@ -39,6 +42,7 @@ export function IterationDetailView({
   const [eventFilter, setEventFilter] = useState<EventFilter>("all");
   const [follow, setFollow] = useState(true);
   const [connection, setConnection] = useState<"live" | "reconnecting">("live");
+  const reloadRef = useRef<() => void>(() => {});
   const [loadingOlder, setLoadingOlder] = useState(false);
   const lastEventIdRef = useRef(0);
   const summaryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -76,11 +80,31 @@ export function IterationDetailView({
         }
       }
     };
+    reloadRef.current = load;
     void load();
     return () => {
       stopped = true;
     };
   }, [iterationId]);
+
+  const abort = async () => {
+    try {
+      const response = await fetch(
+        `/api/jobs/${encodeURIComponent(iterationId)}/abort?kind=iteration`,
+        { method: "POST", headers: { "content-type": "application/json" } },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `HTTP ${response.status}`);
+      }
+      toast.success("Abort requested");
+      reloadRef.current();
+    } catch (cause) {
+      toast.error(
+        cause instanceof Error ? cause.message : "failed to abort iteration",
+      );
+    }
+  };
 
   const refreshSummary = () => {
     if (summaryTimer.current) {
@@ -252,6 +276,16 @@ export function IterationDetailView({
                 <Radio className="size-2.5" />
                 {connection === "live" ? "live" : "reconnecting"}
               </Badge>
+              {["running", "paused", "queued"].includes(run.status) ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void abort()}
+                >
+                  <Square className="size-3.5" />
+                  Abort
+                </Button>
+              ) : null}
               <Button size="sm" variant="outline" asChild>
                 <Link href="/iterations">
                   <ArrowLeft className="size-3.5" />
@@ -276,6 +310,8 @@ export function IterationDetailView({
           <RunArtifactLinks run={run} />
         </div>
       </div>
+
+      <PendingChanges iterationId={iterationId} />
 
       <div className="flex flex-wrap items-center gap-2">
         <TaskFilter

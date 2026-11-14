@@ -8,6 +8,8 @@
       "@kit/coder": ["./packages/coder/src/index.ts"],
       "@kit/engine": ["./packages/engine/src/index.ts"],
       "@kit/engine/*": ["./packages/engine/src/*.ts"],
+      "@kit/iteration": ["./packages/iteration/src/index.ts"],
+      "@kit/job": ["./packages/job/src/index.ts"],
       "@kit/delivery": ["./packages/delivery/src/index.ts"],
       "@kit/workshop": ["./packages/workshop/src/index.ts"],
       "@kit/store": ["./packages/store/src/index.ts"],

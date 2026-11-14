@@ -61,32 +61,33 @@ export function RunPackDialog({
 
     setPending(true);
     try {
-      const response = await fetch("/api/runs", {
+      const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          kind: "packRun",
           packDir,
           workflow,
           stub,
-          mode: "DRY_RUN",
+          runMode: "DRY_RUN",
           ...(evidence.trim() ? { evidenceText: evidence } : {}),
         }),
       });
       const payload = (await response.json()) as {
-        runId?: string;
+        jobId?: string;
         error?: string;
       };
 
-      if (!response.ok || !payload.runId) {
+      if (!response.ok || !payload.jobId) {
         setError(
           payload.error ?? t("failedToStart", { status: response.status }),
         );
         return;
       }
 
-      toast.success(t("runStarted", { runId: payload.runId }));
+      toast.success(t("runStarted", { runId: payload.jobId }));
       setOpen(false);
-      router.push(`/runs/${encodeURIComponent(payload.runId)}`);
+      router.push(`/runs/${encodeURIComponent(payload.jobId)}`);
     } catch (startError) {
       setError(
         startError instanceof Error

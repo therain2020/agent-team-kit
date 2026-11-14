@@ -1,0 +1,15 @@
+{
+  "name": "@kit/iteration",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kit/coder": "workspace:*",
+    "@kit/core": "workspace:*",
+    "@kit/store": "workspace:*",
+    "@kit/workflow": "workspace:*"
+  }
+}

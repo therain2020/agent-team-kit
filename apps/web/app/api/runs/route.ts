@@ -1,12 +1,8 @@
-import { existsSync } from "node:fs";
-import path from "node:path";
 import { sameOriginError } from "@/lib/http";
-import { submitLocalRun } from "@/lib/local-runner";
-import { resolvePackDir } from "@/lib/paths";
-import { getStore } from "@/lib/store";
-import { eventEnvelopeSchema, newId } from "@kit/core";
-import { buildPackRun, loadPack } from "@kit/pack";
-import { createTemporalClient, taskQueue } from "@kit/workflow";
+import { jobErrorResponse, liveGateError } from "@/lib/job-api";
+import { getRepoRoot } from "@/lib/paths";
+import { ensureStoreSchema, getStore } from "@/lib/store";
+import { startJob } from "@kit/job";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -32,178 +28,60 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
 
-  if (body.mode !== undefined && body.mode !== "DRY_RUN") {
-    return NextResponse.json(
-      { error: "only DRY_RUN is supported from the console" },
-      { status: 400 },
-    );
+  const runMode =
+    body.mode === "LIVE" || body.mode === "DRY_RUN" ? body.mode : "DRY_RUN";
+  const gate = liveGateError(body.mode);
+  if (gate) {
+    return NextResponse.json({ error: gate }, { status: 403 });
   }
   if (typeof body.packDir !== "string" || body.packDir.trim().length === 0) {
     return NextResponse.json({ error: "packDir is required" }, { status: 400 });
   }
-
-  const packInput = body.packDir
-    .trim()
-    .replace(/^[./\\]+/, "")
-    .replace(/^packs[\\/]/, "");
-  const packDir = resolvePackDir(packInput);
-  if (!packDir) {
+  if (
+    body.evidenceText !== undefined &&
+    (typeof body.evidenceText !== "string" ||
+      body.evidenceText.length > 200_000)
+  ) {
     return NextResponse.json(
-      { error: "packDir must be inside packs/" },
-      { status: 400 },
-    );
-  }
-  if (!existsSync(path.join(packDir, "team.yaml"))) {
-    return NextResponse.json(
-      { error: "team.yaml not found in packDir" },
-      { status: 404 },
-    );
-  }
-
-  const loaded = await loadPack(packDir);
-  if (!loaded.ok) {
-    return NextResponse.json(
-      { error: "invalid pack", details: loaded.errors },
+      { error: "evidenceText must be a string under 200k characters" },
       { status: 400 },
     );
   }
 
-  const store = await getStore();
-  let evidenceText: string | undefined;
-  if (body.evidenceText !== undefined) {
-    if (
-      typeof body.evidenceText !== "string" ||
-      body.evidenceText.length > 200_000
-    ) {
-      return NextResponse.json(
-        { error: "evidenceText must be a string under 200k characters" },
-        { status: 400 },
-      );
-    }
-    evidenceText = body.evidenceText.trim() || undefined;
-  }
-  if (!evidenceText && body.evidenceArtifactId !== undefined) {
-    if (typeof body.evidenceArtifactId !== "string") {
-      return NextResponse.json(
-        { error: "evidenceArtifactId must be a string" },
-        { status: 400 },
-      );
-    }
-    const artifact = await store.artifactStore.findById(
-      body.evidenceArtifactId,
-    );
-    if (!artifact) {
-      return NextResponse.json(
-        { error: "evidence artifact not found" },
-        { status: 404 },
-      );
-    }
-    const blob = await store.blobs.findById(artifact.blobId);
-    if (!blob) {
-      return NextResponse.json(
-        { error: "evidence blob not found" },
-        { status: 404 },
-      );
-    }
-    try {
-      const bytes = await store.blobClient.get(blob.storageKey);
-      evidenceText = new TextDecoder().decode(bytes);
-    } catch {
-      return NextResponse.json(
-        { error: "evidence content unavailable in this blob backend" },
-        { status: 409 },
-      );
-    }
-  }
-
-  let built: Awaited<ReturnType<typeof buildPackRun>>;
   try {
-    built = await buildPackRun(loaded, {
-      workflow: typeof body.workflow === "string" ? body.workflow : undefined,
-      stub: body.stub === true,
-      input: evidenceText,
-    });
-  } catch (error) {
-    return NextResponse.json(
+    await ensureStoreSchema();
+    const result = await startJob(
+      getStore(),
       {
-        error: error instanceof Error ? error.message : "failed to build run",
+        kind: "packRun",
+        origin: "web",
+        packDir: body.packDir,
+        runMode,
+        stub: body.stub === true,
+        workflow: typeof body.workflow === "string" ? body.workflow : undefined,
+        evidenceText:
+          typeof body.evidenceText === "string" ? body.evidenceText : undefined,
+        evidenceArtifactId:
+          typeof body.evidenceArtifactId === "string"
+            ? body.evidenceArtifactId
+            : undefined,
       },
-      { status: 400 },
+      { repoRoot: getRepoRoot() },
     );
-  }
-
-  const now = new Date().toISOString();
-  const event = eventEnvelopeSchema.parse({
-    eventId: built.input.eventId,
-    type: built.eventType,
-    schemaVersion: "1.0",
-    occurredAt: now,
-    receivedAt: now,
-    workspaceId: built.input.workspaceId,
-    idempotencyKey: `ui:${built.input.runId}`,
-    traceId: newId("trc"),
-    payloadRef: "memory://ui",
-  });
-  await store.events.insert(event);
-
-  if (store.driver === "sqlite") {
-    try {
-      const queued = await submitLocalRun(built.input);
-      return NextResponse.json(
-        {
-          runId: built.input.runId,
-          requestId: queued.requestId,
-          engine: "local",
-          pack: loaded.pack.metadata.name,
-          workflow: built.workflow.id,
-          stub: built.input.stub,
-          evidence: Boolean(evidenceText),
-        },
-        { status: 202 },
-      );
-    } catch (error) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "failed to queue local run",
-          runId: built.input.runId,
-        },
-        { status: 502 },
-      );
-    }
-  }
-
-  const { client, connection } = await createTemporalClient();
-  try {
-    const handle = await client.workflow.start("packWorkflow", {
-      taskQueue,
-      workflowId: `pack-${built.input.runId}`,
-      args: [built.input],
-    });
     return NextResponse.json(
       {
-        runId: built.input.runId,
-        workflowId: handle.workflowId,
-        engine: "temporal",
-        pack: loaded.pack.metadata.name,
-        workflow: built.workflow.id,
-        stub: built.input.stub,
-        evidence: Boolean(evidenceText),
+        runId: result.jobId,
+        requestId: result.requestId,
+        ...(result.workflowId ? { workflowId: result.workflowId } : {}),
+        engine: result.engine,
+        pack: result.pack,
+        workflow: result.workflow,
+        stub: body.stub === true,
+        evidence: Boolean(body.evidenceText || body.evidenceArtifactId),
       },
       { status: 202 },
     );
   } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "failed to start workflow",
-        runId: built.input.runId,
-      },
-      { status: 502 },
-    );
-  } finally {
-    await connection.close();
+    return jobErrorResponse(error);
   }
 }

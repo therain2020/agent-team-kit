@@ -1,0 +1,723 @@
+import { createHash } from "node:crypto";
+import path from "node:path";
+import {
+  type CoderId,
+  eventEnvelopeSchema,
+  missionAssignmentSchema,
+  newId,
+} from "@kit/core";
+import { enqueueLocalRun } from "@kit/engine";
+import {
+  buildPackRun,
+  loadPack,
+  planAgents,
+  rolePlanForAgents,
+  validateRolePlan,
+} from "@kit/pack";
+import type { initStore } from "@kit/store";
+import {
+  type IterationInput,
+  createTemporalClient,
+  taskQueue,
+} from "@kit/workflow";
+import {
+  type JobApplyMode,
+  JobError,
+  type JobKind,
+  type JobRunMode,
+  type JobSummary,
+  type StartJobInput,
+  type StartJobResult,
+} from "./types";
+
+type Store = Awaited<ReturnType<typeof initStore>>;
+
+export interface JobServiceOptions {
+  repoRoot: string;
+}
+
+export async function startJob(
+  store: Store,
+  input: StartJobInput,
+  options: JobServiceOptions,
+): Promise<StartJobResult> {
+  const runMode: JobRunMode = input.runMode ?? "DRY_RUN";
+  const packDir = resolvePackDir(
+    options.repoRoot,
+    input.packDir,
+    input.origin === "cli",
+  );
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new JobError(
+      "invalid_pack",
+      `invalid pack: ${loaded.errors.join("; ")}`,
+    );
+  }
+  if (input.kind === "iteration") {
+    return await startIterationJob(store, input, runMode, packDir, loaded);
+  }
+  return await startPackRunJob(store, input, runMode, packDir, loaded);
+}
+
+export async function listJobs(
+  store: Store,
+  filter: { kind?: JobKind; status?: string; limit?: number } = {},
+): Promise<JobSummary[]> {
+  const limit = clampInt(filter.limit, 1, 100, 20);
+  const jobs: JobSummary[] = [];
+
+  if (!filter.kind || filter.kind === "iteration") {
+    const rows = filter.status
+      ? await store.sql<IterationJobRow[]>`
+          SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
+                 started_at, updated_at, finished_at
+          FROM iteration_runs
+          WHERE status = ${filter.status}
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `
+      : await store.sql<IterationJobRow[]>`
+          SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
+                 started_at, updated_at, finished_at
+          FROM iteration_runs
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `;
+    for (const row of rows) {
+      jobs.push({
+        jobId: row.iteration_id,
+        kind: "iteration",
+        goal: row.goal,
+        status: row.status,
+        phase: row.phase,
+        runMode: row.run_mode,
+        workflowId: row.workflow_id,
+        createdAt: iso(row.started_at),
+        updatedAt: iso(row.updated_at),
+        finishedAt: row.finished_at ? iso(row.finished_at) : null,
+      });
+    }
+  }
+
+  if (!filter.kind || filter.kind === "packRun") {
+    const rows = filter.status
+      ? await store.sql<RunJobRow[]>`
+          SELECT run_id, workflow_id, run_mode, status, created_at, updated_at
+          FROM runs
+          WHERE status = ${filter.status}
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `
+      : await store.sql<RunJobRow[]>`
+          SELECT run_id, workflow_id, run_mode, status, created_at, updated_at
+          FROM runs
+          ORDER BY updated_at DESC
+          LIMIT ${limit}
+        `;
+    for (const row of rows) {
+      jobs.push({
+        jobId: row.run_id,
+        kind: "packRun",
+        goal: null,
+        status: row.status,
+        phase: null,
+        runMode: row.run_mode,
+        workflowId: row.workflow_id,
+        createdAt: iso(row.created_at),
+        updatedAt: iso(row.updated_at),
+        finishedAt: null,
+      });
+    }
+  }
+
+  return jobs
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, limit);
+}
+
+export async function getJob(
+  store: Store,
+  kind: JobKind,
+  jobId: string,
+): Promise<JobSummary | null> {
+  if (kind === "iteration") {
+    const rows = await store.sql<IterationJobRow[]>`
+      SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
+             started_at, updated_at, finished_at
+      FROM iteration_runs WHERE iteration_id = ${jobId} LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      jobId: row.iteration_id,
+      kind: "iteration",
+      goal: row.goal,
+      status: row.status,
+      phase: row.phase,
+      runMode: row.run_mode,
+      workflowId: row.workflow_id,
+      createdAt: iso(row.started_at),
+      updatedAt: iso(row.updated_at),
+      finishedAt: row.finished_at ? iso(row.finished_at) : null,
+    };
+  }
+
+  const rows = await store.sql<RunJobRow[]>`
+    SELECT run_id, workflow_id, run_mode, status, created_at, updated_at
+    FROM runs WHERE run_id = ${jobId} LIMIT 1
+  `;
+  const row = rows[0];
+  if (!row) {
+    return null;
+  }
+  return {
+    jobId: row.run_id,
+    kind: "packRun",
+    goal: null,
+    status: row.status,
+    phase: null,
+    runMode: row.run_mode,
+    workflowId: row.workflow_id,
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+    finishedAt: null,
+  };
+}
+
+export async function abortJob(
+  store: Store,
+  kind: JobKind,
+  jobId: string,
+  options: JobServiceOptions,
+): Promise<{ jobId: string; kind: JobKind; cancelled: boolean }> {
+  const job = await getJob(store, kind, jobId);
+  if (job && isTerminal(job.status)) {
+    throw new JobError(
+      "already_finished",
+      `${jobId} is already ${job.status}`,
+      409,
+    );
+  }
+
+  if (store.driver === "sqlite") {
+    if (kind === "iteration") {
+      throw new JobError(
+        "unsupported_mode",
+        "iteration requires Temporal (Scale Mode)",
+        409,
+      );
+    }
+    // A queued local run has no runs row yet; the request is the source of truth.
+    const request = await store.runRequests.find(jobId);
+    if (!request) {
+      throw new JobError("not_found", `${kind} ${jobId} not found`, 404);
+    }
+    if (request.status === "claimed") {
+      throw new JobError(
+        "already_running",
+        "local run is already claimed and cannot be aborted",
+        409,
+      );
+    }
+    await store.sql`
+      UPDATE run_requests SET status = 'cancelled', error = 'aborted by operator',
+        updated_at = ${new Date().toISOString()}
+      WHERE run_id = ${jobId} AND status = 'queued'
+    `;
+    return { jobId, kind, cancelled: true };
+  }
+
+  if (!job && kind === "iteration") {
+    throw new JobError("not_found", `${kind} ${jobId} not found`, 404);
+  }
+
+  const workflowId =
+    job?.workflowId ??
+    (kind === "iteration" ? `iteration-${jobId}` : `pack-${jobId}`);
+  const { client, connection } = await createTemporalClient();
+  try {
+    const handle = client.workflow.getHandle(workflowId);
+    await handle.cancel();
+  } catch (error) {
+    throw new JobError(
+      "cancel_failed",
+      error instanceof Error ? error.message : String(error),
+      502,
+    );
+  } finally {
+    await connection.close();
+  }
+  if (kind === "iteration") {
+    const now = new Date().toISOString();
+    await store.sql`
+      UPDATE iteration_runs SET status = 'cancelled', phase = 'cancelled',
+        error = COALESCE(error, 'aborted by operator'),
+        finished_at = ${now}, updated_at = ${now}
+      WHERE iteration_id = ${jobId}
+    `;
+  }
+  return { jobId, kind, cancelled: true };
+}
+
+async function startPackRunJob(
+  store: Store,
+  input: StartJobInput,
+  runMode: JobRunMode,
+  packDir: string,
+  loaded: Awaited<ReturnType<typeof loadPack>>,
+): Promise<StartJobResult> {
+  if (!loaded.ok) {
+    throw new JobError("invalid_pack", "invalid pack");
+  }
+  const workflowId =
+    input.workflow ??
+    (loaded.workflows.length > 0 ? loaded.workflows[0]?.id : undefined);
+  if (!workflowId) {
+    throw new JobError("workflow_required", "workflow is required");
+  }
+  if (!loaded.workflows.some((workflow) => workflow.id === workflowId)) {
+    throw new JobError("unknown_workflow", `unknown workflow: ${workflowId}`);
+  }
+
+  const mission = await resolveMission(store, loaded, input, workflowId);
+  const evidenceText = await resolveEvidence(store, input);
+  const missionGoal =
+    mission && typeof mission.goal === "string" ? mission.goal : undefined;
+  const goal = input.goal?.trim() ?? missionGoal;
+
+  let built: Awaited<ReturnType<typeof buildPackRun>>;
+  try {
+    built = await buildPackRun(loaded, {
+      workflow: workflowId,
+      input: evidenceText ?? goal,
+      stub: input.stub === true,
+      runMode,
+    });
+  } catch (error) {
+    throw new JobError(
+      "build_failed",
+      error instanceof Error ? error.message : "failed to build run",
+    );
+  }
+
+  const now = new Date().toISOString();
+  const event = eventEnvelopeSchema.parse({
+    eventId: built.input.eventId,
+    type: built.eventType,
+    schemaVersion: "1.0",
+    occurredAt: now,
+    receivedAt: now,
+    workspaceId: built.input.workspaceId,
+    idempotencyKey: `${input.origin ?? "api"}:${built.input.runId}`,
+    traceId: newId("trc"),
+    payloadRef: "memory://job",
+  });
+  await store.events.insert(event);
+
+  if (mission) {
+    await store.artifactService.publish({
+      workspaceId: built.input.workspaceId,
+      content: new TextEncoder().encode(JSON.stringify(mission, null, 2)),
+      producer: {
+        agentId: "manager",
+        agentVersion: "1.0.0",
+        promptHash: "sha256:mission-assignment",
+        modelId: "none",
+      },
+      inputs: [],
+      runId: built.input.runId,
+      stageId: `${built.input.runId}:mission-assignment`,
+      runMode,
+      cost: { currency: "CNY", amount: 0, tokens: 0 },
+      sensitivity: "internal",
+      retentionClass: "artifact_365d",
+    });
+  }
+
+  if (store.driver === "sqlite") {
+    const queued = await enqueueLocalRun(built.input, store);
+    return {
+      jobId: built.input.runId,
+      kind: "packRun",
+      workflowId: `pack-${built.input.runId}`,
+      engine: "local",
+      runMode,
+      pack: loaded.pack.metadata.name,
+      workflow: workflowId,
+      requestId: queued.requestId,
+      ...(mission ? { mission } : {}),
+    };
+  }
+
+  const { client, connection } = await createTemporalClient();
+  try {
+    const handle = await client.workflow.start("packWorkflow", {
+      taskQueue,
+      workflowId: `pack-${built.input.runId}`,
+      args: [built.input],
+    });
+    return {
+      jobId: built.input.runId,
+      kind: "packRun",
+      workflowId: handle.workflowId,
+      engine: "temporal",
+      runMode,
+      pack: loaded.pack.metadata.name,
+      workflow: workflowId,
+      ...(mission ? { mission } : {}),
+    };
+  } catch (error) {
+    throw new JobError(
+      "start_failed",
+      error instanceof Error ? error.message : "failed to start workflow",
+      502,
+    );
+  } finally {
+    await connection.close();
+  }
+}
+
+async function startIterationJob(
+  store: Store,
+  input: StartJobInput,
+  runMode: JobRunMode,
+  packDir: string,
+  loaded: Awaited<ReturnType<typeof loadPack>>,
+): Promise<StartJobResult> {
+  if (!loaded.ok) {
+    throw new JobError("invalid_pack", "invalid pack");
+  }
+  if (!loaded.iteration) {
+    throw new JobError(
+      "iteration_pack_required",
+      `pack has no iteration.yaml: ${packDir}`,
+      404,
+    );
+  }
+  if (store.driver === "sqlite") {
+    throw new JobError(
+      "unsupported_mode",
+      "iteration requires Temporal (Scale Mode); set KIT_RUNTIME_MODE=scale",
+      409,
+    );
+  }
+  if (!input.goal?.trim()) {
+    throw new JobError("goal_required", "goal is required for an iteration");
+  }
+  const coder = parseCoder(input.coder);
+  const applyMode: JobApplyMode =
+    runMode === "LIVE" ? (input.applyMode ?? "low") : "none";
+  const dedupeKey = input.dedupeKey?.trim();
+  const iterationId = newId("it");
+  const workflowId = dedupeKey
+    ? `iteration-${"default"}-${hash(dedupeKey)}`
+    : `iteration-${iterationId}`;
+
+  if (dedupeKey) {
+    const existing = await store.sql<Array<{ iteration_id: string }>>`
+      SELECT iteration_id FROM iteration_runs
+      WHERE workflow_id = ${workflowId} LIMIT 1
+    `;
+    const found = existing[0]?.iteration_id;
+    if (found) {
+      return {
+        jobId: found,
+        kind: "iteration",
+        workflowId,
+        engine: "temporal",
+        runMode,
+        applyMode,
+        pack: loaded.pack.metadata.name,
+      };
+    }
+  }
+
+  const iterationInput: IterationInput = {
+    iterationId,
+    workflowId,
+    workspaceId: "default",
+    packDir,
+    goal: input.goal.trim(),
+    ...(input.acceptance ? { acceptance: input.acceptance } : {}),
+    ...(input.domain ? { domain: input.domain } : {}),
+    maxTasks: clampInt(input.maxTasks, 1, 20, 4),
+    maxRepair: clampInt(input.maxRepair, 0, 5, 2),
+    runMode,
+    applyMode,
+    ...(coder ? { coder } : {}),
+    stub: input.stub === true,
+    ...(input.budgetCny !== undefined ? { budgetCny: input.budgetCny } : {}),
+    ...(dedupeKey ? { dedupeKey } : {}),
+  };
+
+  const now = new Date().toISOString();
+  await store.sql`
+    INSERT INTO iteration_runs (
+      iteration_id, workflow_id, workspace_id, goal, acceptance, run_mode,
+      apply_mode, status, phase, started_at, updated_at
+    ) VALUES (
+      ${iterationId}, ${workflowId}, 'default', ${iterationInput.goal},
+      ${iterationInput.acceptance ?? null}, ${runMode}, ${applyMode},
+      'running', 'queued', ${now}, ${now}
+    )
+    ON CONFLICT (iteration_id) DO NOTHING
+  `;
+
+  const { client, connection } = await createTemporalClient();
+  try {
+    const handle = await client.workflow.start("iterationWorkflow", {
+      taskQueue,
+      workflowId,
+      args: [iterationInput],
+      ...(dedupeKey
+        ? { workflowIdConflictPolicy: "USE_EXISTING" as const }
+        : {}),
+    });
+    return {
+      jobId: iterationId,
+      kind: "iteration",
+      workflowId: handle.workflowId,
+      engine: "temporal",
+      runMode,
+      applyMode,
+      pack: loaded.pack.metadata.name,
+    };
+  } catch (error) {
+    await store.sql`
+      UPDATE iteration_runs SET status = 'failed', phase = 'failed',
+        error = ${error instanceof Error ? error.message : String(error)},
+        finished_at = ${new Date().toISOString()},
+        updated_at = ${new Date().toISOString()}
+      WHERE iteration_id = ${iterationId}
+    `;
+    throw new JobError(
+      "start_failed",
+      error instanceof Error ? error.message : "failed to start workflow",
+      502,
+    );
+  } finally {
+    await connection.close();
+  }
+}
+
+async function resolveMission(
+  store: Store,
+  loaded: Extract<Awaited<ReturnType<typeof loadPack>>, { ok: true }>,
+  input: StartJobInput,
+  workflowId: string,
+): Promise<Record<string, unknown> | null> {
+  if (!input.mission) {
+    return null;
+  }
+  const manager =
+    input.mission.manager?.trim() ||
+    (loaded.pack.manager?.agent ? "manager" : "manager");
+  const managerValid =
+    manager === "manager" ||
+    loaded.agents.has(manager) ||
+    Boolean(loaded.pack.manager?.agent);
+  if (!managerValid) {
+    throw new JobError("invalid_manager", "invalid manager");
+  }
+  const requestedSellers = stringList(input.mission.sellers);
+  const requestedBuilders = stringList(input.mission.builders);
+  const requestedSpecialists = stringList(input.mission.specialists);
+  const allowCombined = loaded.roleRules.allowCombined;
+  let rolePlan =
+    requestedSellers.length + requestedBuilders.length > 0
+      ? {
+          sellers: requestedSellers,
+          builders: requestedBuilders,
+          specialists: requestedSpecialists,
+          allowCombined,
+        }
+      : rolePlanForAgents(loaded.agents, allowCombined);
+  const selected = new Set(stringList(input.mission.agents));
+  if (selected.size > 0) {
+    rolePlan = {
+      sellers: rolePlan.sellers.filter((id) => selected.has(id)),
+      builders: rolePlan.builders.filter((id) => selected.has(id)),
+      specialists: rolePlan.specialists.filter((id) => selected.has(id)),
+      allowCombined,
+    };
+  }
+  if (
+    rolePlan.sellers.length === 0 &&
+    rolePlan.builders.length === 0 &&
+    rolePlan.specialists.length === 0
+  ) {
+    rolePlan = rolePlanForAgents(loaded.agents, allowCombined);
+  }
+  const roleErrors = validateRolePlan({
+    agents: loaded.agents,
+    rules: loaded.roleRules,
+    sellers: rolePlan.sellers,
+    builders: rolePlan.builders,
+    specialists: rolePlan.specialists,
+    allowCombined,
+  });
+  if (roleErrors.length > 0) {
+    throw new JobError(
+      "invalid_roles",
+      `invalid role assignment: ${roleErrors.join("; ")}`,
+    );
+  }
+  const agents = planAgents(rolePlan);
+  if (agents.length === 0) {
+    throw new JobError("no_agents", "no agents assigned");
+  }
+  return missionAssignmentSchema.parse({
+    goal: input.goal?.trim() || `Run ${workflowId}`,
+    ...(input.acceptance?.trim()
+      ? { acceptance: input.acceptance.trim() }
+      : {}),
+    packDir: loaded.pack.metadata.name,
+    workflow: workflowId,
+    manager,
+    sellers: rolePlan.sellers,
+    builders: rolePlan.builders,
+    specialists: rolePlan.specialists,
+    agents,
+    allowCombined,
+    mode: input.runMode ?? "DRY_RUN",
+    createdAt: new Date().toISOString(),
+    createdBy: `operator:${input.origin ?? "api"}`,
+  }) as Record<string, unknown>;
+}
+
+async function resolveEvidence(
+  store: Store,
+  input: StartJobInput,
+): Promise<string | undefined> {
+  if (input.evidenceText !== undefined) {
+    if (input.evidenceText.length > 200_000) {
+      throw new JobError(
+        "evidence_too_large",
+        "evidenceText must be under 200k characters",
+      );
+    }
+    return input.evidenceText.trim() || undefined;
+  }
+  if (!input.evidenceArtifactId) {
+    return undefined;
+  }
+  const artifact = await store.artifactStore.findById(input.evidenceArtifactId);
+  if (!artifact) {
+    throw new JobError(
+      "artifact_not_found",
+      "evidence artifact not found",
+      404,
+    );
+  }
+  const blob = await store.blobs.findById(artifact.blobId);
+  if (!blob) {
+    throw new JobError("blob_not_found", "evidence blob not found", 404);
+  }
+  try {
+    const bytes = await store.blobClient.get(blob.storageKey);
+    return new TextDecoder().decode(bytes);
+  } catch {
+    throw new JobError(
+      "artifact_unavailable",
+      "evidence content unavailable in this blob backend",
+      409,
+    );
+  }
+}
+
+function resolvePackDir(
+  repoRoot: string,
+  input: string,
+  allowOutside: boolean,
+): string {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new JobError("pack_required", "packDir is required");
+  }
+  const resolved = path.isAbsolute(trimmed)
+    ? path.resolve(trimmed)
+    : trimmed.replace(/\\/g, "/").startsWith("packs/")
+      ? path.resolve(repoRoot, trimmed)
+      : path.resolve(repoRoot, "packs", trimmed);
+  if (!allowOutside) {
+    const packsRoot = path.resolve(repoRoot, "packs");
+    const prefix = packsRoot.endsWith(path.sep)
+      ? packsRoot
+      : `${packsRoot}${path.sep}`;
+    if (!resolved.startsWith(prefix)) {
+      throw new JobError("pack_outside_root", "packDir must be inside packs/");
+    }
+  }
+  return resolved;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+}
+
+function parseCoder(value: unknown): CoderId | undefined {
+  return value === "dsh" ||
+    value === "codex" ||
+    value === "opencode" ||
+    value === "command"
+    ? value
+    : undefined;
+}
+
+function clampInt(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function iso(value: string | Date | null): string {
+  if (!value) {
+    return new Date(0).toISOString();
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function isTerminal(status: string): boolean {
+  return ["succeeded", "failed", "cancelled", "completed"].includes(status);
+}
+
+interface IterationJobRow {
+  iteration_id: string;
+  goal: string | null;
+  status: string;
+  phase: string;
+  run_mode: string;
+  workflow_id: string | null;
+  started_at: string | Date;
+  updated_at: string | Date;
+  finished_at: string | Date | null;
+}
+
+interface RunJobRow {
+  run_id: string;
+  workflow_id: string;
+  run_mode: string;
+  status: string;
+  created_at: string | Date;
+  updated_at: string | Date;
+}

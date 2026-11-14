@@ -2,6 +2,8 @@ import type { CoderId, IterationTask, TaskPlan } from "@kit/core";
 
 export interface IterationInput {
   iterationId: string;
+  /** Temporal workflow id used to start this iteration (dedupe-aware). */
+  workflowId?: string;
   workspaceId: string;
   packDir: string;
   goal: string;

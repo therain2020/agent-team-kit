@@ -47,6 +47,22 @@ Start the Manager Console in another (same `KIT_BLOB_BACKEND` as the worker):
 bun run web:dev   # http://localhost:3000
 ```
 
+For development, prefer the dev server (`bun run web:dev`, or
+`kit up --web --web-mode dev`). It hot-reloads and avoids production
+rebuilds. Run `web:build` before shipping or when the supervisor serves the
+built console.
+
+### Windows: `web:build` fails with `EPERM scandir` in `%TEMP%`
+
+Next's build scans the temp directory. If `%TEMP%` contains an unreadable
+folder (some installers leave ACL-protected `LISF_*.tmp` dirs), the build
+fails before compiling. Point the build at a writable temp directory:
+
+```powershell
+$env:TEMP="$PWD\.tmp\next-temp"; $env:TMP=$env:TEMP
+bun run web:build
+```
+
 The console covers the full loop:
 
 - `/office` — task-centric Manager Office: Demand → Build → Deliver → Blocked →
