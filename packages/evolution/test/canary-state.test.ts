@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_CANARY_THRESHOLDS,
   type EvolutionDecisionRecord,
   evaluateCanary,
   markCanaryPromoted,
@@ -11,6 +12,7 @@ import {
   startCanary,
 } from "../src/canary";
 import { initVariant, proposeVariant } from "../src/evolve";
+import { createEvalSnapshot } from "../src/snapshot";
 
 const roots: string[] = [];
 
@@ -173,6 +175,83 @@ describe("canary state machine", () => {
       reason: "operator stopped the rollout",
       actor: "operator",
     });
+  }, 30_000);
+
+  it("records an evaluate decision with scores and thresholds", async () => {
+    const {
+      baselineDir,
+      canaryDir,
+      evidence,
+      statePath,
+      decisionsPath,
+      archive,
+    } = await setup();
+    await startCanary(baselineDir, canaryDir, {
+      trafficPercent: 10,
+      statePath,
+      decisionsPath,
+    });
+
+    const result = await evaluateCanary([evidence], {
+      stub: true,
+      archive,
+      statePath,
+      decisionsPath,
+    });
+
+    expect(result.decision.rollback).toBe(false);
+    expect(result.summary.thresholds).toEqual(DEFAULT_CANARY_THRESHOLDS);
+    expect(result.summary.champion.averageScore).toBe(1);
+    expect(result.summary.candidate.averageScore).toBe(1);
+
+    const evaluate = (await readDecisions(decisionsPath)).at(-1);
+    expect(evaluate).toMatchObject({
+      kind: "evaluate",
+      trigger: "manual",
+      fromStatus: "canary",
+      toStatus: "canary",
+      fromTrafficPercent: 10,
+      toTrafficPercent: 10,
+      actor: "operator",
+    });
+    expect(evaluate?.reason).toContain("thresholds");
+  }, 30_000);
+
+  it("rejects a tampered eval snapshot before scoring", async () => {
+    const {
+      baselineDir,
+      canaryDir,
+      evidence,
+      statePath,
+      decisionsPath,
+      archive,
+    } = await setup();
+    const snapshot = await createEvalSnapshot({
+      cycleId: "evl_tamper",
+      packDir: baselineDir,
+      cyclesRoot: path.join(path.dirname(baselineDir), "cycles"),
+      freeze: false,
+    });
+    await writeFile(
+      path.join(snapshot.dir, "evals", "rubrics.yaml"),
+      "tampered: true\n",
+      "utf8",
+    );
+    await startCanary(baselineDir, canaryDir, {
+      trafficPercent: 10,
+      statePath,
+      decisionsPath,
+    });
+
+    await expect(
+      evaluateCanary([evidence], {
+        stub: true,
+        archive,
+        statePath,
+        decisionsPath,
+        evalDir: snapshot.dir,
+      }),
+    ).rejects.toThrow(/frozen eval snapshot failed verification/);
   }, 30_000);
 
   it("promotes the canary and moves the champion", async () => {

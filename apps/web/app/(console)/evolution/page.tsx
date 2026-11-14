@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadEvolutionData } from "@/lib/evolution";
 import { listPacks } from "@/lib/packs";
 import { formatCny, timeAgo } from "@/lib/utils";
+import { DEFAULT_CANARY_THRESHOLDS } from "@kit/evolution";
 import {
   ClipboardCheck,
   FlaskConical,
@@ -48,6 +49,10 @@ export default async function EvolutionPage() {
     : "";
   const champion = variants.find((variant) => variant.isChampion);
   const championScore = champion?.averageScore ?? 0;
+  const canaryDirName = canary?.path.split(/[\\/]/).pop();
+  const canaryVariant = canaryDirName
+    ? variants.find((variant) => variant.dirName === canaryDirName)
+    : undefined;
 
   return (
     <div className="space-y-5">
@@ -230,6 +235,20 @@ export default async function EvolutionPage() {
                   </span>{" "}
                   <span className="text-zinc-600">{t("liveTraffic")}</span>
                 </p>
+                <p>
+                  {t("championScore")}{" "}
+                  <span className="font-mono text-zinc-200">
+                    {champion?.latest ? champion.averageScore.toFixed(2) : "—"}
+                  </span>
+                </p>
+                <p>
+                  {t("candidateScore")}{" "}
+                  <span className="font-mono text-zinc-200">
+                    {canaryVariant?.latest
+                      ? canaryVariant.averageScore.toFixed(2)
+                      : "—"}
+                  </span>
+                </p>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-900">
                 <div
@@ -237,6 +256,20 @@ export default async function EvolutionPage() {
                   style={{ width: `${canary.trafficPercent}%` }}
                 />
               </div>
+              <p className="text-[10px] text-zinc-600">
+                {t("thresholds")}:{" "}
+                {t("thresholdScore", {
+                  value: `-${DEFAULT_CANARY_THRESHOLDS.score.toFixed(2)}`,
+                })}{" "}
+                ·{" "}
+                {t("thresholdPassRate", {
+                  value: `-${DEFAULT_CANARY_THRESHOLDS.passRate.toFixed(2)}`,
+                })}{" "}
+                ·{" "}
+                {t("thresholdCost", {
+                  value: DEFAULT_CANARY_THRESHOLDS.costMultiplier.toFixed(1),
+                })}
+              </p>
               {canary.reason ? (
                 <p className="rounded border border-border bg-zinc-950/50 px-2 py-1.5 text-[11px] text-amber-300/80">
                   {canary.reason}

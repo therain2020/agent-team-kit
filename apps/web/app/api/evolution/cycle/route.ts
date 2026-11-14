@@ -1,5 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveEvolutionEvidence } from "@/lib/evolution-evidence";
 import { getEvolutionRepo } from "@/lib/evolution-repo";
 import { sameOriginError } from "@/lib/http";
 import { getRepoRoot, resolvePackDir } from "@/lib/paths";
@@ -38,17 +39,12 @@ export async function POST(request: Request) {
   if (!packDir) {
     return NextResponse.json({ error: "invalid packDir" }, { status: 400 });
   }
-  const evidenceText =
-    typeof body.evidenceText === "string" ? body.evidenceText.trim() : "";
-  if (!evidenceText) {
+  let evidence: Awaited<ReturnType<typeof resolveEvolutionEvidence>>;
+  try {
+    evidence = await resolveEvolutionEvidence(body.evidenceText);
+  } catch (error) {
     return NextResponse.json(
-      { error: "evidenceText is required for evaluation" },
-      { status: 400 },
-    );
-  }
-  if (evidenceText.length > 200_000) {
-    return NextResponse.json(
-      { error: "evidenceText exceeds 200k characters" },
+      { error: error instanceof Error ? error.message : "invalid evidence" },
       { status: 400 },
     );
   }
@@ -57,7 +53,7 @@ export async function POST(request: Request) {
   const tempDir = path.join(repoRoot, ".tmp", "evolution");
   await mkdir(tempDir, { recursive: true });
   const inputFile = path.join(tempDir, `${newId("evc")}.json`);
-  await writeFile(inputFile, evidenceText, "utf8");
+  await writeFile(inputFile, evidence.text, "utf8");
 
   const variantsRoot = path.join(repoRoot, "variants");
   try {
@@ -78,11 +74,19 @@ export async function POST(request: Request) {
       variantsRoot,
       repo: await getEvolutionRepo(),
     });
-    return NextResponse.json({ record }, { status: 200 });
+    return NextResponse.json(
+      {
+        record,
+        evidence: { generated: evidence.generated, sources: evidence.sources },
+      },
+      { status: 200 },
+    );
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "cycle failed" },
       { status: 500 },
     );
+  } finally {
+    await rm(inputFile, { force: true });
   }
 }
