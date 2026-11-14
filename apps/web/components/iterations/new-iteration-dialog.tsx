@@ -25,6 +25,9 @@ interface Project {
   path: string;
   source: "kit" | "workspace";
   checks: string[];
+  branch?: string | null;
+  defaultBranch?: string | null;
+  onDefaultBranch?: boolean;
 }
 
 interface Draft {
@@ -65,6 +68,7 @@ export function NewIterationDialog({
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [liveAllowed, setLiveAllowed] = useState(false);
   const [projectId, setProjectId] = useState("self");
+  const [customPath, setCustomPath] = useState("");
   const [goal, setGoal] = useState("");
   const [draft, setDraft] = useState<DraftResponse | null>(null);
   const [domain, setDomain] = useState("cyber");
@@ -121,10 +125,14 @@ export function NewIterationDialog({
     }
     setPending("draft");
     try {
+      const customTarget = customPath.trim();
       const response = await fetch("/api/jobs/draft", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ goal: goal.trim(), projectId }),
+        body: JSON.stringify({
+          goal: goal.trim(),
+          ...(customTarget ? { projectPath: customTarget } : { projectId }),
+        }),
       });
       const payload = (await response.json()) as DraftResponse & {
         error?: string;
@@ -151,6 +159,7 @@ export function NewIterationDialog({
     setDraft(null);
     setError(null);
     setLive(false);
+    setCustomPath("");
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -173,7 +182,7 @@ export function NewIterationDialog({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           kind: "iteration",
-          projectId: draft.project.id,
+          projectPath: draft.project.path,
           packDir: draft.draft.packDir,
           goal: goal.trim(),
           acceptance: acceptance.trim() || undefined,
@@ -242,13 +251,27 @@ export function NewIterationDialog({
                   </option>
                 ))}
               </select>
-              {selectedProject ? (
-                <p className="font-mono text-[10px] text-zinc-500">
-                  {selectedProject.path}
-                  {selectedProject.checks.length > 0
-                    ? ` · ${t("checks", { checks: selectedProject.checks.join(", ") })}`
-                    : ` · ${t("noChecks")}`}
-                </p>
+              {customPath.trim() ? (
+                <>
+                  <p className="font-mono text-[10px] text-zinc-500">
+                    {customPath.trim()}
+                  </p>
+                  <p className="text-[10px] text-zinc-600">
+                    {t("isolationNote")}
+                  </p>
+                </>
+              ) : selectedProject ? (
+                <>
+                  <p className="font-mono text-[10px] text-zinc-500">
+                    {selectedProject.path}
+                    {selectedProject.checks.length > 0
+                      ? ` · ${t("checks", { checks: selectedProject.checks.join(", ") })}`
+                      : ` · ${t("noChecks")}`}
+                  </p>
+                  <p className="text-[10px] text-zinc-600">
+                    {t("isolationNote")}
+                  </p>
+                </>
               ) : null}
               {projectsError !== null ? (
                 <p className="text-[11px] text-red-300">
@@ -257,6 +280,23 @@ export function NewIterationDialog({
                   })}
                 </p>
               ) : null}
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="iteration-custom-path"
+                className="text-xs font-medium text-zinc-300"
+              >
+                {t("customPathLabel")}
+              </label>
+              <Input
+                id="iteration-custom-path"
+                value={customPath}
+                onChange={(event) => setCustomPath(event.target.value)}
+                placeholder={t("customPathPlaceholder")}
+                className="h-9 text-xs"
+              />
+              <p className="text-[10px] text-zinc-600">{t("customPathHint")}</p>
             </div>
 
             <div className="space-y-1.5">
@@ -454,7 +494,10 @@ export function NewIterationDialog({
               <Button
                 size="sm"
                 onClick={() => void start()}
-                disabled={pending !== null}
+                disabled={
+                  pending !== null ||
+                  (live && draft.project.onDefaultBranch === false)
+                }
               >
                 <Play className="size-3.5" />
                 {pending === "start" ? t("starting") : t("approveStart")}

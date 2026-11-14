@@ -13,7 +13,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: originError }, { status: 403 });
   }
 
-  let body: { goal?: unknown; projectId?: unknown; packDir?: unknown };
+  let body: {
+    goal?: unknown;
+    projectId?: unknown;
+    projectPath?: unknown;
+    packDir?: unknown;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -25,6 +30,8 @@ export async function POST(request: Request) {
       goal: typeof body.goal === "string" ? body.goal : "",
       projectId:
         typeof body.projectId === "string" ? body.projectId : undefined,
+      projectPath:
+        typeof body.projectPath === "string" ? body.projectPath : undefined,
       packDir: typeof body.packDir === "string" ? body.packDir : undefined,
       repoRoot: getRepoRoot(),
     });
