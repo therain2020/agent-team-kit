@@ -1,5 +1,5 @@
+import { deterministicGate } from "@kit/engine";
 import { describe, expect, it } from "vitest";
-import { deterministicGate } from "../src/temporal/pack-activities";
 
 describe("deterministic gate", () => {
   it("passes a substantive draft", () => {

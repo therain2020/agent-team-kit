@@ -80,7 +80,15 @@ async function start(options: {
     return;
   }
 
-  if (options.infra) {
+  const localMode =
+    process.env.KIT_RUNTIME_MODE === "local" ||
+    process.env.KIT_DB_DRIVER === "sqlite";
+
+  if (options.infra && localMode) {
+    console.log("[up] local mode: skipping docker compose (embedded SQLite)");
+  }
+
+  if (options.infra && !localMode) {
     console.log("[up] starting docker compose infra...");
     const compose = spawnSync(
       "docker",
@@ -152,12 +160,17 @@ async function start(options: {
     JSON.stringify(
       {
         supervisorPid: started.supervisorPid,
+        mode: localMode ? "local" : "scale",
         web: options.web,
-        gateway: "http://127.0.0.1:8787",
-        temporalUi: "http://localhost:8080",
-        jaeger: "http://localhost:16686",
+        ...(localMode
+          ? { engine: "local runner (SQLite queue)" }
+          : {
+              gateway: "http://127.0.0.1:8787",
+              temporalUi: "http://localhost:8080",
+              jaeger: "http://localhost:16686",
+            }),
         logs: ".tmp/supervisor/*.log",
-        next: 'kit up status | kit iterate --goal "..." | kit down',
+        next: "kit up status | kit pack run <dir> --dry-run --stub | kit down",
       },
       null,
       2,

@@ -45,29 +45,41 @@ const tsx = path.join(
   process.platform === "win32" ? "tsx.exe" : "tsx",
 );
 
-const specs: ChildSpec[] = [
-  {
-    name: "runtime",
-    command: bun,
-    args: ["apps/runtime/src/index.ts"],
-  },
-  {
-    name: "worker",
-    command: tsx,
-    args: ["apps/runtime/src/temporal/worker.ts"],
-  },
-  {
-    name: "autopilot",
-    command: tsx,
-    args: ["apps/runtime/src/autopilot.ts"],
-  },
-  {
-    name: "gateway",
-    command: bun,
-    args: ["apps/gateway/src/index.ts"],
-    health: `http://${process.env.KIT_GATEWAY_HOST ?? "127.0.0.1"}:${process.env.KIT_GATEWAY_PORT ?? 8787}/health`,
-  },
-];
+const localMode =
+  process.env.KIT_RUNTIME_MODE === "local" ||
+  process.env.KIT_DB_DRIVER === "sqlite";
+
+const specs: ChildSpec[] = localMode
+  ? [
+      {
+        name: "local-runner",
+        command: tsx,
+        args: ["apps/runtime/src/local-runner.ts"],
+      },
+    ]
+  : [
+      {
+        name: "runtime",
+        command: bun,
+        args: ["apps/runtime/src/index.ts"],
+      },
+      {
+        name: "worker",
+        command: tsx,
+        args: ["apps/runtime/src/temporal/worker.ts"],
+      },
+      {
+        name: "autopilot",
+        command: tsx,
+        args: ["apps/runtime/src/autopilot.ts"],
+      },
+      {
+        name: "gateway",
+        command: bun,
+        args: ["apps/gateway/src/index.ts"],
+        health: `http://${process.env.KIT_GATEWAY_HOST ?? "127.0.0.1"}:${process.env.KIT_GATEWAY_PORT ?? 8787}/health`,
+      },
+    ];
 
 if (withWeb) {
   specs.push({

@@ -86,9 +86,25 @@ CREATE TABLE IF NOT EXISTS autopilot_state (
   PRIMARY KEY (workspace_id, pack_dir)
 );
 
+CREATE TABLE IF NOT EXISTS run_requests (
+  request_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL UNIQUE,
+  workspace_id TEXT NOT NULL,
+  workflow_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL,
+  claimed_by TEXT,
+  claimed_at TIMESTAMPTZ,
+  heartbeat_at TIMESTAMPTZ,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_run_requests_status ON run_requests(status, created_at);
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -179,7 +195,23 @@ CREATE TABLE IF NOT EXISTS autopilot_state (
   PRIMARY KEY (workspace_id, pack_dir)
 );
 
+CREATE TABLE IF NOT EXISTS run_requests (
+  request_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL UNIQUE,
+  workspace_id TEXT NOT NULL,
+  workflow_id TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL,
+  claimed_by TEXT,
+  claimed_at TEXT,
+  heartbeat_at TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_run_requests_status ON run_requests(status, created_at);
 `;

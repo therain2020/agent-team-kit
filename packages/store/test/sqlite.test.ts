@@ -134,6 +134,49 @@ describe("sqlite embedded store", () => {
     await store.ping();
   }, 60_000);
 
+  it("claims a run request once and reclaims it after the lease goes stale", async () => {
+    const config = await localConfig();
+    const store = await initStore(config);
+    closers.push(() => store.close());
+    const now = new Date().toISOString();
+
+    await store.runRequests.enqueue({
+      requestId: "rrq_1",
+      runId: "run_queue_1",
+      workspaceId: "default",
+      workflowId: "demo",
+      payload: JSON.stringify({ runId: "run_queue_1" }),
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const first = await store.runRequests.claimNext(
+      "worker-a",
+      new Date(),
+      60_000,
+    );
+    expect(first?.status).toBe("claimed");
+    expect(first?.claimedBy).toBe("worker-a");
+
+    const second = await store.runRequests.claimNext(
+      "worker-b",
+      new Date(),
+      60_000,
+    );
+    expect(second).toBeNull();
+
+    const later = new Date(Date.now() + 120_000);
+    const reclaimed = await store.runRequests.claimNext(
+      "worker-b",
+      later,
+      60_000,
+    );
+    expect(reclaimed?.claimedBy).toBe("worker-b");
+
+    await store.runRequests.finish("rrq_1", "done");
+    expect((await store.runRequests.find("run_queue_1"))?.status).toBe("done");
+  }, 60_000);
+
   it("keeps data across close and reopen", async () => {
     const config = await localConfig();
     const first = await initStore(config);

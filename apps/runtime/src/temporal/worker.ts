@@ -1,11 +1,14 @@
 import { fileURLToPath } from "node:url";
+import { setActivityHeartbeat } from "@kit/engine";
 import { initTelemetry, shutdownTelemetry } from "@kit/telemetry";
+import { Context } from "@temporalio/activity";
 import { NativeConnection, Worker } from "@temporalio/worker";
 import * as activities from "./activities";
 import * as iterationActivities from "./iteration-activities";
 import * as packActivities from "./pack-activities";
 
 initTelemetry({ serviceName: "kit-worker" });
+setActivityHeartbeat(() => Context.current().heartbeat());
 
 const address = process.env.KIT_TEMPORAL_ADDRESS ?? "localhost:7233";
 const namespace = process.env.KIT_TEMPORAL_NAMESPACE ?? "default";

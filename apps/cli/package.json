@@ -13,6 +13,7 @@
     "@kit/bootstrap": "workspace:*",
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",
+    "@kit/engine": "workspace:*",
     "@kit/evolution": "workspace:*",
     "@kit/manager": "workspace:*",
     "@kit/model": "workspace:*",

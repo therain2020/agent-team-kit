@@ -11,6 +11,8 @@
       "@/*": ["./*"],
       "@kit/core": ["../../packages/core/src/index.ts"],
       "@kit/bootstrap": ["../../packages/bootstrap/src/index.ts"],
+      "@kit/engine": ["../../packages/engine/src/index.ts"],
+      "@kit/engine/*": ["../../packages/engine/src/*.ts"],
       "@kit/store": ["../../packages/store/src/index.ts"],
       "@kit/queue": ["../../packages/queue/src/index.ts"],
       "@kit/workflow": ["../../packages/workflow/src/index.ts"],

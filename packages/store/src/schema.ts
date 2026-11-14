@@ -107,6 +107,33 @@ export const artifacts = pgTable("artifacts", {
   }).notNull(),
 });
 
+export const runRequests = pgTable("run_requests", {
+  requestId: text("request_id").primaryKey(),
+  runId: text("run_id").notNull().unique(),
+  workspaceId: text("workspace_id").notNull(),
+  workflowId: text("workflow_id").notNull(),
+  payload: text("payload").notNull(),
+  status: text("status").notNull(),
+  claimedBy: text("claimed_by"),
+  claimedAt: timestamp("claimed_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  heartbeatAt: timestamp("heartbeat_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  error: text("error"),
+  createdAt: timestamp("created_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+  updatedAt: timestamp("updated_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+});
+
 export const autopilotState = pgTable(
   "autopilot_state",
   {

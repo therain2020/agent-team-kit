@@ -11,6 +11,7 @@
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",
     "@kit/delivery": "workspace:*",
+    "@kit/engine": "workspace:*",
     "@kit/model": "workspace:*",
     "@kit/pack": "workspace:*",
     "@kit/queue": "workspace:*",

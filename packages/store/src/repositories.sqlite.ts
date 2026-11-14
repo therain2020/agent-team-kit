@@ -7,7 +7,7 @@ import type {
   RunStatus,
   Stage,
 } from "@kit/core";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, lt, or } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
   fromArtifactRow,
@@ -30,6 +30,8 @@ import type {
   BlobRepository,
   EventStore,
   ManifestStore,
+  RunRequestRecord,
+  RunRequestStore,
   RunStore,
   StageStore,
 } from "./repositories";
@@ -40,6 +42,7 @@ import {
   autopilotState,
   blobs,
   manifests,
+  runRequests,
   runs,
   stages,
 } from "./schema.sqlite";
@@ -350,6 +353,130 @@ export class SqliteAutopilotStateStore implements AutopilotStateStore {
         ),
       );
   }
+}
+
+export class SqliteRunRequestStore implements RunRequestStore {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async enqueue(
+    record: Parameters<RunRequestStore["enqueue"]>[0],
+  ): Promise<void> {
+    await this.db
+      .insert(runRequests)
+      .values({
+        requestId: record.requestId,
+        runId: record.runId,
+        workspaceId: record.workspaceId,
+        workflowId: record.workflowId,
+        payload: record.payload,
+        status: "queued",
+        claimedBy: null,
+        claimedAt: null,
+        heartbeatAt: null,
+        error: null,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      })
+      .onConflictDoNothing();
+  }
+
+  async claimNext(
+    owner: string,
+    now: Date,
+    staleMs: number,
+  ): Promise<RunRequestRecord | null> {
+    const staleIso = new Date(now.getTime() - staleMs).toISOString();
+    const nowIso = now.toISOString();
+    const claimable = () =>
+      or(
+        eq(runRequests.status, "queued"),
+        and(
+          eq(runRequests.status, "claimed"),
+          lt(runRequests.heartbeatAt, staleIso),
+        ),
+      );
+
+    const candidates = await this.db
+      .select({ requestId: runRequests.requestId })
+      .from(runRequests)
+      .where(claimable())
+      .orderBy(asc(runRequests.createdAt))
+      .limit(5);
+
+    for (const candidate of candidates) {
+      const [row] = await this.db
+        .update(runRequests)
+        .set({
+          status: "claimed",
+          claimedBy: owner,
+          claimedAt: nowIso,
+          heartbeatAt: nowIso,
+          updatedAt: nowIso,
+        })
+        .where(and(eq(runRequests.requestId, candidate.requestId), claimable()))
+        .returning();
+      if (row) {
+        return fromSqliteRunRequestRow(row);
+      }
+    }
+    return null;
+  }
+
+  async heartbeat(requestId: string, owner: string, now: Date): Promise<void> {
+    const nowIso = now.toISOString();
+    await this.db
+      .update(runRequests)
+      .set({ heartbeatAt: nowIso, updatedAt: nowIso })
+      .where(
+        and(
+          eq(runRequests.requestId, requestId),
+          eq(runRequests.claimedBy, owner),
+        ),
+      );
+  }
+
+  async finish(
+    requestId: string,
+    status: "done" | "failed",
+    error?: string,
+  ): Promise<void> {
+    await this.db
+      .update(runRequests)
+      .set({
+        status,
+        error: error ?? null,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(runRequests.requestId, requestId));
+  }
+
+  async find(runId: string): Promise<RunRequestRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(runRequests)
+      .where(eq(runRequests.runId, runId))
+      .limit(1);
+    return row ? fromSqliteRunRequestRow(row) : null;
+  }
+}
+
+function fromSqliteRunRequestRow(
+  row: typeof runRequests.$inferSelect,
+): RunRequestRecord {
+  return {
+    requestId: row.requestId,
+    runId: row.runId,
+    workspaceId: row.workspaceId,
+    workflowId: row.workflowId,
+    payload: row.payload,
+    status: row.status as RunRequestRecord["status"],
+    claimedBy: row.claimedBy ?? null,
+    claimedAt: row.claimedAt ?? null,
+    heartbeatAt: row.heartbeatAt ?? null,
+    error: row.error ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 function toSqliteAutopilotRow(record: AutopilotStateRecord) {

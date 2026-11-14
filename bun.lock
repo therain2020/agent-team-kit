@@ -22,6 +22,7 @@
         "@kit/bootstrap": "workspace:*",
         "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
+        "@kit/engine": "workspace:*",
         "@kit/evolution": "workspace:*",
         "@kit/manager": "workspace:*",
         "@kit/model": "workspace:*",
@@ -53,6 +54,7 @@
         "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
         "@kit/delivery": "workspace:*",
+        "@kit/engine": "workspace:*",
         "@kit/model": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/queue": "workspace:*",
@@ -151,6 +153,21 @@
       "version": "0.9.0",
       "dependencies": {
         "nodemailer": "^10.5.0",
+      },
+    },
+    "packages/engine": {
+      "name": "@kit/engine",
+      "version": "0.9.0",
+      "dependencies": {
+        "@kit/coder": "workspace:*",
+        "@kit/core": "workspace:*",
+        "@kit/delivery": "workspace:*",
+        "@kit/manager": "workspace:*",
+        "@kit/model": "workspace:*",
+        "@kit/store": "workspace:*",
+        "@kit/tools": "workspace:*",
+        "@kit/workflow": "workspace:*",
+        "@opentelemetry/api": "^1.9.0",
       },
     },
     "packages/evolution": {
@@ -536,6 +553,8 @@
     "@kit/core": ["@kit/core@workspace:packages/core"],
 
     "@kit/delivery": ["@kit/delivery@workspace:packages/delivery"],
+
+    "@kit/engine": ["@kit/engine@workspace:packages/engine"],
 
     "@kit/evolution": ["@kit/evolution@workspace:packages/evolution"],
 

@@ -83,6 +83,21 @@ export const artifacts = sqliteTable("artifacts", {
   createdAt: text("created_at").notNull(),
 });
 
+export const runRequests = sqliteTable("run_requests", {
+  requestId: text("request_id").primaryKey(),
+  runId: text("run_id").notNull().unique(),
+  workspaceId: text("workspace_id").notNull(),
+  workflowId: text("workflow_id").notNull(),
+  payload: text("payload").notNull(),
+  status: text("status").notNull(),
+  claimedBy: text("claimed_by"),
+  claimedAt: text("claimed_at"),
+  heartbeatAt: text("heartbeat_at"),
+  error: text("error"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const autopilotState = sqliteTable(
   "autopilot_state",
   {
