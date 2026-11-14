@@ -59,7 +59,9 @@ describe("sandbox paths", () => {
     const root = coderSandboxRoot("iterations", "it_1", "task");
     expect(root).toContain("iterations");
     expect(isCoderSandboxPath(root)).toBe(true);
-    expect(isCoderSandboxPath(process.cwd())).toBe(false);
+    expect(
+      isCoderSandboxPath(path.join(os.homedir(), ".not-a-kit-sandbox")),
+    ).toBe(false);
   });
 });
 
