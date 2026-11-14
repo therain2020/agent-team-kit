@@ -1,51 +1,11 @@
 "use client";
 
+import { NAV_ITEMS } from "@/lib/nav";
 import { cn } from "@/lib/utils";
-import {
-  Activity,
-  Boxes,
-  Factory,
-  FlaskConical,
-  Gamepad2,
-  GitBranch,
-  Globe2,
-  Inbox,
-  LayoutDashboard,
-  MessageSquare,
-  Package,
-  Play,
-  Power,
-  ScrollText,
-  ShieldAlert,
-  ShieldCheck,
-  Siren,
-  Store,
-  Wallet,
-} from "lucide-react";
+import { Boxes } from "lucide-react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-
-const NAV = [
-  { href: "/office", labelKey: "office", icon: Gamepad2 },
-  { href: "/", labelKey: "commandCenter", icon: LayoutDashboard, exact: true },
-  { href: "/manager", labelKey: "manager", icon: MessageSquare },
-  { href: "/factory", labelKey: "factory", icon: Factory, badge: true },
-  { href: "/inbox", labelKey: "inbox", icon: Inbox, badge: true },
-  { href: "/ops", labelKey: "ops", icon: Siren },
-  { href: "/runs", labelKey: "runs", icon: Play },
-  { href: "/iterations", labelKey: "iterations", icon: GitBranch },
-  { href: "/activity", labelKey: "activity", icon: ScrollText },
-  { href: "/packs", labelKey: "packs", icon: Package },
-  { href: "/sources", labelKey: "sources", icon: Globe2 },
-  { href: "/workshop", labelKey: "workshop", icon: Store },
-  { href: "/autopilot", labelKey: "autopilot", icon: ShieldCheck },
-  { href: "/degradation", labelKey: "degradation", icon: ShieldAlert },
-  { href: "/budgets", labelKey: "budgets", icon: Wallet },
-  { href: "/evolution", labelKey: "evolution", icon: FlaskConical },
-  { href: "/traces", labelKey: "traces", icon: Activity },
-  { href: "/kill-switch", labelKey: "killSwitch", icon: Power },
-];
 
 export function Sidebar({ pausedCount = 0 }: { pausedCount?: number }) {
   const pathname = usePathname();
@@ -63,7 +23,7 @@ export function Sidebar({ pausedCount = 0 }: { pausedCount?: number }) {
       </div>
 
       <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
-        {NAV.map((item) => {
+        {NAV_ITEMS.map((item) => {
           const active = item.exact
             ? pathname === item.href
             : pathname === item.href || pathname.startsWith(`${item.href}/`);

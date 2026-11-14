@@ -4,7 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { useRiskLabel, useStatusLabel } from "@/lib/iteration-labels";
 import { ShieldAlert } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -25,6 +27,10 @@ interface PendingChange {
 }
 
 export function PendingChanges({ iterationId }: { iterationId: string }) {
+  const t = useTranslations("pendingChanges");
+  const common = useTranslations("common");
+  const statusLabel = useStatusLabel();
+  const riskLabel = useRiskLabel();
   const [changes, setChanges] = useState<PendingChange[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -56,7 +62,7 @@ export function PendingChanges({ iterationId }: { iterationId: string }) {
   const apply = async (ticketId: string) => {
     const note = (notes[ticketId] ?? "").trim();
     if (!note) {
-      toast.error("A note is required to apply this change.");
+      toast.error(t("noteRequired"));
       return;
     }
     setBusy(ticketId);
@@ -78,15 +84,21 @@ export function PendingChanges({ iterationId }: { iterationId: string }) {
       if (!response.ok) {
         throw new Error(payload.error ?? `HTTP ${response.status}`);
       }
-      toast.success(
-        payload.status === "applied"
-          ? `Applied${payload.commit ? ` as ${payload.commit.slice(0, 8)}` : ""}`
-          : `Apply finished: ${payload.status ?? "unknown"}`,
-      );
+      if (payload.status === "applied" && payload.commit) {
+        toast.success(t("appliedAs", { commit: payload.commit.slice(0, 8) }));
+      } else {
+        toast.success(
+          t("applyFinished", {
+            status: payload.status
+              ? statusLabel(payload.status)
+              : common("unknown"),
+          }),
+        );
+      }
       setNotes((previous) => ({ ...previous, [ticketId]: "" }));
       await load();
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "apply failed");
+      toast.error(cause instanceof Error ? cause.message : t("applyFailed"));
     } finally {
       setBusy(null);
     }
@@ -101,7 +113,7 @@ export function PendingChanges({ iterationId }: { iterationId: string }) {
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm text-amber-200">
           <ShieldAlert className="size-4" />
-          Pending changes ({changes.length})
+          {t("title", { count: changes.length })}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -112,7 +124,7 @@ export function PendingChanges({ iterationId }: { iterationId: string }) {
           >
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <Badge variant={change.risk === "high" ? "danger" : "warning"}>
-                risk {change.risk}
+                {t("risk", { level: riskLabel(change.risk) })}
               </Badge>
               {change.domain ? (
                 <Badge variant="violet">{change.domain}</Badge>
@@ -121,7 +133,7 @@ export function PendingChanges({ iterationId }: { iterationId: string }) {
                 {change.taskId}
               </span>
               <span className="text-[10px] text-zinc-500">
-                base {change.baseSha.slice(0, 8)}
+                {t("base", { sha: change.baseSha.slice(0, 8) })}
               </span>
               {change.diffArtifactId ? (
                 <a
@@ -130,7 +142,7 @@ export function PendingChanges({ iterationId }: { iterationId: string }) {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  diff
+                  {t("diff")}
                 </a>
               ) : null}
             </div>
@@ -160,7 +172,7 @@ export function PendingChanges({ iterationId }: { iterationId: string }) {
                     [change.ticketId]: event.target.value,
                   }))
                 }
-                placeholder="Reason for applying (required)"
+                placeholder={t("notePlaceholder")}
                 className="h-8 text-xs"
               />
               <Button
@@ -168,7 +180,7 @@ export function PendingChanges({ iterationId }: { iterationId: string }) {
                 onClick={() => void apply(change.ticketId)}
                 disabled={busy === change.ticketId}
               >
-                {busy === change.ticketId ? "Applying…" : "Apply"}
+                {busy === change.ticketId ? t("applying") : t("apply")}
               </Button>
             </div>
           </div>
