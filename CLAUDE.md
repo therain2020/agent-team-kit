@@ -39,7 +39,7 @@
    git fetch origin
    git worktree add .claude/worktrees/<topic> -b feat/<n>-<slug> origin/develop
    ```
-4. **新分支、新 PR** — 一个 issue 对应一个分支、一个 PR，只解决一个问题。分支从 `origin/develop` 切出（修复用 `fix/<n>-<slug>`），PR 目标为 `develop`；正文写明 `Closes #<n>`、计划依据、验证命令与结果，以及偏离计划的说明（如有）。
+4. **新分支、新 PR** — 一个 issue 对应一个分支、一个 PR，只解决一个问题。分支从 `origin/develop` 切出，命名 `<type>/<n>-<slug>`：`feat`（功能）、`fix`（修复）、`docs`（文档与模板）、`chore`（工具链/依赖，无行为变化）。PR 目标为 `develop`；正文写明 `Closes #<n>`、计划依据、验证命令与结果，以及偏离计划的说明（如有）。
 5. **合并并回写** — CI 全绿后 squash 合并：
    ```powershell
    gh pr merge <pr> --squash --delete-branch

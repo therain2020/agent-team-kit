@@ -53,8 +53,10 @@ worktree.** Typo and link-only fixes can go straight to a PR.
 
    Then work in an isolated worktree branched from `origin/develop`.
 4. **Branch and open a PR.** One issue, one branch, one PR. Name the branch
-   `feat/<issue>-<slug>` (or `fix/<issue>-<slug>`), target `develop`, and put
-   `Closes #<n>` in the PR body.
+   `<type>/<issue>-<slug>`, where `<type>` is `feat` (feature), `fix` (bug
+   fix), `docs` (docs or templates) or `chore` (tooling, CI or dependencies
+   with no behavior change). Target `develop`, and put `Closes #<n>` in the PR
+   body.
 5. **Merge and write back.** Once CI is green, squash-merge. Then update the
    plan's status and decisions, comment the merge commit on the issue, and close
    it.

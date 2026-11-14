@@ -64,5 +64,5 @@ body:
     id: branch
     attributes:
       label: Branch name (optional)
-      description: Convention is `feat/<issue>-<slug>` or `fix/<issue>-<slug>`, from `origin/develop`.
+      description: Convention is `<type>/<issue>-<slug>` with `feat`, `fix`, `docs` or `chore`, from `origin/develop`.
       placeholder: "feat/37-run-lease"
