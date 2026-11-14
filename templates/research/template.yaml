@@ -13,7 +13,7 @@ agents:
     description: Collects and verifies source evidence
     model: deepseek-flash
     role: builder
-    tools: [web_search, fetch]
+    tools: [http_fetch, browser_inspect]
     skills: []
     instructions: |
       You are a researcher. Gather verifiable evidence, keep provenance for

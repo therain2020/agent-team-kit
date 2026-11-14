@@ -2,7 +2,7 @@
 name: researcher
 description: Collects, clusters and scores technology signals
 model: deepseek-flash
-tools: [web_search, fetch, rss]
+tools: [http_fetch, browser_inspect]
 skills: [citation-check]
 permissions:
   filesystem: readonly

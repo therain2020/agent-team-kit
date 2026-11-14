@@ -128,7 +128,7 @@ export const templateDefinitionSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(""),
   roles: templateRolesSchema,
-  agents: z.array(templateAgentSchema).min(1),
+  agents: z.array(templateAgentSchema).default([]),
   workflow: workflowDefinitionSchema,
   policy: policySchema,
   autopilot: autopilotSchema,

@@ -1,7 +1,13 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { loadPack, readPackFile, splitFrontmatter } from "@kit/pack";
+import {
+  listEditablePackFiles,
+  loadPack,
+  packCatalog,
+  readPackFile,
+  splitFrontmatter,
+} from "@kit/pack";
 import { parse } from "yaml";
 import { getPacksRoot } from "./paths";
 
@@ -23,9 +29,18 @@ export interface StudioStage {
   type: "workflow" | "agent" | "coder";
   agent?: string;
   coder?: string;
+  goal?: string;
+  acceptance?: string;
+  inputs: string[];
+  outputs: string[];
+  timeout?: string;
+  retry?: { max: number; backoff: "fixed" | "exp" };
   gate?: string;
   inputFrom?: string;
   inputsFrom?: string[];
+  includeInitialInput?: boolean;
+  revisionAgent?: string;
+  failureMode?: "fail_open" | "fail_closed";
   position?: { x: number; y: number };
   approval?: {
     mode: "required" | "auto" | "never";
@@ -47,6 +62,15 @@ export interface StudioWorkflow {
   stages: StudioStage[];
 }
 
+export interface StudioCatalog {
+  tools: Array<{
+    name: string;
+    description: string;
+    source: "builtin" | "toolpack";
+  }>;
+  skills: string[];
+}
+
 export interface StudioData {
   dirName: string;
   packName: string;
@@ -56,6 +80,8 @@ export interface StudioData {
   policies: Array<{ file: string; raw: string }>;
   autopilotRaw: string;
   autopilotPath: string;
+  catalog: StudioCatalog;
+  editableFiles: string[];
   roleRules: {
     requireSeller: boolean;
     requireBuilder: boolean;
@@ -170,7 +196,34 @@ export async function loadStudioData(
                     : "agent",
               agent: typeof value.agent === "string" ? value.agent : undefined,
               coder: typeof value.coder === "string" ? value.coder : undefined,
+              goal: typeof value.goal === "string" ? value.goal : undefined,
+              acceptance:
+                typeof value.acceptance === "string"
+                  ? value.acceptance
+                  : undefined,
+              inputs: stringList(value.inputs),
+              outputs: stringList(value.outputs),
+              timeout:
+                typeof value.timeout === "string" ? value.timeout : undefined,
+              retry:
+                typeof value.retry === "object" && value.retry !== null
+                  ? (value.retry as StudioStage["retry"])
+                  : undefined,
               gate: typeof value.gate === "string" ? value.gate : undefined,
+              includeInitialInput:
+                typeof value.includeInitialInput === "boolean"
+                  ? value.includeInitialInput
+                  : undefined,
+              revisionAgent:
+                typeof value.revisionAgent === "string"
+                  ? value.revisionAgent
+                  : undefined,
+              failureMode:
+                value.failureMode === "fail_closed"
+                  ? "fail_closed"
+                  : value.failureMode === "fail_open"
+                    ? "fail_open"
+                    : undefined,
               inputFrom:
                 typeof value.inputFrom === "string"
                   ? value.inputFrom
@@ -220,6 +273,11 @@ export async function loadStudioData(
     ? await readFile(path.join(loaded.dir, autopilotPath), "utf8")
     : "";
 
+  const [catalog, editableFiles] = await Promise.all([
+    packCatalog(loaded.dir),
+    listEditablePackFiles(loaded.dir),
+  ]);
+
   return {
     dirName,
     packName: loaded.pack.metadata.name,
@@ -229,9 +287,17 @@ export async function loadStudioData(
     policies,
     autopilotRaw,
     autopilotPath,
+    catalog,
+    editableFiles,
     roleRules: loaded.roleRules,
     warnings: loaded.warnings,
   };
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function asString(value: unknown, fallback: string): string {
