@@ -152,6 +152,174 @@ export function normalizeGithub(
   };
 }
 
+export interface SentryNormalizeOptions extends NormalizeOptions {
+  /** Value of the `Sentry-Hook-Resource` header for integration-platform webhooks. */
+  resource?: string | null;
+}
+
+/**
+ * Sentry delivers two webhook shapes: the Integration Platform envelope
+ * (`{action, data:{issue|event}, installation}` with a `Sentry-Hook-Resource`
+ * header) and the legacy issue-alert payload (`{id, event, triggered_rule}`).
+ * Both are reduced to the same bounded payload; alert text never becomes input.
+ */
+export function normalizeSentry(
+  body: Record<string, unknown>,
+  options: SentryNormalizeOptions = {},
+): NormalizedEvent | null {
+  const resource = (options.resource ?? "").toLowerCase();
+  const action = stringOr(body.action).toLowerCase();
+  const kind = sentryEventType(resource, action, body);
+  if (!kind) {
+    return null;
+  }
+  const now = options.now ?? new Date();
+  const data = asRecord(body.data);
+  const dataIssue = asRecord(data.issue);
+  const dataEvent = asRecord(data.event);
+  const legacyEvent = asRecord(body.event);
+  const issue = Object.keys(dataIssue).length > 0 ? dataIssue : legacyEvent;
+  const nestedEvent =
+    Object.keys(dataEvent).length > 0 ? dataEvent : legacyEvent;
+
+  const issueId =
+    stringOr(issue.id) || stringOr(body.id) || stringOr(body.issue_id);
+  const eventId = stringOr(nestedEvent.event_id);
+  const tags = tagsOf(issue.tags);
+  const project = asRecord(issue.project);
+
+  const payload: Record<string, unknown> = {
+    source: "sentry",
+    resource: resource || "issue",
+    action: action || kind.slice("sentry.".length),
+    issueId,
+    shortId: truncate(stringOr(issue.shortId), 200),
+    title: truncate(
+      stringOr(issue.title) ||
+        stringOr(asRecord(issue.metadata).value) ||
+        stringOr(body.message) ||
+        stringOr(nestedEvent.title),
+      2_000,
+    ),
+    culprit: truncate(stringOr(issue.culprit) || stringOr(body.culprit), 1_000),
+    level: stringOr(issue.level) || stringOr(body.level),
+    status: stringOr(issue.status),
+    url: truncate(
+      stringOr(issue.url) ||
+        stringOr(issue.web_url) ||
+        stringOr(body.url) ||
+        stringOr(nestedEvent.web_url),
+      1_000,
+    ),
+    project:
+      stringOr(project.slug) ||
+      stringOr(project.name) ||
+      stringOr(body.project_name) ||
+      stringOr(body.project),
+    eventId,
+    environment: tags.environment,
+    release: tags.release,
+    count: typeof issue.count === "number" ? issue.count : undefined,
+    firstSeen: stringOr(issue.firstSeen) || stringOr(issue.first_seen),
+    lastSeen: stringOr(issue.lastSeen) || stringOr(issue.last_seen),
+    triggeredRule: truncate(stringOr(body.triggered_rule), 500),
+    exception: exceptionSummary(asRecord(nestedEvent.exception)),
+  };
+
+  return {
+    event: eventEnvelopeSchema.parse({
+      eventId: newId("evt"),
+      type: kind,
+      schemaVersion: "1.0",
+      occurredAt: now.toISOString(),
+      receivedAt: now.toISOString(),
+      workspaceId: options.workspaceId ?? "default",
+      idempotencyKey: sentryIdempotencyKey(kind, issueId, eventId),
+      traceId: newId("trc"),
+      payloadRef: `gateway://sentry/${issueId || eventId || kind}`,
+    }),
+    payload,
+  };
+}
+
+export function sentryEventType(
+  resource: string,
+  action: string,
+  body: Record<string, unknown>,
+): string | null {
+  if (resource === "issue") {
+    return ["created", "resolved", "assigned", "ignored"].includes(action)
+      ? `sentry.issue.${action}`
+      : null;
+  }
+  if (resource === "event_alert") {
+    return action === "triggered" || action === "created"
+      ? "sentry.event_alert.triggered"
+      : null;
+  }
+  if (resource === "metric_alert") {
+    return ["critical", "warning", "resolved"].includes(action)
+      ? `sentry.metric_alert.${action}`
+      : null;
+  }
+  if (!resource && body.id !== undefined && body.event) {
+    return "sentry.issue.alert";
+  }
+  return null;
+}
+
+function sentryIdempotencyKey(
+  kind: string,
+  issueId: string,
+  eventId: string,
+): string {
+  const subject = issueId || eventId;
+  const occurrence = issueId && eventId ? `:${eventId}` : "";
+  return subject ? `sentry:${subject}:${kind}${occurrence}` : `sentry:${kind}`;
+}
+
+function tagsOf(value: unknown): {
+  environment: string;
+  release: string;
+} {
+  const result = { environment: "", release: "" };
+  if (!Array.isArray(value)) {
+    return result;
+  }
+  for (const tag of value) {
+    if (!Array.isArray(tag) || typeof tag[0] !== "string") {
+      continue;
+    }
+    if (tag[0] === "environment") {
+      result.environment = stringOr(tag[1]);
+    }
+    if (tag[0] === "release") {
+      result.release = stringOr(tag[1]);
+    }
+  }
+  return result;
+}
+
+function exceptionSummary(exception: Record<string, unknown>): string {
+  const values = Array.isArray(exception.values) ? exception.values : [];
+  const lines = values.flatMap((entry) => {
+    const record = asRecord(entry);
+    const type = stringOr(record.type);
+    const value = stringOr(record.value);
+    const frames = asRecord(record.stacktrace).frames;
+    const frame = Array.isArray(frames) ? frames.at(-1) : undefined;
+    const frameRecord = asRecord(frame);
+    const location =
+      stringOr(frameRecord.filename) || stringOr(frameRecord.abs_path);
+    const line = frameRecord.lineno;
+    const where = location
+      ? ` (${location}${typeof line === "number" ? `:${line}` : ""})`
+      : "";
+    return type || value ? [`${type ? `${type}: ` : ""}${value}${where}`] : [];
+  });
+  return truncate(lines.join("\n"), 8_000);
+}
+
 export function githubEventType(
   eventName: string,
   action: string,

@@ -106,7 +106,7 @@ pending. Evidence is stored as artifacts.
 
 ### Events
 
-The gateway accepts signed generic and GitHub webhooks:
+The gateway accepts signed generic, GitHub and Sentry webhooks:
 
 ```bash
 $env:KIT_EVENT_SECRET="..."   # PowerShell
@@ -114,8 +114,16 @@ bun run kit event emit --type signal.test --payload-file .tmp/event.json
 ```
 
 GitHub delivery needs `GITHUB_WEBHOOK_SECRET` and a public URL/tunnel; set
-`KIT_GITHUB_REPO` to allowlist one repository. Routed event runs default to
+`KIT_GITHUB_REPO` to allowlist one repository. Sentry delivery needs
+`SENTRY_WEBHOOK_SECRET`; the gateway verifies `Sentry-Hook-Signature` and
+rejects stale `Sentry-Hook-Timestamp` values. Routed event runs default to
 DRY_RUN until `KIT_EVENT_RUN_MODE=live`.
+
+The router skips a workflow when its daily budget is reached. Declare
+`trigger.budget: {dailyRuns, dailyCostCny}` per workflow, or set
+`KIT_EVENT_DAILY_RUNS` / `KIT_EVENT_DAILY_COST_CNY` as the fallback for packs
+that do not declare one. Repair rounds default to `KIT_REPAIR_ROUNDS`; an
+explicit `--max-repair`, API value or `iteration.yaml` setting wins.
 
 Agents can inspect the repo, run fixed checks and static scans, and write a
 sandbox patch. Apply a reviewed patch with:
@@ -177,8 +185,12 @@ bun run kit manager brief <runId>
 | `KIT_BROWSE_BIN` | unset | Browser adapter binary for UX inspection |
 | `KIT_EVENT_SECRET` | unset | Generic webhook HMAC secret |
 | `GITHUB_WEBHOOK_SECRET` | unset | GitHub webhook HMAC secret |
+| `SENTRY_WEBHOOK_SECRET` | unset | Sentry webhook HMAC secret (`Sentry-Hook-Signature`) |
 | `KIT_GITHUB_REPO` | unset | Optional GitHub repo allowlist (`owner/repo`) |
 | `KIT_EVENT_RUN_MODE` | `dry_run` | `live` lets routed events start LIVE runs |
+| `KIT_EVENT_DAILY_RUNS` | unset | Fallback daily run cap per workflow without `trigger.budget` |
+| `KIT_EVENT_DAILY_COST_CNY` | unset | Fallback daily cost cap per workflow without `trigger.budget` |
+| `KIT_REPAIR_ROUNDS` | `2` | Default repair attempts per task (0–5); explicit settings win |
 | `KIT_GATEWAY_PORT` | `8787` | Event gateway port |
 | `KIT_CODER_CODEX_CMD` | `codex exec --full-auto -` | Codex CLI template |
 | `KIT_CODER_OPENCODE_CMD` | `opencode run -` | OpenCode CLI template |
@@ -212,6 +224,29 @@ health checks. `kitd status`, `kitd snapshot`, `kitd rollback -DryRun`,
 `kitd watch` (kill switch: `%USERPROFILE%\.agent-team-kit\KILL`) and
 `kitd install-task` are available. A real rollback refuses a dirty working
 tree and preserves the bad state on a `recovery/<timestamp>` branch first.
+
+### Recovery drill
+
+`scripts/recovery-drill.ps1` exercises the kernel and records RTO evidence:
+
+```powershell
+# preflight only (no side effects; safe to run any time)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\recovery-drill.ps1
+
+# kill the supervised worker and measure the supervisor restart
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\recovery-drill.ps1 -Mode kill-worker -Force
+
+# full rollback drill: inject a gateway startup failure on a temporary
+# drill/recovery-<stamp> branch, let kitd roll back, verify, then restore
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\recovery-drill.ps1 -Mode rollback -Force
+```
+
+Run it against the same checkout `kit up` supervises (the supervisor state
+lives in `.tmp\supervisor\state.json`). Rollback mode needs a clean tree and a
+healthy deployment; it restarts the supervised kit, verifies HEAD equals the
+LKG tag, that a `recovery/<timestamp>` branch preserved the bad commit, and that
+the audit trail recorded the rollback within the 600-second deadline. Evidence
+lands in `%USERPROFILE%\.agent-team-kit\audit\recovery-drill-<stamp>.json`.
 
 ## Stop
 

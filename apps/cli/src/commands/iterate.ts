@@ -12,7 +12,10 @@ export function registerIterate(program: Command): void {
     .option("--domain <name>", "restrict the plan to one domain")
     .option("--pack <dir>", "iteration pack directory", "packs/self-improve")
     .option("--max-tasks <n>", "maximum tasks to plan", "4")
-    .option("--max-repair <n>", "repair attempts per task", "2")
+    .option(
+      "--max-repair <n>",
+      "repair attempts per task (default: KIT_REPAIR_ROUNDS or 2)",
+    )
     .option("--coder <id>", "override coder for all domains")
     .option("--apply <mode>", "auto-apply mode: none | low | low-medium", "low")
     .option("--live", "run in LIVE mode (otherwise DRY_RUN)", false)

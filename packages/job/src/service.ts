@@ -456,7 +456,7 @@ async function startIterationJob(
     ...(input.acceptance ? { acceptance: input.acceptance } : {}),
     ...(input.domain ? { domain: input.domain } : {}),
     maxTasks: clampInt(input.maxTasks, 1, 20, 4),
-    maxRepair: clampInt(input.maxRepair, 0, 5, 2),
+    maxRepair: resolveRepairRounds(input.maxRepair),
     runMode,
     applyMode,
     ...(coder ? { coder } : {}),
@@ -691,6 +691,28 @@ function parseCoder(value: unknown): CoderId | undefined {
     value === "command"
     ? value
     : undefined;
+}
+
+/**
+ * Precedence: explicit caller/pack value > `KIT_REPAIR_ROUNDS` > 2.
+ * The environment is a default for operators, not a silent cap.
+ */
+export function resolveRepairRounds(
+  explicit: unknown,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  return clampInt(explicit, 0, 5, envRepairRounds(env));
+}
+
+export function envRepairRounds(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.KIT_REPAIR_ROUNDS;
+  if (raw === undefined || raw === "") {
+    return 2;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? clampInt(parsed, 0, 5, 2) : 2;
 }
 
 function clampInt(

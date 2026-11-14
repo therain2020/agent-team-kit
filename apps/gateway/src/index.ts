@@ -8,6 +8,7 @@ import {
   type NormalizedEvent,
   normalizeGeneric,
   normalizeGithub,
+  normalizeSentry,
 } from "./normalize";
 import { isFreshTimestamp, verifyHmac } from "./signature";
 
@@ -57,9 +58,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (request.url === "/ingest/sentry") {
-      json(response, 501, {
-        error: "sentry adapter is scheduled for the next slice",
-      });
+      await handleSentry(request, response);
       return;
     }
 
@@ -152,6 +151,42 @@ async function handleGithub(
     json(response, 202, {
       status: "ignored",
       reason: `unsupported github event: ${eventName}`,
+    });
+    return;
+  }
+  await accept(normalized, response);
+}
+
+async function handleSentry(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  const secret = process.env.SENTRY_WEBHOOK_SECRET;
+  if (!secret) {
+    json(response, 503, { error: "SENTRY_WEBHOOK_SECRET is not configured" });
+    return;
+  }
+  const body = await readBody(request);
+  const signature = header(request, "sentry-hook-signature");
+  if (!verifyHmac(secret, body, signature)) {
+    json(response, 401, { error: "invalid signature" });
+    return;
+  }
+  const timestamp = header(request, "sentry-hook-timestamp");
+  if (!isFreshTimestamp(timestamp)) {
+    json(response, 401, { error: "stale timestamp" });
+    return;
+  }
+
+  const payload = JSON.parse(body) as Record<string, unknown>;
+  const resource = header(request, "sentry-hook-resource");
+  const normalized = normalizeSentry(payload, { workspaceId, resource });
+  if (!normalized) {
+    const action =
+      typeof payload.action === "string" ? payload.action : "unknown";
+    json(response, 202, {
+      status: "ignored",
+      reason: `unsupported sentry event: ${resource ?? "unknown"}/${action}`,
     });
     return;
   }
