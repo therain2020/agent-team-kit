@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { KillSwitchTrippedError } from "@kit/core";
 import { initStore, loadStoreConfig } from "@kit/store";
 import { afterEach, describe, expect, it } from "vitest";
 import { applyPendingChange } from "../src/pending";
@@ -55,6 +56,40 @@ describe("job control", () => {
     const request = await store.runRequests.find(result.jobId);
     expect(request?.status).toBe("queued");
   }, 30_000);
+
+  it("refuses to start a run while a kill switch is active", async () => {
+    const store = await sqliteStore();
+    const now = new Date().toISOString();
+    await store.killSwitches.activate({
+      switchId: "kill_job",
+      scope: "global",
+      target: "",
+      workspaceId: null,
+      state: "active",
+      activatedBy: "operator",
+      reason: "drill",
+      activatedAt: now,
+      releasedBy: null,
+      releasedAt: null,
+      releaseReason: null,
+      version: 1,
+      updatedAt: now,
+    });
+
+    await expect(
+      startJob(
+        store,
+        {
+          kind: "packRun",
+          packDir: "tech-radar",
+          origin: "cli",
+          runMode: "DRY_RUN",
+          stub: true,
+        },
+        { repoRoot: process.cwd() },
+      ),
+    ).rejects.toBeInstanceOf(KillSwitchTrippedError);
+  });
 
   it("rejects a web job outside packs/", async () => {
     const store = await sqliteStore();

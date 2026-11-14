@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: originError }, { status: 403 });
   }
 
-  let body: { evidenceText?: unknown; stub?: unknown };
+  let body: { evidenceText?: unknown; stub?: unknown; incident?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -65,6 +65,9 @@ export async function POST(request: Request) {
       archive: archivePath,
       statePath,
       repo: await getEvolutionRepo(),
+      ...(typeof body.incident === "string" && body.incident.trim()
+        ? { incident: body.incident.slice(0, 500) }
+        : {}),
     });
     return NextResponse.json({
       ok: true,

@@ -38,6 +38,10 @@
 
 ## 0.9.0 — 2026-11-14
 
+- Kill switch (60.3): global/workspace/agent-source/stage scopes with
+  run/stage/model/tool/delivery checkpoints. Trips pause the run instead of
+  failing it; activation, release, and trip events are audited. New
+  `kit kill-switch` commands, `/kill-switch` console page, and a console banner.
 - Autonomy foundation: external coder adapters for DSH (live), Codex and
   OpenCode (generic CLI), isolated repository-copy sandboxes, transcript/diff
   evidence, and environment scrubbing.

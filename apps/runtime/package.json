@@ -12,6 +12,7 @@
     "@kit/core": "workspace:*",
     "@kit/delivery": "workspace:*",
     "@kit/engine": "workspace:*",
+    "@kit/evolution": "workspace:*",
     "@kit/iteration": "workspace:*",
     "@kit/model": "workspace:*",
     "@kit/ops": "workspace:*",

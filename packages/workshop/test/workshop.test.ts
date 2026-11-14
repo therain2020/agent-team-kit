@@ -207,6 +207,8 @@ describe("workshop", () => {
       repo: "acme/demo",
       root,
       acceptThirdParty: true,
+      acceptUnsigned: true,
+      acceptHighRisk: true,
     });
     expect(installed.commit).toBe(SHA);
     expect(installed.files).toEqual(["workflows/demo.yaml"]);
@@ -229,6 +231,8 @@ describe("workshop", () => {
         repo: "acme/demo",
         root,
         acceptThirdParty: true,
+        acceptUnsigned: true,
+        acceptHighRisk: true,
       }),
     ).rejects.toThrow("allowCode");
   });
@@ -251,6 +255,8 @@ describe("workshop", () => {
       repo: "acme/demo",
       root,
       acceptThirdParty: true,
+      acceptUnsigned: true,
+      acceptHighRisk: true,
     });
     expect(installed.manifest.kind).toBe("toolpack");
   });
@@ -266,6 +272,8 @@ describe("workshop", () => {
       repo: "acme/demo",
       root,
       acceptThirdParty: true,
+      acceptUnsigned: true,
+      acceptHighRisk: true,
     });
     expect(installed.files).toEqual(["toolpack.yaml"]);
   });
@@ -282,6 +290,8 @@ describe("workshop", () => {
         repo: "acme/demo",
         root,
         acceptThirdParty: true,
+        acceptUnsigned: true,
+        acceptHighRisk: true,
       }),
     ).rejects.toThrow(/permissions\.network/);
   });
@@ -298,6 +308,8 @@ describe("workshop", () => {
         repo: "acme/demo",
         root,
         acceptThirdParty: true,
+        acceptUnsigned: true,
+        acceptHighRisk: true,
       }),
     ).rejects.toThrow(/permissions\.code/);
   });
@@ -313,6 +325,8 @@ describe("workshop", () => {
       repo: "acme/demo",
       root,
       acceptThirdParty: true,
+      acceptUnsigned: true,
+      acceptHighRisk: true,
       allowCode: true,
     });
     expect(installed.manifest.kind).toBe("toolpack");
@@ -327,8 +341,10 @@ describe("workshop", () => {
         repo: "acme/demo",
         root,
         acceptThirdParty: true,
+        acceptUnsigned: true,
+        acceptHighRisk: true,
       }),
-    ).rejects.toThrow(/possible secret/);
+    ).rejects.toThrow(/secret-like content/);
     expect(existsSync(path.join(root, "demo-flow"))).toBe(false);
   });
 
@@ -347,6 +363,8 @@ describe("workshop", () => {
         repo: "acme/demo",
         root,
         acceptThirdParty: true,
+        acceptUnsigned: true,
+        acceptHighRisk: true,
       }),
     ).rejects.toThrow(/not listed in the manifest/);
   });

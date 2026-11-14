@@ -26,11 +26,10 @@ export async function POST(request: Request) {
   const statePath = path.join(getRepoRoot(), "variants", "state.json");
 
   try {
-    const state = await rollbackCanary(
-      reason,
+    const state = await rollbackCanary(reason, {
       statePath,
-      await getEvolutionRepo(),
-    );
+      repo: await getEvolutionRepo(),
+    });
     return NextResponse.json({ ok: true, state });
   } catch (error) {
     return NextResponse.json(

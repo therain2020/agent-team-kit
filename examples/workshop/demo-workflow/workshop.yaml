@@ -1,0 +1,17 @@
+apiVersion: agentteam/v1
+kind: workflow
+id: workshop-demo
+name: Workshop Demo
+version: 1.0.0
+description: Minimal declarative workflow used to try the workshop installer
+license: Apache-2.0
+entry: workflows/demo.yaml
+files:
+  - workflows/demo.yaml
+topics:
+  - demo
+  - workflow
+permissions:
+  network: false
+  filesystem: none
+  code: false

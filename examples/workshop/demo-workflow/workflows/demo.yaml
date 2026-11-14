@@ -1,0 +1,16 @@
+id: workshop-demo
+version: 1.0
+trigger:
+  event: demo.event.received
+stages:
+  - id: echo
+    type: agent
+    agent: echo
+    inputs: [event]
+    outputs: [result]
+    timeout: 1m
+    retry:
+      max: 1
+      backoff: fixed
+delivery:
+  channel: local_file

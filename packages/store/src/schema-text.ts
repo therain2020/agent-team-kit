@@ -107,6 +107,27 @@ ALTER TABLE autopilot_state
 
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS repo_root TEXT;
 
+CREATE TABLE IF NOT EXISTS kill_switches (
+  switch_id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '',
+  workspace_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  activated_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  activated_at TIMESTAMPTZ NOT NULL,
+  released_by TEXT,
+  released_at TIMESTAMPTZ,
+  release_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kill_switches_identity
+  ON kill_switches(scope, target, workspace_id);
+CREATE INDEX IF NOT EXISTS idx_kill_switches_state
+  ON kill_switches(state, scope, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS evolution_variants (
   variant_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -182,6 +203,22 @@ CREATE TABLE IF NOT EXISTS evolution_state (
   version INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (workspace_id, pack_dir)
+);
+
+CREATE TABLE IF NOT EXISTS evolution_decisions (
+  decision_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  variant_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL DEFAULT '',
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  from_traffic_percent INTEGER NOT NULL DEFAULT 0,
+  to_traffic_percent INTEGER NOT NULL DEFAULT 0,
+  trigger_kind TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS evolution_meta (
@@ -402,6 +439,7 @@ CREATE INDEX IF NOT EXISTS idx_run_requests_status ON run_requests(status, creat
 CREATE INDEX IF NOT EXISTS idx_evolution_scores_variant ON evolution_scores(variant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_variants_pack ON evolution_variants(pack_dir, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_cycles_created ON evolution_cycles(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evolution_decisions_created ON evolution_decisions(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_merge_tickets_status ON merge_tickets(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_runs_updated ON iteration_runs(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_id, task_id);
@@ -519,6 +557,27 @@ CREATE TABLE IF NOT EXISTS run_requests (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS kill_switches (
+  switch_id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '',
+  workspace_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  activated_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  activated_at TEXT NOT NULL,
+  released_by TEXT,
+  released_at TEXT,
+  release_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_kill_switches_identity
+  ON kill_switches(scope, target, workspace_id);
+CREATE INDEX IF NOT EXISTS idx_kill_switches_state
+  ON kill_switches(state, scope, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS evolution_variants (
   variant_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -594,6 +653,22 @@ CREATE TABLE IF NOT EXISTS evolution_state (
   version INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, pack_dir)
+);
+
+CREATE TABLE IF NOT EXISTS evolution_decisions (
+  decision_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  variant_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL DEFAULT '',
+  from_status TEXT,
+  to_status TEXT NOT NULL,
+  from_traffic_percent INTEGER NOT NULL DEFAULT 0,
+  to_traffic_percent INTEGER NOT NULL DEFAULT 0,
+  trigger_kind TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS evolution_meta (
@@ -813,6 +888,7 @@ CREATE INDEX IF NOT EXISTS idx_run_requests_status ON run_requests(status, creat
 CREATE INDEX IF NOT EXISTS idx_evolution_scores_variant ON evolution_scores(variant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_variants_pack ON evolution_variants(pack_dir, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_cycles_created ON evolution_cycles(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evolution_decisions_created ON evolution_decisions(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_merge_tickets_status ON merge_tickets(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_runs_updated ON iteration_runs(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_id, task_id);
