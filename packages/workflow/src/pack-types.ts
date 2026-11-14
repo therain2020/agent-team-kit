@@ -55,6 +55,7 @@ export interface PackRunInput {
   initialInput: string;
   stages: PackStageSpec[];
   stub: boolean;
+  maxConcurrency?: number;
   delivery?: {
     channel: "im" | "email" | "local_file" | "webhook";
     approval?: "never" | "required_if_published";

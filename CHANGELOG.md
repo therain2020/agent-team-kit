@@ -3,6 +3,15 @@
 > `1.0.0` is not released. It is gated on the unattended autonomy acceptance in
 > `plans/agent-pipeline/85-autonomy-1.0.md`. The current preview is `0.9.0`.
 
+## Unreleased
+
+- Pack DAG execution is now genuinely parallel: stages whose `inputFrom` /
+  `inputsFrom` dependencies are satisfied run concurrently (default 4, override
+  `KIT_PACK_CONCURRENCY`, clamped to 1–16). Join stages wait for every upstream,
+  a failed branch stops new scheduling while in-flight work settles, artifact
+  order stays deterministic, and concurrent approvals keep the run paused until
+  the last decision. Temporal's approval signal now queues by `requestId`.
+
 ## 0.9.0 — 2026-11-14
 
 - Autonomy foundation: external coder adapters for DSH (live), Codex and

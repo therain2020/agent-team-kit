@@ -180,6 +180,8 @@ export async function buildPackRun(
         payload: "synthetic",
       }));
 
+  const maxConcurrency = parseMaxConcurrency(process.env.KIT_PACK_CONCURRENCY);
+
   return {
     workflow,
     eventType: workflow.trigger.event,
@@ -193,6 +195,7 @@ export async function buildPackRun(
       initialInput,
       stages,
       stub: options.stub ?? false,
+      ...(maxConcurrency ? { maxConcurrency } : {}),
       ...(workflow.delivery ? { delivery: workflow.delivery } : {}),
     },
   };
@@ -200,6 +203,13 @@ export async function buildPackRun(
 
 function stripFrontmatter(text: string): string {
   return text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
+}
+
+function parseMaxConcurrency(value: string | undefined): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 1
+    ? Math.trunc(parsed)
+    : undefined;
 }
 
 export function parseDurationMs(value: string): number {
