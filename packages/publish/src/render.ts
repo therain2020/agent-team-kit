@@ -379,9 +379,13 @@ function layout(input: LayoutInput): string {
     })
     .join("");
 
-  const crumbs = input.crumbs
+  const crumbSource = input.crumbs.filter(
+    (crumb, index, list) =>
+      index === 0 || crumb.label !== list[index - 1]?.label,
+  );
+  const crumbs = crumbSource
     .map((crumb, index) => {
-      const isLast = index === input.crumbs.length - 1;
+      const isLast = index === crumbSource.length - 1;
       if (isLast) {
         return `<span class="current">${escapeText(crumb.label)}</span>`;
       }
