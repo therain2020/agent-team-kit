@@ -239,6 +239,15 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     toolPacks.push(parsedToolPack.data);
   }
 
+  const availableTools = new Set<string>([...KNOWN_TOOLS, ...toolNames]);
+  for (const agent of pack.agents) {
+    for (const tool of agent.tools) {
+      if (!availableTools.has(tool)) {
+        errors.push(`agent ${agent.id}: unknown tool: ${tool}`);
+      }
+    }
+  }
+
   const skills = new Map<string, SkillFrontmatter>();
   const skillPacks: SkillPack[] = [];
 

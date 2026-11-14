@@ -9,8 +9,10 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { type ActivityInput, appendActivity } from "@kit/activity";
 import {
   type CoderResult,
+  type CoderStreamEvent,
   coderSandboxRoot,
   commandOnPath,
   isCoderSandboxPath,
@@ -76,6 +78,113 @@ function getStore(): Promise<Store> {
   return storePromise;
 }
 
+// Observability must never break a run.
+async function safeActivity(store: Store, input: ActivityInput): Promise<void> {
+  try {
+    await appendActivity(store, input);
+  } catch (error) {
+    console.error(
+      `[activity] ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+export interface IterationActivityContext {
+  workspaceId: string;
+  iterationId: string;
+  taskId: string;
+  agentId: string;
+  coder: string;
+}
+
+/**
+ * Maps streaming coder events onto the team activity stream. Turn boundaries
+ * and tool calls are mirrored; thinking/text/step events stay in 93's finer
+ * turn timeline to avoid flooding activity_events.
+ */
+export function coderEventToActivity(
+  event: CoderStreamEvent,
+  context: IterationActivityContext,
+  toolNames?: Map<string, string>,
+): ActivityInput | null {
+  const base = {
+    workspaceId: context.workspaceId,
+    runId: context.iterationId,
+    stageId: `${context.iterationId}:${context.taskId}:coder`,
+    agentId: context.agentId,
+    createdAt: event.at,
+  };
+  const payload = {
+    taskId: context.taskId,
+    coder: context.coder,
+    ...(event.turn !== undefined ? { turn: event.turn } : {}),
+    ...(event.step !== undefined ? { step: event.step } : {}),
+  };
+
+  switch (event.kind) {
+    case "turn_start":
+      return {
+        ...base,
+        kind: "iteration.coder.turn",
+        status: "running",
+        summary: `turn ${event.turn ?? 1} started`,
+        payload,
+      };
+    case "turn_end":
+      return {
+        ...base,
+        kind: "iteration.coder.turn",
+        status: event.status ?? "completed",
+        summary:
+          event.summary ??
+          `turn ${event.turn ?? 1} ${event.status ?? "completed"}`,
+        payload: { ...payload, tokens: event.tokens ?? 0 },
+      };
+    case "error":
+      return {
+        ...base,
+        kind: "iteration.coder.turn",
+        status: "failed",
+        summary: event.summary ?? "coder error",
+        payload: { ...payload, error: event.summary ?? null },
+      };
+    case "tool_call":
+      if (event.callId && event.tool) {
+        toolNames?.set(event.callId, event.tool);
+      }
+      return {
+        ...base,
+        kind: "iteration.coder.tool",
+        status: "running",
+        ...(event.tool ? { tool: event.tool } : {}),
+        summary: event.summary ?? event.tool ?? "tool call",
+        payload: {
+          ...payload,
+          callId: event.callId ?? null,
+          input: event.payload?.input ?? null,
+        },
+      };
+    case "tool_result": {
+      const tool =
+        event.tool ?? (event.callId ? toolNames?.get(event.callId) : undefined);
+      return {
+        ...base,
+        kind: "iteration.coder.tool_result",
+        status: event.status ?? "completed",
+        ...(tool ? { tool } : {}),
+        summary: event.summary ?? "",
+        payload: {
+          ...payload,
+          callId: event.callId ?? null,
+          result: event.payload?.result ?? null,
+        },
+      };
+    }
+    default:
+      return null;
+  }
+}
+
 function estimateModelCall(
   modelAlias: string,
   inputChars: number,
@@ -100,6 +209,30 @@ export async function planIteration(
   input: IterationInput,
 ): Promise<PlannedIteration> {
   const store = await getStore();
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:plan`,
+    agentId: "planner",
+    kind: "iteration.plan",
+    status: "running",
+    summary: input.goal,
+    payload: {
+      runMode: input.runMode,
+      applyMode: input.applyMode,
+      maxTasks: input.maxTasks,
+      stub: input.stub === true,
+    },
+  });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    agentId: "planner",
+    kind: "iteration.run.started",
+    status: "running",
+    summary: input.goal,
+    payload: { runMode: input.runMode, applyMode: input.applyMode },
+  });
   await assertKillSwitchClear(
     store,
     {
@@ -246,6 +379,26 @@ ${context}`;
   });
 
   await startIteration(store, input, plan, artifactId);
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:plan`,
+    agentId: "planner",
+    kind: "iteration.plan",
+    status: "completed",
+    summary: `planned ${plan.tasks.length} task(s)`,
+    payload: {
+      artifactId,
+      model: iteration.planner.model,
+      tokens,
+      costCny,
+      tasks: plan.tasks.map((task) => ({
+        id: task.id,
+        domain: task.domain,
+        risk: task.risk,
+      })),
+    },
+  });
   return { plan, artifactId, tokens, costCny };
 }
 
@@ -295,6 +448,49 @@ export async function runIterationCoder(
     summary: input.task.goal,
     payload: { coder, attempt: input.attempt },
   });
+
+  const activityAgentId = domain.agent ?? coder;
+  const activityContext: IterationActivityContext = {
+    workspaceId: input.workspaceId,
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    agentId: activityAgentId,
+    coder,
+  };
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:${input.task.id}:coder`,
+    agentId: activityAgentId,
+    kind: "iteration.coder.started",
+    status: "running",
+    summary: input.task.goal,
+    payload: {
+      taskId: input.task.id,
+      domain: input.task.domain,
+      coder,
+      attempt: input.attempt,
+    },
+  });
+  if (input.attempt > 0) {
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.iterationId,
+      stageId: `${input.iterationId}:${input.task.id}:coder`,
+      agentId: activityAgentId,
+      kind: "iteration.repair",
+      status: "running",
+      summary:
+        input.feedback.slice(0, 500) || `repair attempt ${input.attempt}`,
+      payload: {
+        taskId: input.task.id,
+        coder,
+        attempt: input.attempt,
+        feedback: input.feedback || null,
+      },
+    });
+  }
+
   const sandboxDir = coderSandboxRoot(
     "iterations",
     safe(input.iterationId),
@@ -341,6 +537,7 @@ export async function runIterationCoder(
   }
 
   let eventChain = Promise.resolve();
+  const activityToolNames = new Map<string, string>();
   let result: CoderResult;
   try {
     result = await runCoderTask({
@@ -357,16 +554,28 @@ export async function runIterationCoder(
       installDeps: process.env.KIT_CODER_INSTALL !== "0",
       keepSandbox: true,
       onEvent: (event) => {
-        eventChain = eventChain
-          .then(() =>
-            appendCoderEvent(store, input.iterationId, input.task.id, event),
-          )
-          .then(() => undefined)
-          .catch((error: unknown) => {
+        eventChain = eventChain.then(async () => {
+          try {
+            await appendCoderEvent(
+              store,
+              input.iterationId,
+              input.task.id,
+              event,
+            );
+          } catch (error) {
             console.error(
               `[iteration] failed to persist coder event: ${String(error)}`,
             );
-          });
+          }
+          const activity = coderEventToActivity(
+            event,
+            activityContext,
+            activityToolNames,
+          );
+          if (activity) {
+            await safeActivity(store, activity);
+          }
+        });
         return eventChain;
       },
     });
@@ -469,6 +678,24 @@ export async function runIterationCoder(
       error: result.error ?? null,
     },
   });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:${input.task.id}:coder`,
+    agentId: activityAgentId,
+    kind: "iteration.coder.finished",
+    status: result.ok ? "completed" : "failed",
+    summary: result.summary,
+    payload: {
+      taskId: input.task.id,
+      coder,
+      tokens: result.tokens ?? 0,
+      changedFiles: result.changedFiles,
+      durationMs: result.durationMs,
+      sandboxMode: result.sandbox.mode,
+      error: result.error ?? null,
+    },
+  });
 
   return {
     taskId: input.task.id,
@@ -537,6 +764,16 @@ export async function verifyIterationTask(
     kind: "verification.started",
     status: "running",
     summary: `checks: ${domain.verification.join(", ")}`,
+  });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:${input.task.id}:verify`,
+    agentId: "verifier",
+    kind: "iteration.verify",
+    status: "running",
+    summary: `checks: ${domain.verification.join(", ")}`,
+    payload: { taskId: input.task.id, checks: domain.verification },
   });
   if (input.changedFiles.length === 0) {
     return await failVerification(
@@ -682,6 +919,25 @@ export async function verifyIterationTask(
       })),
     },
   });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:${input.task.id}:verify`,
+    agentId: "verifier",
+    kind: "iteration.verify",
+    status: pass ? "completed" : "failed",
+    summary: pass ? "all checks passed" : feedback.slice(0, 500),
+    payload: {
+      taskId: input.task.id,
+      pass,
+      artifactId,
+      checks: checks.map((check) => ({
+        name: check.name,
+        exitCode: check.exitCode,
+        timedOut: check.timedOut,
+      })),
+    },
+  });
   return { taskId: input.task.id, pass, feedback, checks, artifactId };
 }
 
@@ -721,6 +977,22 @@ export async function classifyIterationTask(
     status: classified.forbidden ? "blocked" : "completed",
     summary: `risk ${classified.risk}`,
     payload: { reasons: classified.reasons, forbidden: classified.forbidden },
+  });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:${input.task.id}:risk`,
+    agentId: "risk-classifier",
+    kind: "iteration.risk",
+    status: classified.forbidden ? "blocked" : "completed",
+    summary: `risk ${classified.risk}`,
+    payload: {
+      taskId: input.task.id,
+      risk: classified.risk,
+      reasons: classified.reasons,
+      forbidden: classified.forbidden,
+      artifactId,
+    },
   });
   return {
     taskId: input.task.id,
@@ -832,6 +1104,23 @@ export async function applyIterationTask(
         artifactId,
       },
     });
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.iterationId,
+      stageId: `${input.iterationId}:${input.task.id}:apply`,
+      agentId: "policy:autonomy",
+      kind: "iteration.apply",
+      status,
+      summary: reason,
+      payload: {
+        taskId: input.task.id,
+        risk: input.risk,
+        applyMode: input.applyMode,
+        ticketId,
+        commit: extra.commit ?? null,
+        artifactId,
+      },
+    });
     return {
       taskId: input.task.id,
       applied: status === "applied",
@@ -880,6 +1169,22 @@ export async function applyIterationTask(
         changedFiles: input.changedFiles,
       },
     });
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.iterationId,
+      stageId: `${input.iterationId}:${input.task.id}:apply`,
+      agentId: "policy:autonomy",
+      kind: "iteration.apply",
+      status: "running",
+      summary: `risk ${input.risk}, mode ${input.applyMode}`,
+      payload: {
+        taskId: input.task.id,
+        risk: input.risk,
+        applyMode: input.applyMode,
+        baselineSha: input.baselineSha,
+        changedFiles: input.changedFiles,
+      },
+    });
 
     const diff = await readArtifactText(store, input.diffArtifactId);
     if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
@@ -921,6 +1226,14 @@ export async function failIterationActivity(
 ): Promise<void> {
   const store = await getStore();
   await failIteration(store, input.iterationId, input.error);
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    kind: "iteration.run.failed",
+    status: "failed",
+    summary: input.error.slice(0, 500),
+    payload: { error: input.error },
+  });
 }
 
 /**
@@ -1189,6 +1502,21 @@ export async function reportIteration(
     status,
     summary: `iteration ${status}`,
     payload: { reportArtifactId, fitnessArtifactId },
+  });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    kind: "iteration.run.finished",
+    status,
+    summary: `iteration ${status}`,
+    payload: {
+      tasks: input.tasks.length,
+      verified: passed,
+      applied,
+      tokens: totalTokens,
+      reportArtifactId,
+      fitnessArtifactId,
+    },
   });
 
   return { reportArtifactId, fitnessArtifactId, status };
@@ -1459,6 +1787,16 @@ async function failVerification(
     status: "failed",
     summary: `${reason}: ${detail}`.slice(0, 500),
     payload: { pass: false, reason, detail: detail.slice(0, 2000) },
+  });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:${input.task.id}:verify`,
+    agentId: "verifier",
+    kind: "iteration.verify",
+    status: "failed",
+    summary: `${reason}: ${detail}`.slice(0, 500),
+    payload: { taskId: input.task.id, pass: false, reason, artifactId },
   });
   return {
     taskId: input.task.id,

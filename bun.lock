@@ -52,6 +52,7 @@
       "name": "@kit/runtime",
       "version": "0.9.0",
       "dependencies": {
+        "@kit/activity": "workspace:*",
         "@kit/autopilot": "workspace:*",
         "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",

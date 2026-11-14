@@ -10,12 +10,15 @@ import {
   Bot,
   CheckCircle2,
   FileCode2,
+  FolderTree,
   Lock,
   Plus,
   RefreshCw,
+  Rocket,
   Save,
   ShieldCheck,
   Sparkles,
+  Trash2,
   UserCog,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -30,9 +33,19 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { PackFiles } from "./pack-files";
+import { PackPublish } from "./pack-publish";
+import { StageFields } from "./stage-fields";
+import { TokenPicker } from "./token-picker";
 import { WorkflowGraph } from "./workflow-graph";
 
-type Tab = "agents" | "workflows" | "approvals" | "autopilot";
+type Tab =
+  | "agents"
+  | "workflows"
+  | "approvals"
+  | "autopilot"
+  | "files"
+  | "publish";
 
 interface ApprovalDraft {
   enabled: boolean;
@@ -110,6 +123,9 @@ export function PackStudio({
   });
   const [newWorkflowId, setNewWorkflowId] = useState("workflow-2");
   const [workflowBusy, setWorkflowBusy] = useState(false);
+  const [managerModel, setManagerModel] = useState("deepseek-pro");
+  const [managerBusy, setManagerBusy] = useState(false);
+  const hasManager = agents.some((agent) => agent.isManager);
 
   const currentWorkflow = data.workflows.find(
     (workflow) => workflow.file === workflowFile,
@@ -203,6 +219,65 @@ export function PackStudio({
       toast.error(text);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function deleteSelectedAgent() {
+    if (!selected) {
+      return;
+    }
+    const isManager = selected.isManager;
+    const prompt = isManager
+      ? t("confirmDeleteManager")
+      : t("confirmDeleteAgent", { id: selected.id });
+    if (!window.confirm(prompt)) {
+      return;
+    }
+    setSaving(true);
+    try {
+      const url = isManager
+        ? `/api/packs/${encodeURIComponent(data.dirName)}/manager`
+        : `/api/packs/${encodeURIComponent(data.dirName)}/agents/${encodeURIComponent(selected.id)}`;
+      const response = await fetch(url, { method: "DELETE" });
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "delete failed");
+      }
+      toast.success(isManager ? t("managerDeleted") : t("agentDeleted"));
+      window.location.reload();
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createManager() {
+    setManagerBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/packs/${encodeURIComponent(data.dirName)}/manager`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: managerModel }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "create failed");
+      }
+      toast.success(t("managerCreated"));
+      window.location.reload();
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setManagerBusy(false);
     }
   }
 
@@ -548,6 +623,8 @@ export function PackStudio({
               ["workflows", FileCode2],
               ["approvals", ShieldCheck],
               ["autopilot", Sparkles],
+              ["files", FolderTree],
+              ["publish", Rocket],
             ] as Array<[Tab, typeof UserCog]>
           ).map(([value, Icon]) => (
             <button
@@ -702,6 +779,29 @@ export function PackStudio({
                 </Button>
               </div>
             </div>
+
+            {!hasManager ? (
+              <div className="rounded-lg border border-border bg-card p-3">
+                <p className="mb-2 text-[11px] text-zinc-300">
+                  {t("noManager")}
+                </p>
+                <Input
+                  value={managerModel}
+                  onChange={(event) => setManagerModel(event.target.value)}
+                  placeholder="deepseek-pro"
+                  className="mb-1.5 h-8 font-mono text-[11px]"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  onClick={createManager}
+                  disabled={managerBusy}
+                >
+                  {t("createManager")}
+                </Button>
+              </div>
+            ) : null}
           </div>
 
           <div className="space-y-3 rounded-lg border border-border bg-card p-4">
@@ -714,10 +814,21 @@ export function PackStudio({
                   {selected.file}
                 </p>
               </div>
-              <Button size="sm" onClick={saveAgent} disabled={saving}>
-                <Save className="size-3.5" />
-                {t("save")}
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={deleteSelectedAgent}
+                  disabled={saving}
+                >
+                  <Trash2 className="size-3.5" />
+                  {t("delete")}
+                </Button>
+                <Button size="sm" onClick={saveAgent} disabled={saving}>
+                  <Save className="size-3.5" />
+                  {t("save")}
+                </Button>
+              </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -757,22 +868,32 @@ export function PackStudio({
                   ) : null}
                 </select>
               </Field>
-              <Field label={t("tools")} hint={t("commaHint")}>
-                <Input
-                  value={selected.tools.join(", ")}
-                  onChange={(event) =>
-                    patchAgent({ tools: splitList(event.target.value) })
-                  }
-                  className="font-mono"
+              <Field label={t("tools")} hint={t("pickerHint")}>
+                <TokenPicker
+                  values={selected.tools}
+                  options={data.catalog.tools.map((tool) => ({
+                    value: tool.name,
+                    description:
+                      tool.source === "toolpack" ? "toolpack" : undefined,
+                  }))}
+                  onChange={(tools) => patchAgent({ tools })}
+                  selectLabel={t("addTool")}
+                  customPlaceholder={t("customTool")}
+                  addLabel={t("add")}
+                  unknownLabel={t("unknownTool")}
                 />
               </Field>
-              <Field label={t("skills")} hint={t("commaHint")}>
-                <Input
-                  value={selected.skills.join(", ")}
-                  onChange={(event) =>
-                    patchAgent({ skills: splitList(event.target.value) })
-                  }
-                  className="font-mono"
+              <Field label={t("skills")} hint={t("pickerHint")}>
+                <TokenPicker
+                  values={selected.skills}
+                  options={data.catalog.skills.map((skill) => ({
+                    value: skill,
+                  }))}
+                  onChange={(skills) => patchAgent({ skills })}
+                  selectLabel={t("addSkill")}
+                  customPlaceholder={t("customSkill")}
+                  addLabel={t("add")}
+                  unknownLabel={t("unknownSkill")}
                 />
               </Field>
               <Field label={t("filesystem")}>
@@ -896,6 +1017,28 @@ export function PackStudio({
                 stages={currentWorkflow.stages}
                 onSaved={(content) => {
                   setWorkflowRaw(content);
+                  router.refresh();
+                }}
+              />
+            ) : null}
+            {currentWorkflow ? (
+              <StageFields
+                key={`${currentWorkflow.file}-fields`}
+                dirName={data.dirName}
+                file={currentWorkflow.file}
+                stages={currentWorkflow.stages}
+                agents={agents}
+                onSaved={() => {
+                  fetch(
+                    `/api/packs/${encodeURIComponent(data.dirName)}/file?path=${encodeURIComponent(currentWorkflow.file)}`,
+                  )
+                    .then((response) => response.json())
+                    .then((payload: { content?: string }) => {
+                      if (typeof payload.content === "string") {
+                        setWorkflowRaw(payload.content);
+                      }
+                    })
+                    .catch(() => undefined);
                   router.refresh();
                 }}
               />
@@ -1200,6 +1343,12 @@ export function PackStudio({
           />
         </div>
       ) : null}
+
+      {tab === "files" ? (
+        <PackFiles dirName={data.dirName} initialFiles={data.editableFiles} />
+      ) : null}
+
+      {tab === "publish" ? <PackPublish dirName={data.dirName} /> : null}
     </div>
   );
 
@@ -1248,13 +1397,6 @@ function Field({
       {control}
     </label>
   );
-}
-
-function splitList(value: string): string[] {
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function buildApprovalDrafts(data: StudioData): Record<string, ApprovalDraft> {

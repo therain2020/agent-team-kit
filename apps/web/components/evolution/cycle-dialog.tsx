@@ -108,10 +108,6 @@ export function EvolutionCycleDialog({
   }
 
   async function run() {
-    if (!evidence.trim()) {
-      setError(t("evidenceRequired"));
-      return;
-    }
     setError(null);
     setPending("run");
     try {
@@ -407,10 +403,7 @@ export function EvolutionCycleDialog({
                   <RefreshCw className="size-3.5" />
                   {t("regenerate")}
                 </Button>
-                <Button
-                  onClick={() => void run()}
-                  disabled={pending !== null || !evidence.trim()}
-                >
+                <Button onClick={() => void run()} disabled={pending !== null}>
                   <Play className="size-3.5" />
                   {pending === "run" ? t("running") : t("run")}
                 </Button>

@@ -420,6 +420,23 @@ CREATE TABLE IF NOT EXISTS ops_alerts (
   updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ops_autonomy_presets (
+  preset_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  level TEXT NOT NULL,
+  status TEXT NOT NULL,
+  config JSONB NOT NULL DEFAULT '{}'::jsonb,
+  applied_by TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL,
+  rolled_back_by TEXT,
+  rolled_back_at TIMESTAMPTZ,
+  rollback_reason TEXT,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ops_autonomy_active
+  ON ops_autonomy_presets(workspace_id, status);
+
 CREATE TABLE IF NOT EXISTS manager_sessions (
   workspace_id TEXT NOT NULL,
   session_id TEXT NOT NULL,
@@ -914,6 +931,23 @@ CREATE TABLE IF NOT EXISTS ops_alerts (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ops_autonomy_presets (
+  preset_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  level TEXT NOT NULL,
+  status TEXT NOT NULL,
+  config TEXT NOT NULL DEFAULT '{}',
+  applied_by TEXT NOT NULL,
+  applied_at TEXT NOT NULL,
+  rolled_back_by TEXT,
+  rolled_back_at TEXT,
+  rollback_reason TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ops_autonomy_active
+  ON ops_autonomy_presets(workspace_id, status);
 
 CREATE TABLE IF NOT EXISTS manager_sessions (
   workspace_id TEXT NOT NULL,

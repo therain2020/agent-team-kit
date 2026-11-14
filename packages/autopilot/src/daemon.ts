@@ -9,6 +9,7 @@ import {
   eventEnvelopeSchema,
   newId,
   resolveKillSwitch,
+  utcDayKey,
 } from "@kit/core";
 import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
 import {
@@ -16,7 +17,7 @@ import {
   findDecisionForRequest,
   recordDecision,
 } from "@kit/manager";
-import { getOpsGate } from "@kit/ops";
+import { getActiveAutonomyPreset, getOpsGate } from "@kit/ops";
 import {
   type LoadedPack,
   buildPackRun,
@@ -26,6 +27,7 @@ import {
 import { initStore, loadStoreConfig, withStoreLock } from "@kit/store";
 import { createTemporalClient, taskQueue } from "@kit/workflow";
 import { nextCronOccurrence } from "./cron";
+import { applyAutonomyPreset } from "./preset";
 import { type AutopilotState, ensureState, saveState } from "./state";
 
 const WORKSPACE_ID = "default";
@@ -92,6 +94,7 @@ export async function runAutopilotTick(
     result.nightMode = true;
     result.nightModeReason = gate.reason ?? "night mode";
   }
+  const preset = await getActiveAutonomyPreset(store, WORKSPACE_ID);
 
   try {
     const hit = resolveKillSwitch(await store.killSwitches.listActive(), {
@@ -112,6 +115,9 @@ export async function runAutopilotTick(
       async () => {
         for (const pack of packs) {
           try {
+            const effective: PackContext = preset
+              ? { ...pack, config: applyAutonomyPreset(pack.config, preset) }
+              : pack;
             const state = await ensureState(
               store.autopilotState,
               WORKSPACE_ID,
@@ -119,7 +125,9 @@ export async function runAutopilotTick(
               pack.config.enabled,
               now,
             );
-            if (!state.enabled) {
+            // The preset enables the loop at runtime without persisting
+            // enabled=true, so rollback needs no state surgery.
+            if (!state.enabled && !effective.config.enabled) {
               state.lastTickAt = now.toISOString();
               if (!(await saveState(store.autopilotState, state))) {
                 result.errors.push(
@@ -132,7 +140,7 @@ export async function runAutopilotTick(
 
             if (!gate.readOnly) {
               await processSchedules({
-                pack,
+                pack: effective,
                 state,
                 now,
                 runningWorkflows,
@@ -146,7 +154,7 @@ export async function runAutopilotTick(
               });
 
               await processIterations({
-                pack,
+                pack: effective,
                 state,
                 now,
                 dryRun: options.dryRun ?? false,
@@ -159,7 +167,7 @@ export async function runAutopilotTick(
               });
 
               await processAutoApprovals({
-                pack,
+                pack: effective,
                 state,
                 now,
                 store,
@@ -171,7 +179,7 @@ export async function runAutopilotTick(
               });
 
               await processEvolution({
-                pack,
+                pack: effective,
                 state,
                 now,
                 dryRun: options.dryRun ?? false,
@@ -502,6 +510,16 @@ async function processIterations(input: {
       continue;
     }
 
+    if (iteration.budget?.dailyCostCny !== undefined) {
+      const spent = await daySpendCny(store, WORKSPACE_ID, now);
+      if (spent >= iteration.budget.dailyCostCny) {
+        result.errors.push(
+          `${pack.dirName}/${iteration.id}: skipped, daily cost budget reached`,
+        );
+        continue;
+      }
+    }
+
     const dedupeKey = `autopilot:${pack.dirName}:${iteration.id}:${slot}`;
     const workflowId = `iteration-${WORKSPACE_ID}-${hash(dedupeKey)}`;
     const iterationId = newId("it");
@@ -784,6 +802,21 @@ async function runCost(
     total += manifest?.cost.amount ?? 0;
   }
   return total;
+}
+
+async function daySpendCny(
+  store: Awaited<ReturnType<typeof initStore>>,
+  workspaceId: string,
+  now: Date,
+): Promise<number> {
+  const dayKey = utcDayKey(now);
+  const budgets = await store.budgetService.listBudgets({
+    workspaceId,
+    scope: "day",
+    limit: 10,
+  });
+  const day = budgets.find((budget) => budget.targetKey === dayKey);
+  return day ? day.spentCnyMicro / 1_000_000 : 0;
 }
 
 function addCadence(now: Date, cadence: "daily" | "weekly"): string {
