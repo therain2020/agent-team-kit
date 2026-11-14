@@ -273,48 +273,6 @@ export const killSwitches = pgTable(
   ],
 );
 
-
-export const degradationAudit = pgTable("degradation_audit", {
-  auditId: text("audit_id").primaryKey(),
-  occurredAt: timestamp("occurred_at", {
-    withTimezone: true,
-    mode: "string",
-  }).notNull(),
-  actor: text("actor").notNull(),
-  action: text("action").notNull(),
-  scope: text("scope").notNull(),
-  workspaceId: text("workspace_id").notNull(),
-  modeId: text("mode_id").notNull(),
-  detail: jsonb("detail").$type<Record<string, unknown>>().notNull(),
-});
-
-export const autopilotState = pgTable(
-  "autopilot_state",
-  {
-    workspaceId: text("workspace_id").notNull(),
-    packDir: text("pack_dir").notNull(),
-    enabled: boolean("enabled").notNull().default(false),
-    lastTickAt: timestamp("last_tick_at", {
-      withTimezone: true,
-      mode: "string",
-    }),
-    nextRuns: jsonb("next_runs")
-      .$type<Record<string, string>>()
-      .notNull()
-      .default({}),
-    day: date("day", { mode: "string" }),
-    runsToday: integer("runs_today").notNull().default(0),
-    spentToday: numeric("spent_today").notNull().default("0"),
-    lastError: text("last_error"),
-    updatedAt: timestamp("updated_at", {
-      withTimezone: true,
-      mode: "string",
-    }).notNull(),
-    version: integer("version").notNull().default(0),
-  },
-  (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
-);
-
 export const budgets = pgTable(
   "budgets",
   {
@@ -407,38 +365,4 @@ export const budgetCharges = pgTable(
   (table) => [
     uniqueIndex("budget_charges_reservation_idx").on(table.reservationId),
   ],
-);
-
-export const managerSessions = pgTable(
-  "manager_sessions",
-  {
-    workspaceId: text("workspace_id").notNull(),
-    sessionId: text("session_id").notNull(),
-    windowStartedAt: timestamp("window_started_at", {
-      withTimezone: true,
-      mode: "string",
-    }).notNull(),
-    windowEndsAt: timestamp("window_ends_at", {
-      withTimezone: true,
-      mode: "string",
-    }).notNull(),
-    firstAt: timestamp("first_at", {
-      withTimezone: true,
-      mode: "string",
-    }).notNull(),
-    lastAt: timestamp("last_at", {
-      withTimezone: true,
-      mode: "string",
-    }).notNull(),
-    tokens: integer("tokens").notNull().default(0),
-    costCny: numeric("cost_cny").notNull().default("0"),
-    exchanges: integer("exchanges").notNull().default(0),
-    rejections: integer("rejections").notNull().default(0),
-    lastRejectionReason: text("last_rejection_reason"),
-    updatedAt: timestamp("updated_at", {
-      withTimezone: true,
-      mode: "string",
-    }).notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.workspaceId, table.sessionId] })],
 );
