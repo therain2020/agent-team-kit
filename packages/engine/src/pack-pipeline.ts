@@ -43,6 +43,7 @@ export interface PackPipelineIo {
 
 const DEFAULT_MAX_CONCURRENCY = 4;
 const MAX_CONCURRENCY_LIMIT = 16;
+const BUDGET_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface SettledStage {
   index: number;
@@ -65,7 +66,9 @@ export async function runPackPipeline(
     stages: input.stages.map((stage) => ({
       stageId: stage.stageId,
       name: stage.stageName,
+      ...(stage.agentId ? { agentId: stage.agentId } : {}),
     })),
+    ...(input.budget ? { budget: input.budget } : {}),
   });
 
   const stageIndexById = new Map<string, number>();
@@ -121,6 +124,63 @@ export async function runPackPipeline(
     }
   };
 
+  let budgetApprovalTail: Promise<void> = Promise.resolve();
+  const acquireBudgetApproval = async (): Promise<() => void> => {
+    let release = (): void => undefined;
+    const next = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const previous = budgetApprovalTail;
+    budgetApprovalTail = previous.then(() => next);
+    await previous;
+    return release;
+  };
+
+  const executeStageWithBudget = async (
+    stageInput: PackStageExecutionInput,
+  ): Promise<PackStageExecutionResult> => {
+    let result = await activity.executePackStage(stageInput);
+    if (!result.budgetPaused) {
+      return result;
+    }
+
+    // Serialize budget exceptions so parallel DAG branches do not create
+    // competing approval requests that the inbox cannot resolve.
+    const release = await acquireBudgetApproval();
+    try {
+      result = await activity.executePackStage(stageInput);
+      if (!result.budgetPaused) {
+        return result;
+      }
+      const approval = await activity.requestApproval({
+        runId: input.runId,
+        workspaceId: input.workspaceId,
+        runMode: input.runMode,
+        stageId: stageInput.stageId,
+        stageName: stageInput.stageName,
+        requestType: "budget_exceeded",
+        approval: {
+          mode: "required",
+          position: "after",
+          riskClass: "high",
+          ttlMs: BUDGET_APPROVAL_TTL_MS,
+        },
+        summary: `${result.budgetSummary ?? "budget exceeded"}\n\nIncrease the budget at /budgets, then approve to continue this stage.`,
+        options: ["approve", "abort"],
+      });
+      if (approval.required) {
+        await waitForApproval(approval.requestId, BUDGET_APPROVAL_TTL_MS);
+      }
+      result = await activity.executePackStage(stageInput);
+      if (result.budgetPaused) {
+        throw new Error("budget still exceeded after approval");
+      }
+      return result;
+    } finally {
+      release();
+    }
+  };
+
   const executeStage = async (index: number): Promise<void> => {
     const stage = input.stages[index];
     if (!stage) {
@@ -168,7 +228,7 @@ export async function runPackPipeline(
       }
     }
 
-    let result = await activity.executePackStage({
+    let result = await executeStageWithBudget({
       ...stage,
       runId: input.runId,
       workspaceId: input.workspaceId,
@@ -189,7 +249,7 @@ export async function runPackPipeline(
         result.effectiveInputArtifactId && inputArtifactIds.length > 0
           ? [result.effectiveInputArtifactId, ...inputArtifactIds.slice(1)]
           : inputArtifactIds;
-      result = await activity.executePackStage({
+      result = await executeStageWithBudget({
         ...stage,
         runId: input.runId,
         workspaceId: input.workspaceId,

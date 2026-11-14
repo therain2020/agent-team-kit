@@ -3,6 +3,7 @@ import { sameOriginError } from "@/lib/http";
 import { jobErrorResponse, liveGateError } from "@/lib/job-api";
 import { getRepoRoot } from "@/lib/paths";
 import { ensureStoreSchema, getStore } from "@/lib/store";
+import { runBudgetSpecSchema } from "@kit/core";
 import { startJob } from "@kit/job";
 import { NextResponse } from "next/server";
 
@@ -22,6 +23,7 @@ export async function POST(request: Request) {
     evidenceArtifactId?: unknown;
     evidenceText?: unknown;
     mode?: unknown;
+    budget?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -49,6 +51,12 @@ export async function POST(request: Request) {
     );
   }
 
+  const budgetResult = runBudgetSpecSchema.optional().safeParse(body.budget);
+  if (!budgetResult.success) {
+    return NextResponse.json({ error: "invalid budget" }, { status: 400 });
+  }
+  const budget = budgetResult.data;
+
   try {
     await ensureStoreSchema();
     const blocked = await readOnlyBlockMessage();
@@ -63,6 +71,7 @@ export async function POST(request: Request) {
         packDir: body.packDir,
         runMode,
         stub: body.stub === true,
+        ...(budget ? { budget } : {}),
         workflow: typeof body.workflow === "string" ? body.workflow : undefined,
         evidenceText:
           typeof body.evidenceText === "string" ? body.evidenceText : undefined,

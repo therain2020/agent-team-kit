@@ -3,6 +3,7 @@ import { sameOriginError } from "@/lib/http";
 import { jobErrorResponse, liveGateError } from "@/lib/job-api";
 import { getRepoRoot } from "@/lib/paths";
 import { ensureStoreSchema, getStore } from "@/lib/store";
+import { runBudgetSpecSchema } from "@kit/core";
 import { type JobKind, type MissionInput, listJobs, startJob } from "@kit/job";
 import { NextResponse } from "next/server";
 
@@ -49,6 +50,11 @@ export async function POST(request: Request) {
   if (!packDir) {
     return NextResponse.json({ error: "packDir is required" }, { status: 400 });
   }
+  const budgetResult = runBudgetSpecSchema.optional().safeParse(body.budget);
+  if (!budgetResult.success) {
+    return NextResponse.json({ error: "invalid budget" }, { status: 400 });
+  }
+  const budget = budgetResult.data;
 
   try {
     await ensureStoreSchema();
@@ -75,6 +81,7 @@ export async function POST(request: Request) {
         maxTasks: asNumber(body.maxTasks),
         maxRepair: asNumber(body.maxRepair),
         budgetCny: asNumber(body.budgetCny),
+        ...(budget ? { budget } : {}),
         coder: parseCoder(body.coder),
         stub: body.stub === true,
         mission: parseMission(body.mission),

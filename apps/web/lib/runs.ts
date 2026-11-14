@@ -37,7 +37,11 @@ export interface ApprovalView {
   runId: string;
   stageId: string;
   stageName: string;
-  requestType: "stage_before" | "stage_after" | "gate_failure";
+  requestType:
+    | "stage_before"
+    | "stage_after"
+    | "gate_failure"
+    | "budget_exceeded";
   draftArtifactId: string | null;
   summary: string;
   options: string[];
@@ -171,7 +175,8 @@ export const loadRunDetail = cache(async function loadRunDetail(
         stageName: String(parsed.stageName ?? ""),
         requestType:
           parsed.requestType === "stage_before" ||
-          parsed.requestType === "stage_after"
+          parsed.requestType === "stage_after" ||
+          parsed.requestType === "budget_exceeded"
             ? parsed.requestType
             : "gate_failure",
         draftArtifactId:

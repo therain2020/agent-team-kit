@@ -1,4 +1,9 @@
-import type { CoderId, IterationTask, TaskPlan } from "@kit/core";
+import type {
+  CoderId,
+  IterationTask,
+  RunBudgetSpec,
+  TaskPlan,
+} from "@kit/core";
 
 export interface IterationInput {
   iterationId: string;
@@ -18,6 +23,7 @@ export interface IterationInput {
   coder?: CoderId;
   stub: boolean;
   budgetCny?: number;
+  budget?: RunBudgetSpec;
   dedupeKey?: string;
 }
 
@@ -38,6 +44,7 @@ export interface RunCoderActivityInput {
   feedback: string;
   runMode: "DRY_RUN" | "LIVE";
   coderOverride?: CoderId;
+  budget?: RunBudgetSpec;
 }
 
 export interface IterationCoderResult {

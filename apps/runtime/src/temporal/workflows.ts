@@ -112,6 +112,7 @@ async function runIterationWorkflow(
           feedback,
           runMode: input.runMode,
           ...(input.coder ? { coderOverride: input.coder } : {}),
+          ...(input.budget ? { budget: input.budget } : {}),
         });
         verification = await iteration.verifyIterationTask({
           iterationId: input.iterationId,

@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   type EventEnvelope,
+  cnyToMicro,
   isExecutionBlocked,
   newId,
   resolveKillSwitch,
@@ -239,6 +240,36 @@ export class EventRouter {
               : {}),
           });
           built.input.eventId = event.eventId;
+
+          const simulated = simulatePack(pack).workflows.find(
+            (item) => item.id === workflow.id,
+          );
+          const admitted = await this.store.budgetService.admitRun({
+            workspaceId: built.input.workspaceId,
+            runId: built.input.runId,
+            stages: built.input.stages.map((stage) => ({
+              stageId: stage.stageId,
+              stageName: stage.stageName,
+              ...(stage.agentId ? { agentId: stage.agentId } : {}),
+            })),
+            estimateCnyMicro: cnyToMicro(simulated?.totalCostCny ?? 0),
+            estimateTokens:
+              simulated?.stages.reduce(
+                (sum, stage) =>
+                  sum +
+                  stage.estimatedInputTokens +
+                  stage.estimatedOutputTokens,
+                0,
+              ) ?? 0,
+          });
+          if (!admitted.ok) {
+            result.skipped.push({
+              pack: packName,
+              workflow: workflow.id,
+              reason: admitted.reason ?? "budget exceeded",
+            });
+            continue;
+          }
 
           await this.temporal.client.workflow.start("packWorkflow", {
             taskQueue,

@@ -432,6 +432,61 @@ CREATE TABLE IF NOT EXISTS manager_sessions (
   PRIMARY KEY (workspace_id, session_id)
 );
 
+CREATE TABLE IF NOT EXISTS budgets (
+  budget_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  period TEXT,
+  day_key TEXT,
+  month_key TEXT,
+  limit_cny_micro BIGINT,
+  limit_tokens BIGINT,
+  spent_cny_micro BIGINT NOT NULL DEFAULT 0,
+  spent_tokens BIGINT NOT NULL DEFAULT 0,
+  reserved_cny_micro BIGINT NOT NULL DEFAULT 0,
+  reserved_tokens BIGINT NOT NULL DEFAULT 0,
+  hard BOOLEAN NOT NULL DEFAULT true,
+  alert80_cny BOOLEAN NOT NULL DEFAULT false,
+  alert80_tokens BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (workspace_id, scope, target_key)
+);
+
+CREATE TABLE IF NOT EXISTS budget_reservations (
+  reservation_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT,
+  agent_id TEXT,
+  purpose TEXT NOT NULL,
+  budget_ids JSONB NOT NULL,
+  amount_cny_micro BIGINT NOT NULL,
+  amount_tokens BIGINT NOT NULL,
+  status TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS budget_charges (
+  charge_id TEXT PRIMARY KEY,
+  reservation_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT,
+  agent_id TEXT,
+  purpose TEXT NOT NULL,
+  cost_cny_micro BIGINT NOT NULL DEFAULT 0,
+  tokens BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (reservation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_budgets_workspace ON budgets(workspace_id, scope, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_budget_reservations_status ON budget_reservations(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_budget_charges_run ON budget_charges(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
@@ -881,6 +936,61 @@ ALTER TABLE evolution_cycles ADD COLUMN evaluator_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_approval_ref TEXT;
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
+CREATE TABLE IF NOT EXISTS budgets (
+  budget_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  period TEXT,
+  day_key TEXT,
+  month_key TEXT,
+  limit_cny_micro INTEGER,
+  limit_tokens INTEGER,
+  spent_cny_micro INTEGER NOT NULL DEFAULT 0,
+  spent_tokens INTEGER NOT NULL DEFAULT 0,
+  reserved_cny_micro INTEGER NOT NULL DEFAULT 0,
+  reserved_tokens INTEGER NOT NULL DEFAULT 0,
+  hard INTEGER NOT NULL DEFAULT 1,
+  alert80_cny INTEGER NOT NULL DEFAULT 0,
+  alert80_tokens INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (workspace_id, scope, target_key)
+);
+
+CREATE TABLE IF NOT EXISTS budget_reservations (
+  reservation_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT,
+  agent_id TEXT,
+  purpose TEXT NOT NULL,
+  budget_ids TEXT NOT NULL,
+  amount_cny_micro INTEGER NOT NULL,
+  amount_tokens INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS budget_charges (
+  charge_id TEXT PRIMARY KEY,
+  reservation_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT,
+  agent_id TEXT,
+  purpose TEXT NOT NULL,
+  cost_cny_micro INTEGER NOT NULL DEFAULT 0,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  UNIQUE (reservation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_budgets_workspace ON budgets(workspace_id, scope, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_budget_reservations_status ON budget_reservations(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_budget_charges_run ON budget_charges(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);

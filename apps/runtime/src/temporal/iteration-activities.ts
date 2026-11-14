@@ -22,6 +22,7 @@ import {
   type IterationConfig,
   type IterationTask,
   type TaskPlan,
+  cnyToMicro,
   newId,
   taskPlanSchema,
 } from "@kit/core";
@@ -42,7 +43,7 @@ import {
   updateRun,
   updateTask,
 } from "@kit/iteration";
-import { createModelGateway } from "@kit/model";
+import { calculateCostCny, createModelGateway } from "@kit/model";
 import { getOpsGate } from "@kit/ops";
 import { loadPack } from "@kit/pack";
 import { initStore } from "@kit/store";
@@ -73,6 +74,26 @@ let storePromise: Promise<Store> | undefined;
 function getStore(): Promise<Store> {
   storePromise ??= initStore();
   return storePromise;
+}
+
+function estimateModelCall(
+  modelAlias: string,
+  inputChars: number,
+  maxOutputTokens: number,
+): { cnyMicro: number; tokens: number } {
+  const inputTokens = Math.max(1, Math.ceil(inputChars) + 500);
+  const outputTokens = Math.max(1, Math.ceil(maxOutputTokens));
+  return {
+    cnyMicro: cnyToMicro(
+      calculateCostCny(modelAlias, inputTokens, outputTokens),
+    ),
+    tokens: inputTokens + outputTokens,
+  };
+}
+
+function coderTokenBound(): number {
+  const parsed = Number(process.env.KIT_CODER_MAX_TOKENS ?? 200_000);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 200_000;
 }
 
 export async function planIteration(
@@ -128,9 +149,8 @@ export async function planIteration(
           `- ${name}: workflow=${config.workflow}, coder=${config.coder}, riskCeiling=${config.riskCeiling}`,
       )
       .join("\n");
-    const response = await gateway.complete({
-      model: iteration.planner.model,
-      instructions: `You are the Planner for a task-centric agent team.
+    const model = iteration.planner.model;
+    const instructions = `You are the Planner for a task-centric agent team.
 Decompose the goal into at most ${maxTasks} independent, verifiable tasks.
 Use only the declared domains. Each task must include:
 - id: lowercase kebab-case, unique
@@ -141,8 +161,8 @@ Use only the declared domains. Each task must include:
 - risk: low | medium | high
 - dependsOn: array of task ids (may be empty)
 Return JSON only: {"goal":"...","summary":"...","tasks":[...]}.
-Do not invent files or facts. Prefer small, testable changes.`,
-      input: `Goal: ${input.goal}
+Do not invent files or facts. Prefer small, testable changes.`;
+    const modelInput = `Goal: ${input.goal}
 Acceptance: ${input.acceptance ?? "(none)"}
 Max tasks: ${maxTasks}
 
@@ -150,8 +170,51 @@ Domains:
 ${domains}
 
 Repository context:
-${context}`,
+${context}`;
+    const estimate = estimateModelCall(
+      model,
+      instructions.length + modelInput.length,
+      4096,
+    );
+    const stageLimit = input.budget?.stage;
+    const agentLimit = input.budget?.agents?.planner ?? input.budget?.agent;
+    const reservation = await store.budgetService.reserve({
+      workspaceId: input.workspaceId,
+      runId: input.iterationId,
+      stageId: "plan",
+      agentId: "planner",
+      purpose: "planning",
+      amountCnyMicro: estimate.cnyMicro,
+      amountTokens: estimate.tokens,
+      ...(stageLimit ? { stageLimit } : {}),
+      ...(agentLimit ? { agentLimit } : {}),
     });
+    if (!reservation.ok) {
+      throw new Error(`budget exceeded: ${reservation.message}`);
+    }
+    let response: Awaited<ReturnType<typeof gateway.complete>>;
+    try {
+      response = await gateway.complete({
+        model,
+        instructions,
+        input: modelInput,
+      });
+    } catch (error) {
+      await store.budgetService
+        .release(reservation.reservationId)
+        .catch(() => undefined);
+      throw error;
+    }
+    const committed = await store.budgetService.commit(
+      reservation.reservationId,
+      {
+        cnyMicro: cnyToMicro(response.usage.costCny ?? 0),
+        tokens: response.usage.inputTokens + response.usage.outputTokens,
+      },
+    );
+    if (!committed.ok) {
+      throw new Error(committed.message ?? "budget commit failed");
+    }
     plan = parseTaskPlan(response.text);
     tokens = response.usage.inputTokens + response.usage.outputTokens;
     costCny = response.usage.costCny ?? 0;
@@ -263,6 +326,24 @@ export async function runIterationCoder(
     );
   }, 30_000);
 
+  const stageLimit =
+    input.budget?.stages?.[input.task.id] ?? input.budget?.stage;
+  const agentLimit = input.budget?.agents?.[coder] ?? input.budget?.agent;
+  const reservation = await store.budgetService.reserve({
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: input.task.id,
+    agentId: `coder:${coder}`,
+    purpose: "coder",
+    amountCnyMicro: 0,
+    amountTokens: coderTokenBound(),
+    ...(stageLimit ? { stageLimit } : {}),
+    ...(agentLimit ? { agentLimit } : {}),
+  });
+  if (!reservation.ok) {
+    throw new Error(`budget exceeded: ${reservation.message}`);
+  }
+
   let eventChain = Promise.resolve();
   let result: CoderResult;
   try {
@@ -310,6 +391,19 @@ export async function runIterationCoder(
     };
   } finally {
     clearInterval(heartbeat);
+  }
+
+  const committed = await store.budgetService.commit(
+    reservation.reservationId,
+    { cnyMicro: 0, tokens: result.tokens ?? 0 },
+  );
+  if (!committed.ok) {
+    console.error(
+      `[iteration] budget commit failed: ${committed.message ?? "unknown"}`,
+    );
+  }
+  if (committed.overshoot) {
+    console.error("[iteration] coder token usage exceeded the reserved bound");
   }
 
   const resultArtifactId = await publishIterationArtifact(store, {

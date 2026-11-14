@@ -3,15 +3,16 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { type ActivityInput, appendActivity } from "@kit/activity";
 import { type CoderResult, coderSandboxRoot, runCoderTask } from "@kit/coder";
-import { newId } from "@kit/core";
+import { cnyToMicro, newId } from "@kit/core";
 import { deliverArtifact } from "@kit/delivery";
 import {
   type ModelMessage,
   StubModelGateway,
+  calculateCostCny,
   createModelGateway,
 } from "@kit/model";
 import { type AlertInput, emitAlert, getOpsGate } from "@kit/ops";
-import { initStore } from "@kit/store";
+import { type BudgetRecord, initStore } from "@kit/store";
 import {
   type Tool,
   type ToolContext,
@@ -64,6 +65,165 @@ async function safeAlert(store: Store, input: AlertInput): Promise<void> {
   }
 }
 
+class BudgetPauseError extends Error {
+  constructor(
+    message: string,
+    readonly blockingBudgetId?: string,
+  ) {
+    super(message);
+    this.name = "BudgetPauseError";
+  }
+}
+
+function estimateModelCall(
+  modelAlias: string,
+  inputChars: number,
+  maxOutputTokens: number,
+): { cnyMicro: number; tokens: number } {
+  const inputTokens = Math.max(1, Math.ceil(inputChars) + 500);
+  const outputTokens = Math.max(1, Math.ceil(maxOutputTokens));
+  return {
+    cnyMicro: cnyToMicro(
+      calculateCostCny(modelAlias, inputTokens, outputTokens),
+    ),
+    tokens: inputTokens + outputTokens,
+  };
+}
+
+function messageChars(messages: ModelMessage[]): number {
+  let chars = 0;
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      chars += message.content?.length ?? 0;
+      for (const call of message.toolCalls ?? []) {
+        chars += call.name.length + JSON.stringify(call.arguments).length;
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      chars += message.content.length + (message.name?.length ?? 0);
+      continue;
+    }
+    chars += message.content.length;
+  }
+  return chars;
+}
+
+function coderTokenBound(): number {
+  const parsed = Number(process.env.KIT_CODER_MAX_TOKENS ?? 200_000);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 200_000;
+}
+
+async function pauseForBudget(
+  store: Store,
+  input: PackStageExecutionInput,
+  message: string,
+  blocking: BudgetRecord | null,
+): Promise<void> {
+  await store.runs.updateStatus(
+    input.runId,
+    "paused",
+    new Date().toISOString(),
+  );
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    agentId: input.agentId,
+    kind: "budget.exceeded",
+    status: "paused",
+    summary: message,
+    payload: blocking
+      ? {
+          budgetId: blocking.budgetId,
+          scope: blocking.scope,
+          spentCnyMicro: blocking.spentCnyMicro,
+          reservedCnyMicro: blocking.reservedCnyMicro,
+          limitCnyMicro: blocking.limitCnyMicro,
+          spentTokens: blocking.spentTokens,
+          reservedTokens: blocking.reservedTokens,
+          limitTokens: blocking.limitTokens,
+        }
+      : {},
+  });
+}
+
+async function emitBudgetAlerts(
+  store: Store,
+  input: PackStageExecutionInput,
+  alerts: BudgetRecord[],
+): Promise<void> {
+  for (const budget of alerts) {
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stageId: input.stageId,
+      agentId: input.agentId,
+      kind: "budget.warning",
+      status: "warning",
+      summary: `${budget.scope} budget reached 80%`,
+      payload: {
+        budgetId: budget.budgetId,
+        scope: budget.scope,
+        targetKey: budget.targetKey,
+        spentCnyMicro: budget.spentCnyMicro,
+        limitCnyMicro: budget.limitCnyMicro,
+        spentTokens: budget.spentTokens,
+        limitTokens: budget.limitTokens,
+      },
+    });
+  }
+}
+
+async function withBudget<T>(
+  store: Store,
+  input: PackStageExecutionInput,
+  purpose: string,
+  estimate: { cnyMicro: number; tokens: number },
+  call: () => Promise<T>,
+  usage: (value: T) => { cny: number; tokens: number },
+): Promise<T> {
+  const reserved = await store.budgetService.reserve({
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    agentId: input.agentId,
+    purpose,
+    amountCnyMicro: estimate.cnyMicro,
+    amountTokens: estimate.tokens,
+  });
+  if (!reserved.ok) {
+    await pauseForBudget(store, input, reserved.message, reserved.blocking);
+    throw new BudgetPauseError(reserved.message, reserved.blocking?.budgetId);
+  }
+
+  let value: T;
+  try {
+    value = await call();
+  } catch (error) {
+    await store.budgetService
+      .release(reserved.reservationId)
+      .catch(() => undefined);
+    throw error;
+  }
+
+  const used = usage(value);
+  const committed = await store.budgetService.commit(reserved.reservationId, {
+    cnyMicro: cnyToMicro(used.cny),
+    tokens: used.tokens,
+  });
+  if (!committed.ok) {
+    throw new Error(committed.message ?? "budget commit failed");
+  }
+  await emitBudgetAlerts(store, input, committed.alerts);
+  if (committed.overshoot) {
+    const message = "provider usage exceeded the reserved budget bound";
+    await pauseForBudget(store, input, message, null);
+    throw new BudgetPauseError(message);
+  }
+  return value;
+}
+
 export async function closeEngineStore(): Promise<void> {
   const current = storePromise;
   storePromise = undefined;
@@ -79,6 +239,19 @@ export async function preparePackRun(
   const store = await getStore();
   await assertKillSwitchClear(store, { workspaceId: input.workspaceId }, "run");
   const now = new Date().toISOString();
+
+  const budget = await store.budgetService.ensureRunBudgets({
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    ...(input.budget ? { spec: input.budget } : {}),
+    stages: input.stages.map((stage) => ({
+      stageId: stage.stageId,
+      ...(stage.agentId ? { agentId: stage.agentId } : {}),
+    })),
+  });
+  if (!budget.ok) {
+    throw new Error(`budget setup failed: ${budget.errors.join("; ")}`);
+  }
 
   await store.runs.create({
     runId: input.runId,
@@ -137,6 +310,20 @@ export async function executePackStage(
     span.setStatus({ code: SpanStatusCode.OK });
     return result;
   } catch (error) {
+    if (error instanceof BudgetPauseError) {
+      span.setAttribute("budget.paused", true);
+      span.setStatus({ code: SpanStatusCode.OK });
+      return {
+        artifactId: "",
+        text: "",
+        reused: false,
+        budgetPaused: true,
+        budgetSummary: error.message,
+        ...(error.blockingBudgetId
+          ? { blockingBudgetId: error.blockingBudgetId }
+          : {}),
+      };
+    }
     span.setStatus({
       code: SpanStatusCode.ERROR,
       message: error instanceof Error ? error.message : String(error),
@@ -272,11 +459,27 @@ async function executePackStageInner(
       const gateway = input.stub
         ? new StubModelGateway()
         : createModelGateway();
-      const response = await gateway.complete({
-        model: modelAlias,
-        instructions: input.instructions ?? "",
-        input: modelInput,
-      });
+      const instructions = input.instructions ?? "";
+      const response = await withBudget(
+        store,
+        input,
+        "model",
+        estimateModelCall(
+          modelAlias,
+          instructions.length + modelInput.length,
+          4096,
+        ),
+        () =>
+          gateway.complete({
+            model: modelAlias,
+            instructions,
+            input: modelInput,
+          }),
+        (value) => ({
+          cny: value.usage.costCny ?? 0,
+          tokens: value.usage.inputTokens + value.usage.outputTokens,
+        }),
+      );
       text = response.text;
       costAmount = response.usage.costCny ?? 0;
       tokens = response.usage.inputTokens + response.usage.outputTokens;
@@ -567,41 +770,54 @@ async function runCoderStage(
   let eventChain = Promise.resolve();
   let result: CoderResult;
   try {
-    result = await runCoderTask({
-      coder,
-      runId: input.runId,
-      taskId: input.stageId,
-      goal,
-      acceptance,
-      instructions: input.instructions ?? "",
-      context,
-      repoRoot,
-      sandboxRoot,
-      timeoutMs: input.timeoutMs ?? 25 * 60 * 1000,
-      installDeps: process.env.KIT_CODER_INSTALL !== "0",
-      keepSandbox: process.env.KIT_CODER_KEEP === "1",
-      onEvent: (event) => {
-        eventChain = eventChain.then(() =>
-          safeActivity(store, {
-            workspaceId: input.workspaceId,
-            runId: input.runId,
-            stageId: input.stageId,
-            agentId: input.agentId,
-            kind: `coder.${event.kind}`,
-            status: event.status,
-            tool: event.tool,
-            summary: event.summary,
-            payload: {
-              turn: event.turn,
-              step: event.step,
-              ...(event.callId ? { callId: event.callId } : {}),
-              ...(event.tokens !== undefined ? { tokens: event.tokens } : {}),
-            },
-          }),
-        );
-      },
-    });
+    result = await withBudget(
+      store,
+      input,
+      "coder",
+      { cnyMicro: 0, tokens: coderTokenBound() },
+      () =>
+        runCoderTask({
+          coder,
+          runId: input.runId,
+          taskId: input.stageId,
+          goal,
+          acceptance,
+          instructions: input.instructions ?? "",
+          context,
+          repoRoot,
+          sandboxRoot,
+          timeoutMs: input.timeoutMs ?? 25 * 60 * 1000,
+          installDeps: process.env.KIT_CODER_INSTALL !== "0",
+          keepSandbox: process.env.KIT_CODER_KEEP === "1",
+          onEvent: (event) => {
+            eventChain = eventChain.then(() =>
+              safeActivity(store, {
+                workspaceId: input.workspaceId,
+                runId: input.runId,
+                stageId: input.stageId,
+                agentId: input.agentId,
+                kind: `coder.${event.kind}`,
+                status: event.status,
+                tool: event.tool,
+                summary: event.summary,
+                payload: {
+                  turn: event.turn,
+                  step: event.step,
+                  ...(event.callId ? { callId: event.callId } : {}),
+                  ...(event.tokens !== undefined
+                    ? { tokens: event.tokens }
+                    : {}),
+                },
+              }),
+            );
+          },
+        }),
+      (value) => ({ cny: 0, tokens: value.tokens ?? 0 }),
+    );
   } catch (error) {
+    if (error instanceof BudgetPauseError) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     result = {
       coder,
@@ -815,13 +1031,28 @@ async function runAgentWithTools(input: {
       },
       "model",
     );
-    const response = await gateway.completeWithTools({
-      model: input.modelAlias,
-      messages,
-      tools: input.tools,
-      temperature: 0,
-      maxTokens: 4096,
-    });
+    const response = await withBudget(
+      input.store,
+      input.input,
+      "model",
+      estimateModelCall(
+        input.modelAlias,
+        messageChars(messages) + JSON.stringify(input.tools).length,
+        4096,
+      ),
+      () =>
+        gateway.completeWithTools({
+          model: input.modelAlias,
+          messages,
+          tools: input.tools,
+          temperature: 0,
+          maxTokens: 4096,
+        }),
+      (value) => ({
+        cny: value.usage.costCny ?? 0,
+        tokens: value.usage.inputTokens + value.usage.outputTokens,
+      }),
+    );
     costCny += response.usage.costCny ?? 0;
     tokens += response.usage.inputTokens + response.usage.outputTokens;
     if (response.text) {
@@ -954,13 +1185,28 @@ async function runAgentWithTools(input: {
     },
     "model",
   );
-  const final = await gateway.completeWithTools({
-    model: input.modelAlias,
-    messages,
-    tools: input.tools,
-    temperature: 0,
-    maxTokens: 4096,
-  });
+  const final = await withBudget(
+    input.store,
+    input.input,
+    "model",
+    estimateModelCall(
+      input.modelAlias,
+      messageChars(messages) + JSON.stringify(input.tools).length,
+      4096,
+    ),
+    () =>
+      gateway.completeWithTools({
+        model: input.modelAlias,
+        messages,
+        tools: input.tools,
+        temperature: 0,
+        maxTokens: 4096,
+      }),
+    (value) => ({
+      cny: value.usage.costCny ?? 0,
+      tokens: value.usage.inputTokens + value.usage.outputTokens,
+    }),
+  );
   costCny += final.usage.costCny ?? 0;
   tokens += final.usage.inputTokens + final.usage.outputTokens;
   return {
@@ -1292,7 +1538,11 @@ async function createApprovalRequest(
     runMode: "DRY_RUN" | "LIVE";
     stageId: string;
     stageName: string;
-    requestType: "stage_before" | "stage_after" | "gate_failure";
+    requestType:
+      | "stage_before"
+      | "stage_after"
+      | "gate_failure"
+      | "budget_exceeded";
     summary: string;
     draftArtifactId?: string;
     options: string[];
@@ -1391,7 +1641,11 @@ async function recordAutoApproval(
     stageName: string;
   },
   details: {
-    requestType: "stage_before" | "stage_after" | "gate_failure";
+    requestType:
+      | "stage_before"
+      | "stage_after"
+      | "gate_failure"
+      | "budget_exceeded";
     summary: string;
     draftArtifactId?: string;
     riskClass: "low" | "medium" | "high";
@@ -1578,11 +1832,28 @@ async function evaluateGate(
       .map(([name, config]) => `${name} (weight ${config.weight})`)
       .join(", ");
 
-    const response = await gateway.complete({
-      model: judgeModel,
-      instructions: `You are an independent quality evaluator. Score the draft on these dimensions from 0 to 1: ${dimensions}. Verify that every [S#] citation exists in the evidence set. Return JSON only: {"scores":{"dimension":0.0},"rationale":"short"}.`,
-      input: `Evidence set:\n${input.evidenceText ?? "(none)"}\n\nDraft:\n${draftText}`,
-    });
+    const instructions = `You are an independent quality evaluator. Score the draft on these dimensions from 0 to 1: ${dimensions}. Verify that every [S#] citation exists in the evidence set. Return JSON only: {"scores":{"dimension":0.0},"rationale":"short"}.`;
+    const judgeInput = `Evidence set:\n${input.evidenceText ?? "(none)"}\n\nDraft:\n${draftText}`;
+    const response = await withBudget(
+      store,
+      input,
+      "judge",
+      estimateModelCall(
+        judgeModel,
+        instructions.length + judgeInput.length,
+        4096,
+      ),
+      () =>
+        gateway.complete({
+          model: judgeModel,
+          instructions,
+          input: judgeInput,
+        }),
+      (value) => ({
+        cny: value.usage.costCny ?? 0,
+        tokens: value.usage.inputTokens + value.usage.outputTokens,
+      }),
+    );
 
     cost = response.usage.costCny ?? 0;
     tokens = response.usage.inputTokens + response.usage.outputTokens;
@@ -1679,11 +1950,29 @@ async function reviseDraft(
     "model",
   );
   const gateway = input.stub ? new StubModelGateway() : createModelGateway();
-  const response = await gateway.complete({
-    model: input.revision.modelAlias,
-    instructions: input.revision.instructions,
-    input: `Evidence set:\n${input.evidenceText ?? "(none)"}\n\nCurrent draft:\n${draftText}\n\nQuality gate feedback:\n${feedback}\n\nRevise the draft to fix these issues. Keep [S#] citations and the Recommendations section.`,
-  });
+  const modelAlias = input.revision.modelAlias;
+  const instructions = input.revision.instructions;
+  const revisionInput = `Evidence set:\n${input.evidenceText ?? "(none)"}\n\nCurrent draft:\n${draftText}\n\nQuality gate feedback:\n${feedback}\n\nRevise the draft to fix these issues. Keep [S#] citations and the Recommendations section.`;
+  const response = await withBudget(
+    store,
+    input,
+    "revision",
+    estimateModelCall(
+      modelAlias,
+      instructions.length + revisionInput.length,
+      4096,
+    ),
+    () =>
+      gateway.complete({
+        model: modelAlias,
+        instructions,
+        input: revisionInput,
+      }),
+    (value) => ({
+      cny: value.usage.costCny ?? 0,
+      tokens: value.usage.inputTokens + value.usage.outputTokens,
+    }),
+  );
 
   const published = await store.artifactService.publish({
     workspaceId: input.workspaceId,

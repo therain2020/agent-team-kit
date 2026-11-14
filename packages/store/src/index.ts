@@ -1,5 +1,6 @@
 export * from "./artifact-service";
 export * from "./blob";
+export * from "./budget-service";
 export * from "./config";
 export * from "./db";
 export * from "./locks";

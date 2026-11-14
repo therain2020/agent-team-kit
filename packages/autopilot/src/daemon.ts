@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   type AutopilotConfig,
   type AutopilotSchedule,
+  cnyToMicro,
   eventEnvelopeSchema,
   newId,
   resolveKillSwitch,
@@ -149,6 +150,7 @@ export async function runAutopilotTick(
                 state,
                 now,
                 dryRun: options.dryRun ?? false,
+                store,
                 result,
                 getTemporal: async () => {
                   temporal ??= await createTemporalClient();
@@ -330,9 +332,16 @@ async function processSchedules(input: {
       continue;
     }
 
-    const estimate =
-      simulation.workflows.find((workflow) => workflow.id === schedule.workflow)
-        ?.totalCostCny ?? 0;
+    const simulated = simulation.workflows.find(
+      (workflow) => workflow.id === schedule.workflow,
+    );
+    const estimate = simulated?.totalCostCny ?? 0;
+    const estimateTokens =
+      simulated?.stages.reduce(
+        (sum, stage) =>
+          sum + stage.estimatedInputTokens + stage.estimatedOutputTokens,
+        0,
+      ) ?? 0;
     if (!withinBudget(state, schedule, estimate)) {
       result.errors.push(
         `${pack.dirName}/${schedule.id}: skipped, daily budget reached`,
@@ -361,6 +370,23 @@ async function processSchedules(input: {
         runMode: schedule.mode,
         stub: process.env.KIT_MODEL_MODE === "stub",
       });
+      const admitted = await input.store.budgetService.admitRun({
+        workspaceId: built.input.workspaceId,
+        runId: built.input.runId,
+        stages: built.input.stages.map((stage) => ({
+          stageId: stage.stageId,
+          stageName: stage.stageName,
+          ...(stage.agentId ? { agentId: stage.agentId } : {}),
+        })),
+        estimateCnyMicro: cnyToMicro(estimate),
+        estimateTokens,
+      });
+      if (!admitted.ok) {
+        result.errors.push(
+          `${pack.dirName}/${schedule.id}: skipped, ${admitted.reason ?? "budget exceeded"}`,
+        );
+        continue;
+      }
       const timestamp = new Date().toISOString();
       const event = eventEnvelopeSchema.parse({
         eventId: built.input.eventId,
@@ -405,10 +431,11 @@ async function processIterations(input: {
   state: AutopilotState;
   now: Date;
   dryRun: boolean;
+  store: Awaited<ReturnType<typeof initStore>>;
   result: TickResult;
   getTemporal: () => Promise<Awaited<ReturnType<typeof createTemporalClient>>>;
 }): Promise<boolean> {
-  const { pack, state, now, result } = input;
+  const { pack, state, now, store, result } = input;
   let changed = false;
 
   for (const iteration of pack.config.iterations) {
@@ -479,6 +506,19 @@ async function processIterations(input: {
     const workflowId = `iteration-${WORKSPACE_ID}-${hash(dedupeKey)}`;
     const iterationId = newId("it");
     try {
+      const admitted = await store.budgetService.admitRun({
+        workspaceId: WORKSPACE_ID,
+        runId: iterationId,
+        estimateCnyMicro: 0,
+        estimateTokens: 0,
+      });
+      if (!admitted.ok) {
+        result.errors.push(
+          `${pack.dirName}/${iteration.id}: skipped, ${admitted.reason ?? "budget exceeded"}`,
+        );
+        continue;
+      }
+
       const { client } = await input.getTemporal();
       const handle = client.workflow.getHandle(workflowId);
       try {
@@ -557,6 +597,12 @@ async function processAutoApprovals(input: {
 
     const approval = await findApprovalRequest(store, run.runId);
     if (!approval) {
+      continue;
+    }
+
+    // Budget exceptions need an operator decision and a limit increase;
+    // auto-approving them would loop forever.
+    if (approval.requestType === "budget_exceeded") {
       continue;
     }
 

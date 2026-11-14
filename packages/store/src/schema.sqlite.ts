@@ -207,3 +207,72 @@ export const killSwitches = sqliteTable(
     ),
   ],
 );
+export const budgets = sqliteTable(
+  "budgets",
+  {
+    budgetId: text("budget_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    scope: text("scope").notNull(),
+    targetKey: text("target_key").notNull(),
+    period: text("period"),
+    dayKey: text("day_key"),
+    monthKey: text("month_key"),
+    limitCnyMicro: integer("limit_cny_micro"),
+    limitTokens: integer("limit_tokens"),
+    spentCnyMicro: integer("spent_cny_micro").notNull().default(0),
+    spentTokens: integer("spent_tokens").notNull().default(0),
+    reservedCnyMicro: integer("reserved_cny_micro").notNull().default(0),
+    reservedTokens: integer("reserved_tokens").notNull().default(0),
+    hard: integer("hard", { mode: "boolean" }).notNull().default(true),
+    alert80Cny: integer("alert80_cny", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    alert80Tokens: integer("alert80_tokens", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("budgets_scope_target_idx").on(
+      table.workspaceId,
+      table.scope,
+      table.targetKey,
+    ),
+  ],
+);
+
+export const budgetReservations = sqliteTable("budget_reservations", {
+  reservationId: text("reservation_id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  runId: text("run_id").notNull(),
+  stageId: text("stage_id"),
+  agentId: text("agent_id"),
+  purpose: text("purpose").notNull(),
+  budgetIds: text("budget_ids", { mode: "json" }).$type<string[]>().notNull(),
+  amountCnyMicro: integer("amount_cny_micro").notNull(),
+  amountTokens: integer("amount_tokens").notNull(),
+  status: text("status").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const budgetCharges = sqliteTable(
+  "budget_charges",
+  {
+    chargeId: text("charge_id").primaryKey(),
+    reservationId: text("reservation_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    stageId: text("stage_id"),
+    agentId: text("agent_id"),
+    purpose: text("purpose").notNull(),
+    costCnyMicro: integer("cost_cny_micro").notNull().default(0),
+    tokens: integer("tokens").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("budget_charges_reservation_idx").on(table.reservationId),
+  ],
+);

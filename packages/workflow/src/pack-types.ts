@@ -1,4 +1,4 @@
-import type { PackTool, RubricDimension } from "@kit/core";
+import type { PackTool, RubricDimension, RunBudgetSpec } from "@kit/core";
 
 export interface StageGate {
   ref: string;
@@ -65,6 +65,7 @@ export interface PackRunInput {
   stub: boolean;
   maxConcurrency?: number;
   variant?: PackRunVariant;
+  budget?: RunBudgetSpec;
   delivery?: {
     channel: "im" | "email" | "local_file" | "webhook";
     approval?: "never" | "required_if_published";
@@ -78,7 +79,8 @@ export interface PreparePackRunInput {
   workflowId: string;
   workflowVersion: string;
   runMode: "DRY_RUN" | "LIVE";
-  stages: Array<{ stageId: string; name: string }>;
+  stages: Array<{ stageId: string; name: string; agentId?: string }>;
+  budget?: RunBudgetSpec;
 }
 
 export interface PackStageExecutionInput extends PackStageSpec {
@@ -104,6 +106,9 @@ export interface PackStageExecutionResult {
   approvalExpiresAt?: string;
   autoApproved?: boolean;
   gateFailed?: boolean;
+  budgetPaused?: boolean;
+  budgetSummary?: string;
+  blockingBudgetId?: string;
 }
 
 export interface RequestApprovalInput {
@@ -112,7 +117,11 @@ export interface RequestApprovalInput {
   runMode: "DRY_RUN" | "LIVE";
   stageId: string;
   stageName: string;
-  requestType: "stage_before" | "stage_after" | "gate_failure";
+  requestType:
+    | "stage_before"
+    | "stage_after"
+    | "gate_failure"
+    | "budget_exceeded";
   approval: PackApprovalSpec;
   summary: string;
   draftArtifactId?: string;
