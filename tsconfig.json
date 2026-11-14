@@ -4,6 +4,7 @@
     "baseUrl": ".",
     "paths": {
       "@kit/core": ["./packages/core/src/index.ts"],
+      "@kit/activity": ["./packages/activity/src/index.ts"],
       "@kit/bootstrap": ["./packages/bootstrap/src/index.ts"],
       "@kit/coder": ["./packages/coder/src/index.ts"],
       "@kit/engine": ["./packages/engine/src/index.ts"],

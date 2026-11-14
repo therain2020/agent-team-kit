@@ -25,6 +25,7 @@
     "factory": "Factory",
     "runs": "Runs",
     "iterations": "Iterations",
+    "activity": "Activity",
     "packs": "Packs",
     "sources": "Sources",
     "autopilot": "Autopilot",
@@ -903,5 +904,16 @@
     "goConsole": "Open the console",
     "alreadyBody": "A key is already stored. Submitting a new key replaces it.",
     "securityNote": "The key stays on this machine. Local services bind to 127.0.0.1 by default."
+  },
+  "activity": {
+    "title": "Team activity",
+    "description": "Every stage, model turn, tool call and approval, in order.",
+    "empty": "No activity yet. Start a run to watch the team work.",
+    "follow": "Following live",
+    "jump": "Jump to latest",
+    "allAgents": "All agents",
+    "allKinds": "All kinds",
+    "events": "{count} events",
+    "missing": "Event stream unavailable."
   }
 }

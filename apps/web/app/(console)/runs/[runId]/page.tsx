@@ -1,3 +1,4 @@
+import { ActivityFeed } from "@/components/activity/activity-feed";
 import { ArtifactViewer } from "@/components/kit/artifact-viewer";
 import { AutoRefresh } from "@/components/kit/auto-refresh";
 import { GateCard } from "@/components/kit/gate-card";
@@ -46,6 +47,7 @@ export default async function RunPage({
   const t = await getTranslations("runDetail");
   const common = await getTranslations("common");
   const artifactT = await getTranslations("artifact");
+  const activityT = await getTranslations("activity");
   const locale = await getLocale();
   const id = decodeURIComponent(runId);
   const detail = await loadRunDetail(id);
@@ -241,6 +243,18 @@ export default async function RunPage({
           )}
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{activityT("title")}</CardTitle>
+          <p className="text-[11px] text-muted-foreground">
+            {activityT("description")}
+          </p>
+        </CardHeader>
+        <CardContent>
+          <ActivityFeed runId={run.runId} maxHeight="28rem" />
+        </CardContent>
+      </Card>
     </div>
   );
 }

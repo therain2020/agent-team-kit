@@ -10,6 +10,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.92",
     "@ai-sdk/react": "^4.0.177",
+    "@kit/activity": "workspace:*",
     "@assistant-ui/react": "^0.15.36",
     "@assistant-ui/react-ai-sdk": "^1.4.23",
     "@assistant-ui/react-markdown": "^0.14.26",

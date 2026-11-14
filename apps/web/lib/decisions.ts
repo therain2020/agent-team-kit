@@ -1,3 +1,4 @@
+import { appendActivity } from "@kit/activity";
 import {
   findApprovalRequest,
   findDecisionForRequest,
@@ -72,6 +73,19 @@ export async function decideApproval(input: {
       actor: input.actor,
     });
   }
+
+  await appendActivity(store, {
+    runId: input.runId,
+    agentId: "operator",
+    kind: "approval.decided",
+    status: input.decision,
+    summary: input.note || input.decision,
+    payload: {
+      requestId: input.requestId,
+      actor: input.actor,
+      duplicate: Boolean(existing),
+    },
+  }).catch(() => undefined);
 
   if (store.driver === "sqlite") {
     // Local runs poll decision records instead of receiving Temporal signals.

@@ -1,3 +1,4 @@
+import { appendActivity } from "@kit/activity";
 import { newId } from "@kit/core";
 import { buildManagerBrief } from "@kit/manager";
 import { calculateCostCny } from "@kit/model";
@@ -191,6 +192,23 @@ export async function publishManagerExchange(input: {
     sensitivity: "internal",
     retentionClass: "artifact_365d",
   });
+
+  await appendActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    agentId: "manager",
+    kind: "manager.exchange",
+    status: "completed",
+    summary: input.question.slice(0, 500),
+    payload: {
+      artifactId: published.artifact.artifactId,
+      model: input.model,
+      costCny,
+      tokens: input.inputTokens + input.outputTokens,
+      citations: exchange.citations,
+      answer: input.answer.slice(0, 1000),
+    },
+  }).catch(() => undefined);
 
   return { artifactId: published.artifact.artifactId, costCny };
 }

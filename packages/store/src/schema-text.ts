@@ -287,6 +287,20 @@ CREATE TABLE IF NOT EXISTS iteration_turns (
   PRIMARY KEY (iteration_id, task_id, turn)
 );
 
+CREATE TABLE IF NOT EXISTS activity_events (
+  event_id BIGSERIAL PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  run_id TEXT,
+  stage_id TEXT,
+  agent_id TEXT,
+  kind TEXT NOT NULL,
+  status TEXT,
+  tool TEXT,
+  summary TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
@@ -300,6 +314,9 @@ CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_
 CREATE INDEX IF NOT EXISTS idx_iteration_events_run ON iteration_events(iteration_id, event_id);
 CREATE INDEX IF NOT EXISTS idx_iteration_events_turn ON iteration_events(iteration_id, task_id, turn, step);
 CREATE INDEX IF NOT EXISTS idx_iteration_turns_run ON iteration_turns(iteration_id, task_id, turn);
+CREATE INDEX IF NOT EXISTS idx_activity_run ON activity_events(run_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_activity_agent ON activity_events(agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_kind ON activity_events(kind, created_at DESC);
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -586,6 +603,20 @@ CREATE TABLE IF NOT EXISTS iteration_turns (
   PRIMARY KEY (iteration_id, task_id, turn)
 );
 
+CREATE TABLE IF NOT EXISTS activity_events (
+  event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  run_id TEXT,
+  stage_id TEXT,
+  agent_id TEXT,
+  kind TEXT NOT NULL,
+  status TEXT,
+  tool TEXT,
+  summary TEXT,
+  payload TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE iteration_runs ADD COLUMN repo_root TEXT;
@@ -603,4 +634,7 @@ CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_
 CREATE INDEX IF NOT EXISTS idx_iteration_events_run ON iteration_events(iteration_id, event_id);
 CREATE INDEX IF NOT EXISTS idx_iteration_events_turn ON iteration_events(iteration_id, task_id, turn, step);
 CREATE INDEX IF NOT EXISTS idx_iteration_turns_run ON iteration_turns(iteration_id, task_id, turn);
+CREATE INDEX IF NOT EXISTS idx_activity_run ON activity_events(run_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_activity_agent ON activity_events(agent_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_kind ON activity_events(kind, created_at DESC);
 `;
