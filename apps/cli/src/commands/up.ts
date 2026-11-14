@@ -11,12 +11,14 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
+import { parseWebMode, resolveWebMode } from "../web-mode";
 
 interface SupervisorState {
   supervisorPid: number;
   startedAt: string;
   repoRoot: string;
   web: boolean;
+  webMode?: "production" | "dev" | null;
   children: Array<{
     name: string;
     pid?: number;
@@ -31,6 +33,10 @@ export function registerUp(program: Command): void {
     .command("up")
     .description("Start infra and the supervised agent-team runtime")
     .option("--web", "also start the Manager Console", false)
+    .option(
+      "--web-mode <mode>",
+      "Manager Console mode with --web: production or dev (default: KIT_WEB_MODE or production)",
+    )
     .option("--no-infra", "skip docker compose and use existing infra")
     .option(
       "--foreground",
@@ -42,6 +48,7 @@ export function registerUp(program: Command): void {
         web: boolean;
         infra: boolean;
         foreground: boolean;
+        webMode?: string;
       }) => {
         await start(options);
       },
@@ -66,7 +73,14 @@ async function start(options: {
   web: boolean;
   infra: boolean;
   foreground: boolean;
+  webMode?: string;
 }): Promise<void> {
+  if (options.webMode && parseWebMode(options.webMode) === null) {
+    console.error("✖ --web-mode must be 'production' or 'dev'");
+    process.exitCode = 1;
+    return;
+  }
+  const webMode = resolveWebMode(options.webMode ?? process.env.KIT_WEB_MODE);
   const repoRoot = process.cwd();
   const stateDir = path.join(repoRoot, ".tmp", "supervisor");
   const statePath = path.join(stateDir, "state.json");
@@ -131,6 +145,7 @@ async function start(options: {
     env: {
       ...process.env,
       KIT_SUPERVISOR_WEB: options.web ? "1" : "0",
+      KIT_WEB_MODE: webMode,
     },
     windowsHide: true,
   });
@@ -162,6 +177,7 @@ async function start(options: {
         supervisorPid: started.supervisorPid,
         mode: localMode ? "local" : "scale",
         web: options.web,
+        webMode: options.web ? webMode : undefined,
         ...(localMode
           ? { engine: "local runner (SQLite queue)" }
           : {
@@ -195,6 +211,7 @@ async function status(): Promise<void> {
   const web = state.web
     ? await fetchHealth("http://localhost:3000/api/health")
     : undefined;
+  const webMode = state.web ? (state.webMode ?? "dev") : null;
   console.log(
     JSON.stringify(
       {
@@ -204,6 +221,7 @@ async function status(): Promise<void> {
         updatedAt: state.updatedAt,
         gateway,
         web,
+        webMode,
         children,
       },
       null,

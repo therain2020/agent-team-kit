@@ -2,6 +2,7 @@ export * from "./artifact-service";
 export * from "./blob";
 export * from "./config";
 export * from "./db";
+export * from "./locks";
 export * from "./migrate";
 export * from "./repositories";
 export * from "./s3";

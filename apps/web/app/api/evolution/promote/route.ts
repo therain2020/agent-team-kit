@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { getEvolutionRepo } from "@/lib/evolution-repo";
 import { sameOriginError } from "@/lib/http";
 import { resolvePackDir, resolveVariantDir } from "@/lib/paths";
 import { promoteVariant } from "@kit/evolution";
@@ -58,7 +59,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await promoteVariant(variantDir, targetDir, apply);
+    const result = await promoteVariant(
+      variantDir,
+      targetDir,
+      apply,
+      await getEvolutionRepo(),
+    );
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json(

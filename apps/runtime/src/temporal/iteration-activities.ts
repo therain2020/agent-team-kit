@@ -23,7 +23,10 @@ import {
   type IterationConfig,
   type IterationTask,
   type TaskPlan,
+  applyPatchToRepo,
+  newId,
   taskPlanSchema,
+  writeApplyPatch,
 } from "@kit/core";
 import { createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
@@ -33,6 +36,7 @@ import type {
   ApplyTaskActivityInput,
   ClassifyTaskActivityInput,
   CleanupInput,
+  FailIterationInput,
   IterationApplyResult,
   IterationCoderResult,
   IterationInput,
@@ -46,6 +50,15 @@ import type {
   VerifyTaskActivityInput,
 } from "@kit/workflow";
 import { Context } from "@temporalio/activity";
+import {
+  appendCoderEvent,
+  appendEvent,
+  failIteration,
+  startIteration,
+  touchHeartbeat,
+  updateRun,
+  updateTask,
+} from "./iteration-progress";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -143,6 +156,7 @@ ${context}`,
     runMode: input.runMode,
   });
 
+  await startIteration(store, input, plan, artifactId);
   return { plan, artifactId, tokens, costCny };
 }
 
@@ -163,6 +177,25 @@ export async function runIterationCoder(
 
   const coder = (input.coderOverride ?? domain.coder) as CoderId;
   const instructions = await loadInstructions(loaded, domain.agent);
+  await updateRun(store, input.iterationId, {
+    status: "running",
+    phase: "coder",
+  });
+  await updateTask(store, input.iterationId, input.task.id, {
+    status: "running",
+    phase: "coder",
+    attempt: input.attempt,
+    coder,
+    startedAt: new Date().toISOString(),
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "coder.started",
+    status: "running",
+    summary: input.task.goal,
+    payload: { coder, attempt: input.attempt },
+  });
   const sandboxDir = coderSandboxRoot(
     "iterations",
     safe(input.iterationId),
@@ -189,8 +222,12 @@ export async function runIterationCoder(
     } catch {
       // not inside an activity context
     }
+    void touchHeartbeat(store, input.iterationId, input.task.id).catch(
+      () => undefined,
+    );
   }, 30_000);
 
+  let eventChain = Promise.resolve();
   let result: CoderResult;
   try {
     result = await runCoderTask({
@@ -206,7 +243,21 @@ export async function runIterationCoder(
       timeoutMs: Number(process.env.KIT_CODER_TIMEOUT_MS ?? 25 * 60 * 1000),
       installDeps: process.env.KIT_CODER_INSTALL !== "0",
       keepSandbox: true,
+      onEvent: (event) => {
+        eventChain = eventChain
+          .then(() =>
+            appendCoderEvent(store, input.iterationId, input.task.id, event),
+          )
+          .then(() => undefined)
+          .catch((error: unknown) => {
+            console.error(
+              `[iteration] failed to persist coder event: ${String(error)}`,
+            );
+          });
+        return eventChain;
+      },
     });
+    await eventChain;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     result = {
@@ -268,6 +319,31 @@ export async function runIterationCoder(
     runMode: input.runMode,
   });
 
+  await updateTask(store, input.iterationId, input.task.id, {
+    phase: result.ok ? "coder_done" : "coder_failed",
+    changedFiles: result.changedFiles,
+    tokens: result.tokens ?? 0,
+    coderSummary: result.summary,
+    diffArtifactId,
+    transcriptArtifactId,
+    resultArtifactId,
+    ...(result.error ? { error: result.error } : {}),
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "coder.finished",
+    status: result.ok ? "completed" : "failed",
+    summary: result.summary,
+    payload: {
+      tokens: result.tokens ?? 0,
+      changedFiles: result.changedFiles,
+      durationMs: result.durationMs,
+      sandboxMode: result.sandbox.mode,
+      error: result.error ?? null,
+    },
+  });
+
   return {
     taskId: input.task.id,
     coder,
@@ -278,6 +354,8 @@ export async function runIterationCoder(
     resultArtifactId,
     transcriptArtifactId,
     sandboxDir,
+    baselineSha: result.sandbox.baselineSha,
+    sandboxMode: result.sandbox.mode,
     tokens: result.tokens ?? 0,
     ...(result.error ? { error: result.error } : {}),
   };
@@ -312,6 +390,18 @@ export async function verifyIterationTask(
       "the coder sandbox no longer exists",
     );
   }
+
+  await updateTask(store, input.iterationId, input.task.id, {
+    status: "running",
+    phase: "verifying",
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "verification.started",
+    status: "running",
+    summary: `checks: ${domain.verification.join(", ")}`,
+  });
   if (input.changedFiles.length === 0) {
     return await failVerification(
       store,
@@ -408,6 +498,27 @@ export async function verifyIterationTask(
     modelId: "none",
     runMode: "LIVE",
   });
+  await updateTask(store, input.iterationId, input.task.id, {
+    status: pass ? "passed" : "failed",
+    phase: pass ? "verified" : "verification_failed",
+    verificationArtifactId: artifactId,
+    ...(pass ? {} : { error: feedback.slice(0, 2000) }),
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "verification.finished",
+    status: pass ? "completed" : "failed",
+    summary: pass ? "all checks passed" : feedback.slice(0, 500),
+    payload: {
+      pass,
+      checks: checks.map((check) => ({
+        name: check.name,
+        exitCode: check.exitCode,
+        timedOut: check.timedOut,
+      })),
+    },
+  });
   return { taskId: input.task.id, pass, feedback, checks, artifactId };
 }
 
@@ -436,6 +547,18 @@ export async function classifyIterationTask(
     modelId: "none",
     runMode: "LIVE",
   });
+  await updateTask(store, input.iterationId, input.task.id, {
+    risk: classified.risk,
+    phase: "risk",
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "risk.classified",
+    status: classified.forbidden ? "blocked" : "completed",
+    summary: `risk ${classified.risk}`,
+    payload: { reasons: classified.reasons, forbidden: classified.forbidden },
+  });
   return {
     taskId: input.task.id,
     risk: classified.risk,
@@ -449,138 +572,184 @@ export async function applyIterationTask(
 ): Promise<IterationApplyResult> {
   const store = await getStore();
   const repoRoot = resolveRepoRoot();
+  const ticketId = newId("tkt");
+  let headBefore = "";
+  let baseDrifted = false;
+
+  const heartbeat = setInterval(() => {
+    try {
+      Context.current().heartbeat({ ticketId, phase: "apply" });
+    } catch {
+      // not inside an activity context
+    }
+  }, 30_000);
+  heartbeat.unref?.();
+
   const publishApply = async (
-    applied: boolean,
+    status: IterationApplyResult["status"],
     reason: string,
-    commit?: string,
+    extra: { commit?: string; details?: Record<string, unknown> } = {},
   ): Promise<IterationApplyResult> => {
+    const now = new Date().toISOString();
+    await store.sql`
+      INSERT INTO merge_tickets (
+        ticket_id, iteration_id, task_id, base_sha, patch_artifact_id,
+        changed_files, risk, status, head_before, commit_sha, error,
+        created_at, updated_at
+      ) VALUES (
+        ${ticketId}, ${input.iterationId}, ${input.task.id}, ${input.baselineSha},
+        ${input.diffArtifactId}, ${store.sql.json(input.changedFiles)},
+        ${input.risk}, ${status}, ${headBefore || null},
+        ${extra.commit ?? null},
+        ${status === "blocked" || status === "reverted" ? reason : null},
+        ${now}, ${now}
+      )
+      ON CONFLICT (ticket_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        head_before = EXCLUDED.head_before,
+        commit_sha = EXCLUDED.commit_sha,
+        error = EXCLUDED.error,
+        updated_at = EXCLUDED.updated_at
+    `;
     const artifactId = await publishArtifact(store, {
       iterationId: input.iterationId,
       workspaceId: input.workspaceId,
       stageId: `${input.iterationId}:${input.task.id}:apply`,
-      content: JSON.stringify({ applied, reason, commit }, null, 2),
+      content: JSON.stringify(
+        {
+          ticketId,
+          status,
+          reason,
+          baseSha: input.baselineSha,
+          headBefore,
+          baseDrifted,
+          commit: extra.commit,
+          changedFiles: input.changedFiles,
+          ...extra.details,
+        },
+        null,
+        2,
+      ),
       agentId: "policy:autonomy",
       modelId: "none",
       runMode: input.runMode,
     });
+    await updateTask(store, input.iterationId, input.task.id, {
+      applyStatus: status,
+      applyArtifactId: artifactId,
+      phase: status,
+      status,
+      ...(extra.commit ? { commit: extra.commit } : {}),
+      ...(status === "blocked" || status === "reverted"
+        ? { error: reason.slice(0, 2000) }
+        : {}),
+    });
+    await updateRun(store, input.iterationId, {
+      phase: status,
+      ...(status === "blocked" || status === "reverted"
+        ? { error: reason.slice(0, 2000) }
+        : {}),
+    });
+    await appendEvent(store, {
+      iterationId: input.iterationId,
+      taskId: input.task.id,
+      kind: "apply.finished",
+      status,
+      summary: reason,
+      payload: {
+        risk: input.risk,
+        applyMode: input.applyMode,
+        commit: extra.commit ?? null,
+        artifactId,
+      },
+    });
     return {
       taskId: input.task.id,
-      applied,
+      applied: status === "applied",
+      status,
       reason,
-      ...(commit ? { commit } : {}),
+      ticketId,
+      baseSha: input.baselineSha,
+      ...(extra.commit ? { commit: extra.commit } : {}),
       artifactId,
     };
   };
 
-  if (input.runMode !== "LIVE") {
-    return await publishApply(false, "dry run: apply disabled");
-  }
-  if (input.forbidden) {
-    return await publishApply(false, "forbidden path detected");
-  }
-  if (!input.verificationPass) {
-    return await publishApply(false, "verification did not pass");
-  }
-  if (!input.diffArtifactId) {
-    return await publishApply(false, "missing diff artifact");
-  }
-  if (!allowedByApplyMode(input.risk, input.applyMode)) {
-    return await publishApply(
-      false,
-      `risk ${input.risk} is not auto-applied by mode ${input.applyMode}`,
+  try {
+    if (input.runMode !== "LIVE") {
+      return await publishApply("skipped", "dry run: apply disabled");
+    }
+    if (input.forbidden) {
+      return await publishApply("blocked", "forbidden path detected");
+    }
+    if (!input.verificationPass) {
+      return await publishApply("blocked", "verification did not pass");
+    }
+    if (!input.diffArtifactId) {
+      return await publishApply("blocked", "missing diff artifact");
+    }
+    if (!allowedByApplyMode(input.risk, input.applyMode)) {
+      return await publishApply(
+        "skipped",
+        `risk ${input.risk} is not auto-applied by mode ${input.applyMode}`,
+      );
+    }
+
+    await updateRun(store, input.iterationId, { phase: "applying" });
+    await updateTask(store, input.iterationId, input.task.id, {
+      status: "running",
+      phase: "applying",
+    });
+    await appendEvent(store, {
+      iterationId: input.iterationId,
+      taskId: input.task.id,
+      kind: "apply.started",
+      status: "running",
+      summary: `risk ${input.risk}, mode ${input.applyMode}`,
+      payload: {
+        baselineSha: input.baselineSha,
+        changedFiles: input.changedFiles,
+      },
+    });
+
+    const diff = await readArtifactText(store, input.diffArtifactId);
+    if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
+      return await publishApply("blocked", "diff is empty or truncated");
+    }
+
+    const { patchFile, backupDir } = await writeApplyPatch(
+      repoRoot,
+      safe(input.iterationId),
+      safe(input.task.id),
+      diff,
     );
+    const applied = await applyPatchToRepo({
+      repoRoot,
+      patchFile,
+      baseSha: input.baselineSha,
+      changedFiles: input.changedFiles,
+      ticketId,
+      commitMessage: `autonomy: ${input.task.id} (${input.task.domain})`,
+      format: (root) => formatAppliedFiles(root),
+      postCheck: (root) =>
+        runPostApplyChecks(root, input.risk, input.changedFiles),
+    });
+    headBefore = applied.headBefore;
+    baseDrifted = applied.baseDrifted;
+    return await publishApply(applied.status, applied.reason, {
+      ...(applied.commitSha ? { commit: applied.commitSha } : {}),
+      details: { backupDir },
+    });
+  } finally {
+    clearInterval(heartbeat);
   }
+}
 
-  const status = await runGit(repoRoot, ["status", "--porcelain"]);
-  if (status.stdout.trim()) {
-    return await publishApply(
-      false,
-      "working tree is not clean; patch left in artifacts for review",
-    );
-  }
-
-  const diff = await readArtifactText(store, input.diffArtifactId);
-  if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
-    return await publishApply(false, "diff is empty or truncated");
-  }
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const taskDir = path.join(
-    repoRoot,
-    ".tmp",
-    "iterations",
-    safe(input.iterationId),
-    safe(input.task.id),
-  );
-  await mkdir(taskDir, { recursive: true });
-  const patchPath = path.join(taskDir, "patch.diff");
-  const backupDir = path.join(
-    repoRoot,
-    ".backup",
-    "iterations",
-    safe(input.iterationId),
-    stamp,
-  );
-  await mkdir(backupDir, { recursive: true });
-  await writeFile(patchPath, diff, "utf8");
-  await writeFile(path.join(backupDir, `${input.task.id}.diff`), diff, "utf8");
-
-  const check = await runGit(repoRoot, [
-    "apply",
-    "--check",
-    "--3way",
-    patchPath,
-  ]);
-  if (check.exitCode !== 0) {
-    return await publishApply(
-      false,
-      `patch does not apply cleanly: ${check.stderr.trim().slice(0, 1000)}`,
-    );
-  }
-
-  const applied = await runGit(repoRoot, ["apply", "--3way", patchPath]);
-  if (applied.exitCode !== 0) {
-    return await publishApply(
-      false,
-      `git apply failed: ${applied.stderr.trim().slice(0, 1000)}`,
-    );
-  }
-
-  await formatAppliedFiles(repoRoot);
-  await runGit(repoRoot, ["add", "-A"]);
-  const commit = await runGit(repoRoot, [
-    "-c",
-    "user.name=kit",
-    "-c",
-    "user.email=kit@localhost",
-    "commit",
-    "-m",
-    `autonomy: ${input.task.id} (${input.task.domain})`,
-  ]);
-  if (commit.exitCode !== 0) {
-    await runGit(repoRoot, ["apply", "-R", "--3way", patchPath]);
-    return await publishApply(
-      false,
-      `commit failed: ${commit.stderr.trim().slice(0, 1000)}`,
-    );
-  }
-  const head = await runGit(repoRoot, ["rev-parse", "HEAD"]);
-  const commitSha = head.stdout.trim();
-
-  const postChecks = await runPostApplyChecks(repoRoot, input.risk);
-  if (!postChecks.ok) {
-    const revert = await runGit(repoRoot, ["revert", "--no-edit", "HEAD"]);
-    return await publishApply(
-      false,
-      `post-apply checks failed${revert.exitCode === 0 ? "; reverted" : "; automatic revert failed"}: ${postChecks.feedback.slice(0, 1500)}`,
-    );
-  }
-
-  return await publishApply(
-    true,
-    "low-risk change verified and committed",
-    commitSha,
-  );
+export async function failIterationActivity(
+  input: FailIterationInput,
+): Promise<void> {
+  const store = await getStore();
+  await failIteration(store, input.iterationId, input.error);
 }
 
 export async function cleanupIterationTask(input: CleanupInput): Promise<void> {
@@ -793,6 +962,21 @@ export async function reportIteration(
   );
   await mkdir(path.dirname(reportPath), { recursive: true });
   await writeFile(reportPath, report, "utf8");
+
+  await updateRun(store, input.iterationId, {
+    status,
+    phase: status === "failed" ? "failed" : "done",
+    reportArtifactId,
+    finishedAt: new Date().toISOString(),
+    ...(status === "failed" ? { error: "iteration failed" } : {}),
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    kind: "run.finished",
+    status,
+    summary: `iteration ${status}`,
+    payload: { reportArtifactId, fitnessArtifactId },
+  });
 
   return { reportArtifactId, fitnessArtifactId, status };
 }
@@ -1049,6 +1233,20 @@ async function failVerification(
     modelId: "none",
     runMode: "LIVE",
   });
+  await updateTask(store, input.iterationId, input.task.id, {
+    status: "failed",
+    phase: "verification_failed",
+    verificationArtifactId: artifactId,
+    error: `${reason}: ${detail}`.slice(0, 2000),
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "verification.finished",
+    status: "failed",
+    summary: `${reason}: ${detail}`.slice(0, 500),
+    payload: { pass: false, reason, detail: detail.slice(0, 2000) },
+  });
   return {
     taskId: input.task.id,
     pass: false,
@@ -1081,16 +1279,38 @@ async function formatAppliedFiles(repoRoot: string): Promise<void> {
 async function runPostApplyChecks(
   repoRoot: string,
   risk: "low" | "medium" | "high",
+  changedFiles: string[] = [],
 ): Promise<{
   ok: boolean;
   feedback: string;
 }> {
   const bun = commandOnPath("bun") ?? "bun";
-  const checks = ["typecheck", "lint", "test"];
+  const failures: string[] = [];
+
+  const lintFiles = changedFiles.filter((file) =>
+    /\.(ts|tsx|js|jsx|json|jsonc|css|md|yaml|yml)$/.test(file),
+  );
+  if (lintFiles.length > 0) {
+    const result = await runProcess(
+      bun,
+      ["x", "biome", "check", ...lintFiles],
+      {
+        cwd: repoRoot,
+        timeoutMs: 5 * 60 * 1000,
+        maxOutputBytes: 100_000,
+      },
+    );
+    if (result.exitCode !== 0 || result.timedOut) {
+      failures.push(
+        `[lint:changed] exit=${result.exitCode} timeout=${result.timedOut}\n${[result.stdout, result.stderr].join("\n").slice(-3000)}`,
+      );
+    }
+  }
+
+  const checks = ["typecheck", "test"];
   if (risk === "medium") {
     checks.push("web:build");
   }
-  const failures: string[] = [];
   for (const check of checks) {
     const result = await runProcess(bun, ["run", check], {
       cwd: repoRoot,
@@ -1119,6 +1339,8 @@ function scriptFor(check: string): string | null {
       return "lint";
     case "build":
       return "web:build";
+    case "bench":
+      return "bench:web";
     default:
       return null;
   }

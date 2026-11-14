@@ -1,5 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getEvolutionRepo } from "@/lib/evolution-repo";
 import { sameOriginError } from "@/lib/http";
 import { getRepoRoot, resolvePackDir } from "@/lib/paths";
 import { newId } from "@kit/core";
@@ -70,6 +71,7 @@ export async function POST(request: Request) {
       cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
       statePath: path.join(variantsRoot, "state.json"),
       variantsRoot,
+      repo: await getEvolutionRepo(),
     });
     return NextResponse.json({ record }, { status: 200 });
   } catch (error) {

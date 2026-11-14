@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { ArtifactView, RunDetail } from "./runs";
 import {
   loadArtifactContent,
@@ -30,7 +31,7 @@ export interface InboxData {
   }>;
 }
 
-export async function loadApprovalDetail(
+export const loadApprovalDetail = cache(async function loadApprovalDetail(
   requestId: string,
   store?: Store,
 ): Promise<ApprovalDetail | null> {
@@ -77,7 +78,7 @@ export async function loadApprovalDetail(
   }
 
   return null;
-}
+});
 
 export async function findRunIdForRequest(
   requestId: string,
@@ -121,7 +122,9 @@ export async function loadPendingApprovals(store?: Store) {
   ).then((items) => items.filter((item) => item !== null));
 }
 
-export async function loadInboxData(store?: Store): Promise<InboxData> {
+export const loadInboxData = cache(async function loadInboxData(
+  store?: Store,
+): Promise<InboxData> {
   const client = store ?? (await getStore());
   const [paused, summaries] = await Promise.all([
     loadPausedRuns(client),
@@ -147,4 +150,4 @@ export async function loadInboxData(store?: Store): Promise<InboxData> {
   );
 
   return { paused, failed };
-}
+});

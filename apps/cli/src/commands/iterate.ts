@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { newId } from "@kit/core";
 import { loadPack } from "@kit/pack";
@@ -23,6 +24,10 @@ export function registerIterate(program: Command): void {
     .option("--live", "run in LIVE mode (otherwise DRY_RUN)", false)
     .option("--stub", "use the deterministic planner", false)
     .option("--budget-cny <n>", "optional iteration budget")
+    .option(
+      "--dedupe-key <key>",
+      "stable key: attach to an existing run instead of starting a duplicate",
+    )
     .action(
       async (options: {
         goal: string;
@@ -36,6 +41,7 @@ export function registerIterate(program: Command): void {
         live: boolean;
         stub: boolean;
         budgetCny?: string;
+        dedupeKey?: string;
       }) => {
         const packDir = path.resolve(options.pack);
         const loaded = await loadPack(packDir);
@@ -82,15 +88,24 @@ export function registerIterate(program: Command): void {
           ...(options.budgetCny
             ? { budgetCny: Number(options.budgetCny) }
             : {}),
+          ...(options.dedupeKey ? { dedupeKey: options.dedupeKey } : {}),
         };
+
+        const dedupeKey = options.dedupeKey?.trim();
+        const workflowId = dedupeKey
+          ? `iteration-${input.workspaceId}-${hash(dedupeKey)}`
+          : `iteration-${input.iterationId}`;
 
         const { client, connection } = await createTemporalClient();
         let timer: ReturnType<typeof setInterval> | undefined;
         try {
           const handle = await client.workflow.start("iterationWorkflow", {
             taskQueue,
-            workflowId: `iteration-${input.iterationId}`,
+            workflowId,
             args: [input],
+            ...(dedupeKey
+              ? { workflowIdConflictPolicy: "USE_EXISTING" as const }
+              : {}),
           });
           timer = setInterval(() => {
             void (async () => {
@@ -166,4 +181,8 @@ function clampInt(
     return fallback;
   }
   return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }

@@ -1,4 +1,6 @@
+import path from "node:path";
 import {
+  StoreEvolutionRepository,
   canaryStatus,
   compareVariants,
   evaluateCanary,
@@ -11,6 +13,7 @@ import {
   scoreVariant,
   startCanary,
 } from "@kit/evolution";
+import { initStore, loadStoreConfig } from "@kit/store";
 import type { Command } from "commander";
 
 export function registerEvolve(program: Command): void {
@@ -25,7 +28,15 @@ export function registerEvolve(program: Command): void {
     .requiredOption("--name <name>", "variant name")
     .action(async (packDir: string, options: { out: string; name: string }) => {
       try {
-        const result = await initVariant(packDir, options.out, options.name);
+        const result = await withEvolutionRepo(async (repo) => {
+          const created = await initVariant(packDir, options.out, options.name);
+          await repo.saveVariant({
+            meta: created.meta,
+            dir: created.dir,
+            packDir: path.resolve(packDir),
+          });
+          return created;
+        });
         console.log(JSON.stringify(result, null, 2));
       } catch (error) {
         reportError("init", error);
@@ -52,14 +63,22 @@ export function registerEvolve(program: Command): void {
         },
       ) => {
         try {
-          const result = await proposeVariant(
-            fromDir,
-            options.agent,
-            options.file,
-            options.out,
-            options.name,
-            options.model,
-          );
+          const result = await withEvolutionRepo(async (repo) => {
+            const created = await proposeVariant(
+              fromDir,
+              options.agent,
+              options.file,
+              options.out,
+              options.name,
+              options.model,
+            );
+            await repo.saveVariant({
+              meta: created.meta,
+              dir: created.dir,
+              packDir: path.resolve(fromDir),
+            });
+            return created;
+          });
           console.log(JSON.stringify(result, null, 2));
         } catch (error) {
           reportError("propose", error);
@@ -87,12 +106,14 @@ export function registerEvolve(program: Command): void {
         },
       ) => {
         try {
-          const record = await scoreVariant(
-            variantDir,
-            options.baseline,
-            options.inputFile,
-            options.agent,
-            { stub: options.stub, rubricRef: options.rubric },
+          const record = await withEvolutionRepo((repo) =>
+            scoreVariant(
+              variantDir,
+              options.baseline,
+              options.inputFile,
+              options.agent,
+              { stub: options.stub, rubricRef: options.rubric, repo },
+            ),
           );
           console.log(JSON.stringify(record, null, 2));
         } catch (error) {
@@ -118,10 +139,14 @@ export function registerEvolve(program: Command): void {
         percent: string;
       }) => {
         try {
-          const state = await startCanary(
-            options.baseline,
-            options.variant,
-            Number(options.percent),
+          const state = await withEvolutionRepo((repo) =>
+            startCanary(
+              options.baseline,
+              options.variant,
+              Number(options.percent),
+              undefined,
+              repo,
+            ),
           );
           console.log(JSON.stringify(state, null, 2));
         } catch (error) {
@@ -143,7 +168,9 @@ export function registerEvolve(program: Command): void {
           .split(",")
           .map((value) => value.trim())
           .filter(Boolean);
-        const result = await evaluateCanary(inputs, { stub: options.stub });
+        const result = await withEvolutionRepo((repo) =>
+          evaluateCanary(inputs, { stub: options.stub, repo }),
+        );
         console.log(JSON.stringify(result, null, 2));
       } catch (error) {
         reportError("canary evaluate", error);
@@ -154,7 +181,10 @@ export function registerEvolve(program: Command): void {
     .command("status")
     .description("Show canary state")
     .action(async () => {
-      console.log(JSON.stringify(await canaryStatus(), null, 2));
+      const state = await withEvolutionRepo((repo) =>
+        canaryStatus(undefined, repo),
+      );
+      console.log(JSON.stringify(state, null, 2));
     });
 
   canary
@@ -163,7 +193,9 @@ export function registerEvolve(program: Command): void {
     .option("--reason <text>", "rollback reason", "manual rollback")
     .action(async (options: { reason: string }) => {
       try {
-        const state = await rollbackCanary(options.reason);
+        const state = await withEvolutionRepo((repo) =>
+          rollbackCanary(options.reason, undefined, repo),
+        );
         console.log(JSON.stringify(state, null, 2));
       } catch (error) {
         reportError("canary rollback", error);
@@ -200,16 +232,19 @@ export function registerEvolve(program: Command): void {
         },
       ) => {
         try {
-          const record = await runEvolutionCycle({
-            packDir,
-            agentId: options.agent,
-            inputFile: options.inputFile,
-            signals: options.signal,
-            stub: options.stub,
-            autoApply: options.autoApply,
-            force: options.force,
-            budgetCny: options.budget ? Number(options.budget) : undefined,
-          });
+          const record = await withEvolutionRepo((repo) =>
+            runEvolutionCycle({
+              packDir,
+              agentId: options.agent,
+              inputFile: options.inputFile,
+              signals: options.signal,
+              stub: options.stub,
+              autoApply: options.autoApply,
+              force: options.force,
+              budgetCny: options.budget ? Number(options.budget) : undefined,
+              repo,
+            }),
+          );
           console.log(JSON.stringify(record, null, 2));
           if (record.decision === "failed") {
             process.exitCode = 1;
@@ -227,7 +262,9 @@ export function registerEvolve(program: Command): void {
     .action(async (options: { limit: string }) => {
       console.log(
         JSON.stringify(
-          await loadEvolutionCycles(undefined, Number(options.limit)),
+          await withEvolutionRepo((repo) =>
+            loadEvolutionCycles(undefined, Number(options.limit), repo),
+          ),
           null,
           2,
         ),
@@ -238,7 +275,10 @@ export function registerEvolve(program: Command): void {
     .command("compare")
     .description("Compare latest scores per variant")
     .action(async () => {
-      console.log(JSON.stringify(await compareVariants(), null, 2));
+      const variants = await withEvolutionRepo((repo) =>
+        compareVariants(undefined, repo),
+      );
+      console.log(JSON.stringify(variants, null, 2));
     });
 
   evolve
@@ -252,10 +292,8 @@ export function registerEvolve(program: Command): void {
         options: { target: string; apply: boolean },
       ) => {
         try {
-          const result = await promoteVariant(
-            variantDir,
-            options.target,
-            options.apply,
+          const result = await withEvolutionRepo((repo) =>
+            promoteVariant(variantDir, options.target, options.apply, repo),
           );
           console.log(JSON.stringify(result, null, 2));
         } catch (error) {
@@ -263,6 +301,20 @@ export function registerEvolve(program: Command): void {
         }
       },
     );
+}
+
+async function withEvolutionRepo<T>(
+  fn: (repo: StoreEvolutionRepository) => Promise<T>,
+): Promise<T> {
+  const store = await initStore(loadStoreConfig());
+  try {
+    const repo = new StoreEvolutionRepository(store, {
+      variantsRoot: path.resolve("variants"),
+    });
+    return await fn(repo);
+  } finally {
+    await store.close();
+  }
 }
 
 function reportError(command: string, error: unknown): void {

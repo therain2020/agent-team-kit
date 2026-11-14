@@ -61,6 +61,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
   return {
     config,
     driver: handle.driver,
+    sql: handle.sql,
     exec: handle.exec,
     close: handle.close,
     ping: handle.ping,

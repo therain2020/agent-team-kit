@@ -1,12 +1,15 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { FileLockTimeoutError, acquireFileLock } from "@kit/core";
+import { resolveWebMode, webRunArgs } from "./web-mode";
 
 interface ChildSpec {
   name: string;
@@ -31,10 +34,33 @@ mkdirSync(stateDir, { recursive: true });
 
 const statePath = path.join(stateDir, "state.json");
 const startedAt = new Date().toISOString();
+
+let supervisorLock: Awaited<ReturnType<typeof acquireFileLock>> | null = null;
+try {
+  supervisorLock = await acquireFileLock(
+    path.join(stateDir, "supervisor.lock"),
+    {
+      owner: `supervisor:${process.pid}`,
+      timeoutMs: 1000,
+      staleMs: 2 * 60 * 1000,
+      heartbeatMs: 10_000,
+    },
+  );
+} catch (error) {
+  if (error instanceof FileLockTimeoutError) {
+    console.error(
+      `[supervisor] another supervisor is running (${error.lockPath})`,
+    );
+    process.exit(0);
+  }
+  throw error;
+}
 const withWeb = process.env.KIT_SUPERVISOR_WEB === "1";
+const webMode = resolveWebMode(process.env.KIT_WEB_MODE);
 const children = new Map<string, ChildRecord>();
 const processes = new Map<string, ChildProcess>();
 const backoff = new Map<string, number>();
+let webBuildProcess: ChildProcess | undefined;
 let stopping = false;
 
 const bun = process.versions.bun ? process.execPath : "bun";
@@ -81,18 +107,26 @@ const specs: ChildSpec[] = localMode
       },
     ];
 
-if (withWeb) {
-  specs.push({
-    name: "web",
-    command: bun,
-    args: ["run", "--cwd", "apps/web", "dev"],
-    health: "http://localhost:3000/api/health",
-  });
+const webSpec: ChildSpec | null = withWeb
+  ? {
+      name: "web",
+      command: bun,
+      args: webRunArgs(webMode),
+      health: "http://localhost:3000/api/health",
+    }
+  : null;
+if (webSpec) {
+  specs.push(webSpec);
 }
 
-console.log(`[supervisor] started pid=${process.pid} repo=${repoRoot}`);
+console.log(
+  `[supervisor] started pid=${process.pid} repo=${repoRoot} web=${withWeb ? webMode : "off"}`,
+);
 writeState();
 for (const spec of specs) {
+  if (spec.name === "web") {
+    continue;
+  }
   startChild(spec);
 }
 
@@ -105,6 +139,10 @@ const stateTimer = setInterval(() => {
 
 process.once("SIGINT", () => shutdown());
 process.once("SIGTERM", () => shutdown());
+
+if (webSpec) {
+  void startWeb(webSpec);
+}
 
 async function checkHealth(): Promise<void> {
   for (const spec of specs) {
@@ -140,6 +178,68 @@ async function fetchHealth(url: string): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+async function startWeb(spec: ChildSpec): Promise<void> {
+  if (webMode === "production" && !(await ensureWebBuild())) {
+    console.error(
+      "[supervisor] web not started: production build failed; see .tmp/supervisor/web-build.log",
+    );
+    return;
+  }
+  if (!stopping) {
+    startChild(spec);
+  }
+}
+
+async function ensureWebBuild(): Promise<boolean> {
+  const distDir = path.join(
+    repoRoot,
+    "apps",
+    "web",
+    process.env.KIT_WEB_DIST_DIR ?? ".next",
+  );
+  const buildIdPath = path.join(distDir, "BUILD_ID");
+  if (existsSync(buildIdPath)) {
+    return true;
+  }
+
+  console.log("[supervisor] building Manager Console for production...");
+  const logPath = path.join(stateDir, "web-build.log");
+  const fd = openSync(logPath, "a");
+  try {
+    const child = spawn(bun, ["run", "web:build"], {
+      cwd: repoRoot,
+      env: { ...process.env, KIT_WEB_MODE: "production" },
+      stdio: ["ignore", fd, fd],
+      windowsHide: true,
+    });
+    webBuildProcess = child;
+    const code = await new Promise<number | null>((resolve) => {
+      child.once("error", (error) => {
+        console.error(`[supervisor] web build error: ${error.message}`);
+        resolve(null);
+      });
+      child.once("exit", (exitCode) => resolve(exitCode));
+    });
+    webBuildProcess = undefined;
+    if (code !== 0) {
+      console.error(`[supervisor] web build failed; see ${logPath}`);
+      return false;
+    }
+    if (!existsSync(buildIdPath)) {
+      console.error(`[supervisor] web build produced no ${buildIdPath}`);
+      return false;
+    }
+    console.log("[supervisor] Manager Console build ready");
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[supervisor] web build error: ${message}`);
+    return false;
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -255,6 +355,7 @@ function writeState(): void {
     startedAt,
     repoRoot,
     web: withWeb,
+    webMode: withWeb ? webMode : null,
     children: [...children.values()],
     updatedAt: new Date().toISOString(),
   };
@@ -272,7 +373,12 @@ function shutdown(): void {
   for (const child of processes.values()) {
     killChild(child);
   }
+  if (webBuildProcess) {
+    killChild(webBuildProcess);
+  }
   writeState();
+  supervisorLock?.release();
+  supervisorLock = null;
   setTimeout(() => process.exit(0), 500);
 }
 

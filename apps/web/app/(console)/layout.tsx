@@ -1,6 +1,6 @@
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
-import { getStore } from "@/lib/store";
+import { loadPausedCount } from "@/lib/runs";
 import { hasApiKey } from "@kit/bootstrap";
 import type { ReactNode } from "react";
 
@@ -15,9 +15,7 @@ export default async function ConsoleLayout({
   let backendDown = false;
 
   try {
-    const store = await getStore();
-    const paused = await store.runs.list({ status: "paused", limit: 100 });
-    pausedCount = paused.length;
+    pausedCount = await loadPausedCount();
   } catch (error) {
     console.error("console backend unreachable", error);
     backendDown = true;

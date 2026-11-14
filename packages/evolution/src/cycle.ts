@@ -17,6 +17,7 @@ import {
   proposeVariant,
   scoreVariant,
 } from "./evolve";
+import type { EvolutionRepository } from "./repository";
 
 export const DEFAULT_CYCLES = "variants/cycles.jsonl";
 
@@ -54,6 +55,7 @@ export interface CycleOptions {
   statePath?: string;
   variantsRoot?: string;
   percent?: number;
+  repo?: EvolutionRepository;
 }
 
 export async function runEvolutionCycle(
@@ -67,6 +69,12 @@ export async function runEvolutionCycle(
   const statePath = options.statePath ?? DEFAULT_STATE;
   const variantsRoot =
     options.variantsRoot ?? path.join(path.dirname(archivePath), "");
+  const repo = options.repo;
+  if (repo) {
+    await repo.ensureReady();
+  }
+  const persistCycle = (record: EvolutionCycleRecord) =>
+    finish(cyclesPath, record, repo);
   const baseRecord: EvolutionCycleRecord = {
     cycleId,
     packDir,
@@ -91,7 +99,7 @@ export async function runEvolutionCycle(
       throw new Error(`evidence input missing: ${options.inputFile}`);
     }
     if (options.budgetCny !== undefined && options.budgetCny <= 0) {
-      return await finish(cyclesPath, {
+      return await persistCycle({
         ...baseRecord,
         decision: "skipped",
         rationale: "evolution budget is zero",
@@ -105,7 +113,7 @@ export async function runEvolutionCycle(
 
     const agentId =
       options.agentId ??
-      chooseAgent(loaded.agents, await compareVariants(archivePath));
+      chooseAgent(loaded.agents, await compareVariants(archivePath, repo));
     if (!agentId) {
       throw new Error("no evolvable agent found");
     }
@@ -116,10 +124,10 @@ export async function runEvolutionCycle(
 
     const signals = [
       ...(options.signals ?? []),
-      ...collectSignals(await compareVariants(archivePath)),
+      ...collectSignals(await compareVariants(archivePath, repo)),
     ].slice(-8);
     if (signals.length === 0 && !options.force) {
-      return await finish(cyclesPath, {
+      return await persistCycle({
         ...baseRecord,
         agentId,
         decision: "skipped",
@@ -153,6 +161,13 @@ export async function runEvolutionCycle(
       baselineDir,
       `cycle-${stamp}-baseline`,
     );
+    if (repo) {
+      await repo.saveVariant({
+        meta: baseline.meta,
+        dir: baseline.dir,
+        packDir: loaded.dir,
+      });
+    }
 
     const proposalFile = path.join(variantsRoot, "proposals", `${cycleId}.md`);
     await mkdir(path.dirname(proposalFile), { recursive: true });
@@ -166,20 +181,35 @@ export async function runEvolutionCycle(
       `cycle-${stamp}-candidate`,
       agent.frontmatter.model,
     );
+    if (repo) {
+      await repo.saveVariant({
+        meta: candidate.meta,
+        dir: candidate.dir,
+        packDir: loaded.dir,
+      });
+    }
 
     const baselineScore = await scoreVariant(
       baseline.dir,
       loaded.dir,
       options.inputFile,
       agentId,
-      { stub: options.stub, archive: archivePath },
+      {
+        stub: options.stub,
+        archive: archivePath,
+        ...(repo ? { repo } : {}),
+      },
     );
     const candidateScore = await scoreVariant(
       candidate.dir,
       loaded.dir,
       options.inputFile,
       agentId,
-      { stub: options.stub, archive: archivePath },
+      {
+        stub: options.stub,
+        archive: archivePath,
+        ...(repo ? { repo } : {}),
+      },
     );
 
     let costCny =
@@ -208,7 +238,7 @@ export async function runEvolutionCycle(
     };
 
     if (!improved) {
-      return await finish(cyclesPath, {
+      return await persistCycle({
         ...withScores,
         decision: "rejected",
         rationale: candidateScore.pass
@@ -222,11 +252,13 @@ export async function runEvolutionCycle(
       candidate.dir,
       options.percent ?? 20,
       statePath,
+      repo,
     );
     const canary = await evaluateCanary([options.inputFile], {
       stub: options.stub,
       archive: archivePath,
       statePath,
+      ...(repo ? { repo } : {}),
     });
     costCny += [...canary.champion, ...canary.variant].reduce(
       (sum, record) => sum + record.costCny,
@@ -238,7 +270,7 @@ export async function runEvolutionCycle(
     };
 
     if (canary.decision.rollback) {
-      return await finish(cyclesPath, {
+      return await persistCycle({
         ...updated,
         decision: "rejected",
         rationale: `canary rolled back: ${canary.decision.reason ?? "regression"}`,
@@ -247,12 +279,13 @@ export async function runEvolutionCycle(
 
     if (options.autoApply && !options.stub) {
       const { promoteVariant } = await import("./evolve");
-      await promoteVariant(candidate.dir, loaded.dir, true);
+      await promoteVariant(candidate.dir, loaded.dir, true, repo);
       await markCanaryPromoted(
         `auto-promoted by evolution cycle ${cycleId}`,
         statePath,
+        repo,
       );
-      return await finish(cyclesPath, {
+      return await persistCycle({
         ...updated,
         decision: "promoted",
         autoApplied: true,
@@ -260,7 +293,7 @@ export async function runEvolutionCycle(
       });
     }
 
-    return await finish(cyclesPath, {
+    return await persistCycle({
       ...updated,
       decision: "canary",
       rationale: options.stub
@@ -268,7 +301,7 @@ export async function runEvolutionCycle(
         : "candidate passed the canary; promotion awaits an explicit operator action",
     });
   } catch (error) {
-    return await finish(cyclesPath, {
+    return await persistCycle({
       ...baseRecord,
       decision: "failed",
       error: error instanceof Error ? error.message : String(error),
@@ -280,7 +313,11 @@ export async function runEvolutionCycle(
 export async function loadEvolutionCycles(
   cyclesPath = DEFAULT_CYCLES,
   limit = 50,
+  repo?: EvolutionRepository,
 ): Promise<EvolutionCycleRecord[]> {
+  if (repo) {
+    return await repo.listCycles(limit);
+  }
   if (!existsSync(cyclesPath)) {
     return [];
   }
@@ -386,7 +423,12 @@ function chooseAgent(
 async function finish(
   cyclesPath: string,
   record: EvolutionCycleRecord,
+  repo?: EvolutionRepository,
 ): Promise<EvolutionCycleRecord> {
+  if (repo) {
+    await repo.appendCycle(record);
+    return record;
+  }
   await mkdir(path.dirname(path.resolve(cyclesPath)), { recursive: true });
   await appendFile(cyclesPath, `${JSON.stringify(record)}\n`, "utf8");
   return record;

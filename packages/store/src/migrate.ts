@@ -13,6 +13,15 @@ export async function ensureSchema(
     .filter(Boolean);
 
   for (const statement of statements) {
-    await exec(statement);
+    try {
+      await exec(statement);
+    } catch (error) {
+      if (driver === "sqlite" && /duplicate column name/i.test(String(error))) {
+        // SQLite has no ADD COLUMN IF NOT EXISTS; the inline definition in
+        // CREATE TABLE already created the column on fresh databases.
+        continue;
+      }
+      throw error;
+    }
   }
 }

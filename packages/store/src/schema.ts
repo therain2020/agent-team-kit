@@ -156,6 +156,7 @@ export const autopilotState = pgTable(
       withTimezone: true,
       mode: "string",
     }).notNull(),
+    version: integer("version").notNull().default(0),
   },
   (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
 );

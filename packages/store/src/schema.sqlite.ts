@@ -113,6 +113,7 @@ export const autopilotState = sqliteTable(
     spentToday: real("spent_today").notNull().default(0),
     lastError: text("last_error"),
     updatedAt: text("updated_at").notNull(),
+    version: integer("version").notNull().default(0),
   },
   (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
 );

@@ -25,6 +25,7 @@ export async function ensureState(
     spentToday: 0,
     lastError: null,
     updatedAt: now.toISOString(),
+    version: 0,
   });
 
   const created = await store.get(workspaceId, packDir);
@@ -52,8 +53,8 @@ export function listStates(
 export async function saveState(
   store: AutopilotStateStore,
   state: AutopilotState,
-): Promise<void> {
-  await store.update(state);
+): Promise<boolean> {
+  return store.update(state);
 }
 
 export function resetDaily(

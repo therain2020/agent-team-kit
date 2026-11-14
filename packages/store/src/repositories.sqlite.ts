@@ -7,7 +7,7 @@ import type {
   RunStatus,
   Stage,
 } from "@kit/core";
-import { and, asc, desc, eq, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, lt, or, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
   fromArtifactRow,
@@ -333,8 +333,8 @@ export class SqliteAutopilotStateStore implements AutopilotStateStore {
       .onConflictDoNothing();
   }
 
-  async update(record: AutopilotStateRecord): Promise<void> {
-    await this.db
+  async update(record: AutopilotStateRecord): Promise<boolean> {
+    const rows = await this.db
       .update(autopilotState)
       .set({
         enabled: record.enabled,
@@ -345,13 +345,22 @@ export class SqliteAutopilotStateStore implements AutopilotStateStore {
         spentToday: record.spentToday,
         lastError: record.lastError,
         updatedAt: record.updatedAt,
+        version: sql`${autopilotState.version} + 1`,
       })
       .where(
         and(
           eq(autopilotState.workspaceId, record.workspaceId),
           eq(autopilotState.packDir, record.packDir),
+          eq(autopilotState.version, record.version ?? 0),
         ),
-      );
+      )
+      .returning({ version: autopilotState.version });
+    const row = rows[0];
+    if (!row) {
+      return false;
+    }
+    record.version = Number(row.version);
+    return true;
   }
 }
 
@@ -491,6 +500,7 @@ function toSqliteAutopilotRow(record: AutopilotStateRecord) {
     spentToday: record.spentToday,
     lastError: record.lastError,
     updatedAt: record.updatedAt,
+    version: record.version ?? 0,
   };
 }
 
@@ -508,5 +518,6 @@ function fromSqliteAutopilotRow(
     spentToday: Number(row.spentToday ?? 0),
     lastError: row.lastError ?? null,
     updatedAt: row.updatedAt,
+    version: Number(row.version ?? 0),
   };
 }

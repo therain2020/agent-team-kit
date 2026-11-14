@@ -125,11 +125,21 @@ describe("sqlite embedded store", () => {
       spentToday: 0.15,
       lastError: null,
       updatedAt: new Date().toISOString(),
+      version: 0,
     });
     const state = await store.autopilotState.get("default", "minimal");
     expect(state?.enabled).toBe(true);
     expect(state?.spentToday).toBeCloseTo(0.15);
     expect(state?.nextRuns.daily).toBe("2026-11-16T00:00:00.000Z");
+    expect(state?.version).toBe(0);
+    if (!state) {
+      throw new Error("missing autopilot state");
+    }
+    const stale = { ...state };
+    state.lastError = "updated";
+    expect(await store.autopilotState.update(state)).toBe(true);
+    expect(state.version).toBe(1);
+    expect(await store.autopilotState.update(stale)).toBe(false);
 
     await store.ping();
   }, 60_000);

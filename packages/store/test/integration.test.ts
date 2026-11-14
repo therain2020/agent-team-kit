@@ -1,7 +1,7 @@
 import path from "node:path";
 import { newId } from "@kit/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { initStore } from "../src/index";
+import { initStore, withAdvisoryLock } from "../src/index";
 
 process.env.KIT_BLOB_BACKEND ??= "fs";
 process.env.KIT_BLOB_ROOT = path.resolve(".tmp/blobs-test", String(Date.now()));
@@ -10,6 +10,24 @@ const enabled = process.env.KIT_INTEGRATION === "1";
 
 describe.skipIf(!enabled)("store integration", () => {
   let store: Awaited<ReturnType<typeof initStore>>;
+
+  it("allows only one holder of an advisory lock", async () => {
+    const key = `kit:test:${newId("t")}`;
+    const events: string[] = [];
+    const first = withAdvisoryLock(store.sql, key, async () => {
+      events.push("first");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return "first";
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const second = await withAdvisoryLock(store.sql, key, async () => {
+      events.push("second");
+      return "second";
+    });
+    expect(second).toBeNull();
+    expect(await first).toBe("first");
+    expect(events).toEqual(["first"]);
+  });
 
   beforeAll(async () => {
     store = await initStore();

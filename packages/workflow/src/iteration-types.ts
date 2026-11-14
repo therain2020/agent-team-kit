@@ -14,6 +14,7 @@ export interface IterationInput {
   coder?: CoderId;
   stub: boolean;
   budgetCny?: number;
+  dedupeKey?: string;
 }
 
 export interface PlannedIteration {
@@ -44,6 +45,8 @@ export interface IterationCoderResult {
   resultArtifactId: string;
   transcriptArtifactId: string;
   sandboxDir: string;
+  baselineSha: string;
+  sandboxMode: "copy" | "worktree" | "snapshot";
   tokens: number;
   error?: string;
 }
@@ -100,18 +103,29 @@ export interface ApplyTaskActivityInput {
   applyMode: "none" | "low" | "low-medium";
   runMode: "DRY_RUN" | "LIVE";
   diffArtifactId: string;
+  baselineSha: string;
+  changedFiles: string[];
 }
 
 export interface IterationApplyResult {
   taskId: string;
   applied: boolean;
+  status: "applied" | "blocked" | "reverted" | "skipped";
   reason: string;
+  ticketId: string;
+  baseSha: string;
   commit?: string;
   artifactId: string;
 }
 
 export interface CleanupInput {
   sandboxDir: string;
+}
+
+export interface FailIterationInput {
+  iterationId: string;
+  workspaceId: string;
+  error: string;
 }
 
 export interface IterationTaskResult {
@@ -126,7 +140,9 @@ export interface IterationTaskResult {
   error?: string;
   changedFiles: string[];
   tokens?: number;
+  baselineSha?: string;
   coderSummary?: string;
+  applyStatus?: "applied" | "blocked" | "reverted" | "skipped";
   applyReason?: string;
   commit?: string;
 }

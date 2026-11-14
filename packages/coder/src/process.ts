@@ -7,6 +7,7 @@ export interface ProcessOptions {
   timeoutMs?: number;
   maxOutputBytes?: number;
   shell?: boolean;
+  onStdout?: (chunk: string) => void;
 }
 
 export interface ProcessResult {
@@ -100,11 +101,17 @@ export async function runProcess(
     );
 
     child.stdout.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      try {
+        options.onStdout?.(text);
+      } catch {
+        // streaming consumers must not break the child process
+      }
       if (stdout.length >= maxOutput) {
         truncated = true;
         return;
       }
-      stdout += chunk.toString("utf8");
+      stdout += text;
       if (stdout.length > maxOutput) {
         stdout = `${stdout.slice(0, maxOutput)}\n[truncated]`;
         truncated = true;

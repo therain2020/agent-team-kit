@@ -1,7 +1,16 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
-    "ignore": ["node_modules", "dist", ".next", ".tmp", ".gstack"]
+    "ignore": [
+      "node_modules",
+      "dist",
+      ".next",
+      ".next-bench",
+      ".tmp",
+      ".gstack",
+      ".backup",
+      "variants"
+    ]
   },
   "formatter": {
     "enabled": true,

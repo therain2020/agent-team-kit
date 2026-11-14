@@ -10,7 +10,7 @@
   Stage,
   StageStatus,
 } from "@kit/core";
-import { and, asc, desc, eq, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, lt, or, sql } from "drizzle-orm";
 import type { Database } from "./db";
 import {
   events,
@@ -93,6 +93,7 @@ export interface AutopilotStateRecord {
   spentToday: number;
   lastError: string | null;
   updatedAt: string;
+  version: number;
 }
 
 export interface RunRequestRecord {
@@ -144,7 +145,8 @@ export interface AutopilotStateStore {
   ): Promise<AutopilotStateRecord | null>;
   list(workspaceId: string): Promise<AutopilotStateRecord[]>;
   insertIfMissing(record: AutopilotStateRecord): Promise<void>;
-  update(record: AutopilotStateRecord): Promise<void>;
+  /** Optimistic update; returns false and leaves the record untouched on a version conflict. */
+  update(record: AutopilotStateRecord): Promise<boolean>;
 }
 
 export function toEventRow(event: EventEnvelope) {
@@ -598,6 +600,7 @@ export function toAutopilotRow(record: AutopilotStateRecord) {
     spentToday: String(record.spentToday),
     lastError: record.lastError,
     updatedAt: record.updatedAt,
+    version: record.version ?? 0,
   };
 }
 
@@ -615,6 +618,7 @@ export function fromAutopilotRow(
     spentToday: Number(row.spentToday ?? 0),
     lastError: row.lastError ?? null,
     updatedAt: row.updatedAt,
+    version: Number(row.version ?? 0),
   };
 }
 
@@ -654,8 +658,8 @@ export class PostgresAutopilotStateStore implements AutopilotStateStore {
       .onConflictDoNothing();
   }
 
-  async update(record: AutopilotStateRecord): Promise<void> {
-    await this.db
+  async update(record: AutopilotStateRecord): Promise<boolean> {
+    const rows = await this.db
       .update(autopilotState)
       .set({
         enabled: record.enabled,
@@ -666,13 +670,22 @@ export class PostgresAutopilotStateStore implements AutopilotStateStore {
         spentToday: String(record.spentToday),
         lastError: record.lastError,
         updatedAt: record.updatedAt,
+        version: sql`${autopilotState.version} + 1`,
       })
       .where(
         and(
           eq(autopilotState.workspaceId, record.workspaceId),
           eq(autopilotState.packDir, record.packDir),
+          eq(autopilotState.version, record.version ?? 0),
         ),
-      );
+      )
+      .returning({ version: autopilotState.version });
+    const row = rows[0];
+    if (!row) {
+      return false;
+    }
+    record.version = Number(row.version);
+    return true;
   }
 }
 

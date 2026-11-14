@@ -1,16 +1,13 @@
-import { existsSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   type CanaryState,
   type EvolutionCycleRecord,
   type EvolutionRecord,
+  StoreEvolutionRepository,
   type VariantMeta,
-  canaryStatus,
-  compareVariants,
-  loadEvolutionCycles,
 } from "@kit/evolution";
 import { getRepoRoot } from "./paths";
+import { ensureStoreSchema, getStore } from "./store";
 
 export interface VariantView {
   dirName: string;
@@ -33,46 +30,39 @@ export interface EvolutionData {
 }
 
 export async function loadEvolutionData(): Promise<EvolutionData> {
+  await ensureStoreSchema();
   const repoRoot = getRepoRoot();
   const variantsRoot = path.join(repoRoot, "variants");
-  const archivePath = path.join(variantsRoot, "archive.jsonl");
-  const statePath = path.join(variantsRoot, "state.json");
-  const cyclesPath = path.join(variantsRoot, "cycles.jsonl");
-  const state = await canaryStatus(statePath);
-  const records = await compareVariants(archivePath);
-  const cycles = await loadEvolutionCycles(cyclesPath, 50);
+  const repo = new StoreEvolutionRepository(getStore(), { variantsRoot });
+  await repo.ensureReady();
+
+  const [storedState, records, cycles, storedVariants] = await Promise.all([
+    repo.getState(),
+    repo.latestScores(),
+    repo.listCycles(50),
+    repo.listVariants(),
+  ]);
+
+  const state = storedState?.state ?? null;
   const byVariant = new Map(
     records.map((record) => [record.variantId, record]),
   );
-
-  const variants: VariantView[] = [];
-  if (existsSync(variantsRoot)) {
-    const entries = await readdir(variantsRoot, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      const metaPath = path.join(variantsRoot, entry.name, "variant.json");
-      if (!existsSync(metaPath)) {
-        continue;
-      }
-      const meta = JSON.parse(await readFile(metaPath, "utf8")) as VariantMeta;
-      const latest = byVariant.get(meta.id) ?? null;
-      const averageScore = latest ? average(Object.values(latest.scores)) : 0;
-      const absolute = path.resolve(variantsRoot, entry.name);
-      const isChampion = state?.champion.path === absolute;
-      const isCanary = state?.canary?.path === absolute;
-      variants.push({
-        dirName: entry.name,
-        meta,
-        latest,
-        averageScore,
-        isChampion,
-        isCanary,
-        canaryStatus: isCanary ? state?.canary?.status : undefined,
-      });
-    }
-  }
+  const variants: VariantView[] = storedVariants.map(({ meta, dir }) => {
+    const latest = byVariant.get(meta.id) ?? null;
+    const absolute = dir ? path.resolve(dir) : "";
+    return {
+      dirName: dir ? path.basename(dir) : meta.id,
+      meta,
+      latest,
+      averageScore: latest ? average(Object.values(latest.scores)) : 0,
+      isChampion: absolute !== "" && state?.champion.path === absolute,
+      isCanary: absolute !== "" && state?.canary?.path === absolute,
+      canaryStatus:
+        absolute !== "" && state?.canary?.path === absolute
+          ? state.canary.status
+          : undefined,
+    };
+  });
 
   variants.sort((a, b) => {
     if (a.isChampion !== b.isChampion) {
@@ -88,9 +78,9 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
     state,
     variants,
     cycles,
-    archivePath,
-    statePath,
-    cyclesPath,
+    archivePath: path.join(variantsRoot, "archive.jsonl"),
+    statePath: path.join(variantsRoot, "state.json"),
+    cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
     repoRoot,
   };
 }
