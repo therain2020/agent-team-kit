@@ -11,6 +11,7 @@ import { registerModel } from "./commands/model";
 import { registerPack } from "./commands/pack";
 import { registerPatch } from "./commands/patch";
 import { registerRun } from "./commands/run";
+import { registerSignals } from "./commands/signals";
 import { registerSource } from "./commands/source";
 import { registerStatus } from "./commands/status";
 import { registerUp } from "./commands/up";
@@ -33,5 +34,6 @@ registerDev(program);
 registerEvent(program);
 registerUp(program);
 registerIterate(program);
+registerSignals(program);
 
 program.parse();

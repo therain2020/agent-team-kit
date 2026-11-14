@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   type CoderResult,
@@ -593,12 +601,116 @@ export async function reportIteration(
 ): Promise<IterationReportResult> {
   const store = await getStore();
   const passed = input.tasks.filter((task) => task.verificationPass).length;
+  const applied = input.tasks.filter((task) => task.applied).length;
+  const totalTokens = input.tasks.reduce(
+    (sum, task) => sum + (task.tokens ?? 0),
+    0,
+  );
   const status =
     passed === input.tasks.length
       ? "succeeded"
       : passed > 0
         ? "partial"
         : "failed";
+
+  const domains: Record<
+    string,
+    {
+      total: number;
+      verified: number;
+      applied: number;
+      passRate: number;
+      tokens: number;
+    }
+  > = {};
+  for (const task of input.tasks) {
+    const entry = domains[task.domain] ?? {
+      total: 0,
+      verified: 0,
+      applied: 0,
+      passRate: 0,
+      tokens: 0,
+    };
+    entry.total += 1;
+    if (task.verificationPass) {
+      entry.verified += 1;
+    }
+    if (task.applied) {
+      entry.applied += 1;
+    }
+    entry.tokens += task.tokens ?? 0;
+    domains[task.domain] = entry;
+  }
+  for (const entry of Object.values(domains)) {
+    entry.passRate = entry.total > 0 ? entry.verified / entry.total : 0;
+  }
+
+  const fitness: {
+    iterationId: string;
+    goal: string;
+    status: string;
+    tasks: number;
+    verified: number;
+    applied: number;
+    passRate: number;
+    applyRate: number;
+    tokens: number;
+    domains: typeof domains;
+    createdAt: string;
+    signalError?: string;
+  } = {
+    iterationId: input.iterationId,
+    goal: input.goal,
+    status,
+    tasks: input.tasks.length,
+    verified: passed,
+    applied,
+    passRate: input.tasks.length > 0 ? passed / input.tasks.length : 0,
+    applyRate: passed > 0 ? applied / passed : 0,
+    tokens: totalTokens,
+    domains,
+    createdAt: new Date().toISOString(),
+  };
+
+  const signalRoot =
+    process.env.KIT_SIGNALS_ROOT ??
+    path.join(os.homedir(), ".agent-team-kit", "signals");
+  try {
+    await mkdir(signalRoot, { recursive: true });
+    const at = new Date().toISOString();
+    const lines = input.tasks.map((task) =>
+      JSON.stringify({
+        at,
+        iterationId: input.iterationId,
+        taskId: task.taskId,
+        domain: task.domain,
+        coder: task.coder,
+        verified: task.verificationPass,
+        applied: task.applied,
+        risk: task.risk,
+        tokens: task.tokens ?? 0,
+        ...(task.error ? { error: task.error } : {}),
+      }),
+    );
+    await appendFile(
+      path.join(signalRoot, "iterations.jsonl"),
+      `${lines.join("\n")}\n`,
+      "utf8",
+    );
+  } catch (error) {
+    fitness.signalError =
+      error instanceof Error ? error.message : String(error);
+  }
+
+  const fitnessArtifactId = await publishArtifact(store, {
+    iterationId: input.iterationId,
+    workspaceId: input.workspaceId,
+    stageId: `${input.iterationId}:fitness`,
+    content: JSON.stringify(fitness, null, 2),
+    agentId: "fitness",
+    modelId: "none",
+    runMode: "LIVE",
+  });
 
   const lines = [
     `# Iteration ${input.iterationId}`,
@@ -612,6 +724,19 @@ export async function reportIteration(
     ...(input.plan.summary
       ? [`**Plan summary:** ${input.plan.summary}`, ""]
       : []),
+    "## Fitness",
+    "",
+    `- verified: ${passed}/${input.tasks.length}`,
+    `- applied: ${applied}`,
+    `- tokens: ${totalTokens}`,
+    ...Object.entries(domains).map(
+      ([domain, entry]) =>
+        `- ${domain}: ${entry.verified}/${entry.total} verified, ${entry.applied} applied, ${entry.tokens} tokens`,
+    ),
+    ...(fitness.signalError
+      ? [`- signal write error: ${fitness.signalError}`]
+      : []),
+    "",
     "## Tasks",
     "",
   ];
@@ -668,7 +793,7 @@ export async function reportIteration(
   await mkdir(path.dirname(reportPath), { recursive: true });
   await writeFile(reportPath, report, "utf8");
 
-  return { reportArtifactId, status };
+  return { reportArtifactId, fitnessArtifactId, status };
 }
 
 export function parseTaskPlan(text: string): TaskPlan {

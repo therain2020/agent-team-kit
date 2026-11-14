@@ -147,6 +147,8 @@ bun run kit manager brief <runId>
 | `KIT_CODER_INSTALL` | `1` | `0` skips `bun install` in coder sandboxes |
 | `KIT_CODER_KEEP` | unset | `1` keeps coder sandboxes for inspection |
 | `KIT_CODER_SANDBOX_ROOT` | `%TEMP%/agent-team-kit` | external coder sandbox root (outside the repo) |
+| `KIT_SIGNALS_ROOT` | `%USERPROFILE%/.agent-team-kit/signals` | iteration fitness JSONL root |
+| `KIT_PROPOSALS_ROOT` | `%USERPROFILE%/.agent-team-kit/proposals` | improvement proposal output |
 | `KIT_SUPERVISOR_WEB` | `0` | Set by `kit up --web` |
 
 ## Ports

@@ -188,6 +188,7 @@ export async function iterationWorkflow(
       reasons: risk.reasons,
       ...(error ? { error } : {}),
       changedFiles: coderResult?.changedFiles ?? [],
+      tokens: coderResult?.tokens ?? 0,
       ...(coderResult?.summary ? { coderSummary: coderResult.summary } : {}),
       ...(applyReason ? { applyReason } : {}),
       ...(commit ? { commit } : {}),

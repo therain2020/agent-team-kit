@@ -40,6 +40,11 @@
   repository at `%USERPROFILE%\.agent-team-kit`; external LKG bundle, audit
   JSONL, kill switch, health checks and guarded rollback. Verified
   `status`/`check`/`snapshot`/`rollback -DryRun` with the live supervisor.
+- Self-optimization data plane: every iteration publishes a `fitness` artifact
+  and appends per-task signals to `%USERPROFILE%\.agent-team-kit\signals`.
+  `kit signals summarize` aggregates pass/apply rates by domain;
+  `kit signals propose` writes manual improvement proposals for low-pass
+  domains. Promotion/canary remains gated.
 - Tests: 75 passing (coder sandbox/diff, coder stage, gateway signatures and
   normalization, router matching, iteration plan/risk, autopilot iterations,
   plus the existing suite).

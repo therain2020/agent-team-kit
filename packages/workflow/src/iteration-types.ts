@@ -125,6 +125,7 @@ export interface IterationTaskResult {
   reasons: string[];
   error?: string;
   changedFiles: string[];
+  tokens?: number;
   coderSummary?: string;
   applyReason?: string;
   commit?: string;
@@ -141,6 +142,7 @@ export interface ReportIterationInput {
 
 export interface IterationReportResult {
   reportArtifactId: string;
+  fitnessArtifactId: string;
   status: "succeeded" | "partial" | "failed";
 }
 

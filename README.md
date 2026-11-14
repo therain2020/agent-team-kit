@@ -138,6 +138,22 @@ feedback → risk classifier → low-risk apply with commit + backup → report.
 - Evidence is stored as artifacts (`plan`, `coder.result`, `coder.transcript`,
   `coder.diff`, `verification`, `risk`, `apply`, `report`).
 
+### Fitness signals and proposals
+
+Each iteration publishes a `fitness` artifact and appends one JSONL line per
+task to `%USERPROFILE%\.agent-team-kit\signals\iterations.jsonl` (override
+`KIT_SIGNALS_ROOT`).
+
+```bash
+bun run kit signals summarize
+bun run kit signals propose --dry-run
+bun run kit signals propose
+```
+
+`propose` writes Markdown proposals to
+`%USERPROFILE%\.agent-team-kit\proposals` for domains below 50% pass over at
+least two tasks. Proposals are manual; canary/promotion remains gated.
+
 ### External events
 
 The gateway accepts signed requests and publishes canonical events to NATS.
