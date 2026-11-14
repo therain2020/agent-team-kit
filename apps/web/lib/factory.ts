@@ -5,7 +5,8 @@ export type FactoryRisk = "low" | "medium" | "high";
 export type FactoryRequestType =
   | "stage_before"
   | "stage_after"
-  | "gate_failure";
+  | "gate_failure"
+  | "budget_exceeded";
 
 export type FactoryStationId =
   | "demand"
