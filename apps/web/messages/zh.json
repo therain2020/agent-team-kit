@@ -25,6 +25,7 @@
     "factory": "工厂",
     "runs": "运行",
     "iterations": "迭代",
+    "activity": "活动",
     "packs": "模具",
     "sources": "信源",
     "autopilot": "自主运行",
@@ -949,5 +950,16 @@
     "goConsole": "进入控制台",
     "alreadyBody": "本机已有 key，提交新 key 会覆盖它。",
     "securityNote": "key 只留在这台机器上；本地服务默认只监听 127.0.0.1。"
+  },
+  "activity": {
+    "title": "团队活动",
+    "description": "按时间顺序展示每个阶段、模型 turn、工具调用与审批。",
+    "empty": "还没有活动。发起一次运行即可看到团队工作。",
+    "follow": "跟随实时",
+    "jump": "回到最新",
+    "allAgents": "全部成员",
+    "allKinds": "全部类型",
+    "events": "{count} 条事件",
+    "missing": "无法连接活动流。"
   }
 }

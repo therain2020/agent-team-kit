@@ -8,6 +8,7 @@
       ".next-bench",
       ".next-prod",
       ".tmp",
+      ".claude",
       ".gstack",
       ".backup",
       "variants"

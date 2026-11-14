@@ -8,6 +8,7 @@
     "./pack-pipeline": "./src/pack-pipeline.ts"
   },
   "dependencies": {
+    "@kit/activity": "workspace:*",
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",
     "@kit/delivery": "workspace:*",

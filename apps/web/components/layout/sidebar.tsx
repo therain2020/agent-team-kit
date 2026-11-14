@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Package,
   Play,
+  ScrollText,
   ShieldCheck,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -28,6 +29,7 @@ const NAV = [
   { href: "/inbox", labelKey: "inbox", icon: Inbox, badge: true },
   { href: "/runs", labelKey: "runs", icon: Play },
   { href: "/iterations", labelKey: "iterations", icon: GitBranch },
+  { href: "/activity", labelKey: "activity", icon: ScrollText },
   { href: "/packs", labelKey: "packs", icon: Package },
   { href: "/sources", labelKey: "sources", icon: Globe2 },
   { href: "/autopilot", labelKey: "autopilot", icon: ShieldCheck },

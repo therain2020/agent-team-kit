@@ -1,6 +1,7 @@
 ﻿import { createHash, createHmac } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { type ActivityInput, appendActivity } from "@kit/activity";
 import { type CoderResult, coderSandboxRoot, runCoderTask } from "@kit/coder";
 import { newId } from "@kit/core";
 import { deliverArtifact } from "@kit/delivery";
@@ -35,6 +36,17 @@ let storePromise: Promise<Store> | undefined;
 function getStore(): Promise<Store> {
   storePromise ??= initStore();
   return storePromise;
+}
+
+// Observability must never break a run.
+async function safeActivity(store: Store, input: ActivityInput): Promise<void> {
+  try {
+    await appendActivity(store, input);
+  } catch (error) {
+    console.error(
+      `[activity] ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 export async function closeEngineStore(): Promise<void> {
@@ -72,6 +84,15 @@ export async function preparePackRun(
       status: "pending",
     });
   }
+
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    kind: "run.started",
+    status: "running",
+    summary: input.workflowId,
+    payload: { workflowVersion: input.workflowVersion, runMode: input.runMode },
+  });
 }
 
 export async function executePackStage(
@@ -125,11 +146,30 @@ async function executePackStageInner(
     await store.stages.updateStatus(input.stageId, "succeeded", {
       finishedAt: new Date().toISOString(),
     });
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stageId: input.stageId,
+      agentId: input.agentId,
+      kind: "stage.reused",
+      status: "succeeded",
+      summary: existing.artifactId,
+    });
     return { artifactId: existing.artifactId, text, reused: true };
   }
 
   await store.stages.updateStatus(input.stageId, "running", {
     startedAt: new Date().toISOString(),
+  });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    agentId: input.agentId,
+    kind: "stage.started",
+    status: "running",
+    summary: input.stageName,
+    payload: { type: input.type },
   });
 
   let draftText = input.inputText;
@@ -200,6 +240,21 @@ async function executePackStageInner(
       text = response.text;
       costAmount = response.usage.costCny ?? 0;
       tokens = response.usage.inputTokens + response.usage.outputTokens;
+      await safeActivity(store, {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        stageId: input.stageId,
+        agentId: input.agentId,
+        kind: "model.turn",
+        status: "completed",
+        summary: response.text.slice(0, 500),
+        payload: {
+          model: modelAlias,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          toolCalls: 0,
+        },
+      });
     }
     modelId = modelAlias;
   } else if (input.type === "coder") {
@@ -244,15 +299,45 @@ async function executePackStageInner(
     retentionClass: "artifact_365d",
   });
 
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    agentId: input.agentId,
+    kind: "artifact.published",
+    status: "completed",
+    summary: published.artifact.artifactId,
+    payload: { modelId, tokens, costCny: costAmount },
+  });
+
   if (coderFailure) {
     await store.stages.updateStatus(input.stageId, "failed", {
       finishedAt: new Date().toISOString(),
+    });
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stageId: input.stageId,
+      agentId: input.agentId,
+      kind: "stage.finished",
+      status: "failed",
+      summary: coderFailure,
     });
     throw new Error(`coder stage failed: ${coderFailure}`);
   }
 
   await store.stages.updateStatus(input.stageId, "succeeded", {
     finishedAt: new Date().toISOString(),
+  });
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    agentId: input.agentId,
+    kind: "stage.finished",
+    status: "succeeded",
+    summary: input.stageName,
+    payload: { artifactId: published.artifact.artifactId, tokens },
   });
 
   return {
@@ -384,6 +469,18 @@ async function runCoderStage(
     .filter(Boolean)
     .join("\n\n");
 
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    agentId: input.agentId,
+    kind: "coder.started",
+    status: "running",
+    summary: `${coder} started`,
+    payload: { stage: input.stageName, goal },
+  });
+
+  let eventChain = Promise.resolve();
   let result: CoderResult;
   try {
     result = await runCoderTask({
@@ -399,6 +496,26 @@ async function runCoderStage(
       timeoutMs: input.timeoutMs ?? 25 * 60 * 1000,
       installDeps: process.env.KIT_CODER_INSTALL !== "0",
       keepSandbox: process.env.KIT_CODER_KEEP === "1",
+      onEvent: (event) => {
+        eventChain = eventChain.then(() =>
+          safeActivity(store, {
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            stageId: input.stageId,
+            agentId: input.agentId,
+            kind: `coder.${event.kind}`,
+            status: event.status,
+            tool: event.tool,
+            summary: event.summary,
+            payload: {
+              turn: event.turn,
+              step: event.step,
+              ...(event.callId ? { callId: event.callId } : {}),
+              ...(event.tokens !== undefined ? { tokens: event.tokens } : {}),
+            },
+          }),
+        );
+      },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -415,6 +532,23 @@ async function runCoderStage(
       sandbox: { mode: "copy", baselineSha: "", setupLog: "" },
     };
   }
+
+  await eventChain;
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    agentId: input.agentId,
+    kind: "coder.finished",
+    status: result.ok ? "completed" : "failed",
+    summary: result.summary,
+    payload: {
+      coder: result.coder,
+      changedFiles: result.changedFiles,
+      tokens: result.tokens ?? 0,
+      ...(result.error ? { error: result.error } : {}),
+    },
+  });
 
   await publishCoderArtifacts(store, input, result);
   const text = renderCoderReport(input, result);
@@ -592,6 +726,22 @@ async function runAgentWithTools(input: {
     if (response.text) {
       lastText = response.text;
     }
+    await safeActivity(input.store, {
+      workspaceId: input.input.workspaceId,
+      runId: input.input.runId,
+      stageId: input.input.stageId,
+      agentId: input.input.agentId,
+      kind: "model.turn",
+      status: "completed",
+      summary: (response.text || `step ${step + 1}`).slice(0, 500),
+      payload: {
+        step: step + 1,
+        model: input.modelAlias,
+        inputTokens: response.usage.inputTokens,
+        outputTokens: response.usage.outputTokens,
+        toolCalls: response.toolCalls.length,
+      },
+    });
     if (response.toolCalls.length === 0) {
       return {
         text: response.text || lastText || "(no output)",
@@ -616,6 +766,17 @@ async function runAgentWithTools(input: {
       const started = Date.now();
       let content = "";
       let isError = false;
+      await safeActivity(input.store, {
+        workspaceId: input.input.workspaceId,
+        runId: input.input.runId,
+        stageId: input.input.stageId,
+        agentId: input.input.agentId,
+        kind: "tool.call",
+        status: "running",
+        tool: call.name,
+        summary: call.name,
+        payload: { index: toolIndex, arguments: call.arguments },
+      });
       try {
         const tool = getTool(call.name);
         if (!tool) {
@@ -636,6 +797,17 @@ async function runAgentWithTools(input: {
         content,
         isError,
         durationMs,
+      });
+      await safeActivity(input.store, {
+        workspaceId: input.input.workspaceId,
+        runId: input.input.runId,
+        stageId: input.input.stageId,
+        agentId: input.input.agentId,
+        kind: "tool.result",
+        status: isError ? "failed" : "completed",
+        tool: call.name,
+        summary: content.slice(0, 500),
+        payload: { index: toolIndex, durationMs, isError },
       });
       messages.push({
         role: "tool",
@@ -769,6 +941,19 @@ async function gateWithRevisions(
     if (gate.artifactId) {
       gateRefs.push({ artifactId: gate.artifactId, version: 1 });
     }
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stageId: input.stageId,
+      agentId: input.agentId,
+      kind: "gate.evaluated",
+      status: gate.pass ? "passed" : "failed",
+      summary: gate.summary,
+      payload: {
+        attempt: attempt + 1,
+        ...(gate.artifactId ? { artifactId: gate.artifactId } : {}),
+      },
+    });
     if (gate.pass) {
       return { text, artifactId, summary: gate.summary };
     }
@@ -809,6 +994,16 @@ async function gateWithRevisions(
       riskClass,
       runCostCny,
     });
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stageId: input.stageId,
+      agentId: input.agentId,
+      kind: "approval.auto_approved",
+      status: "completed",
+      summary,
+      payload: { riskClass, runCostCny, requestType: "gate_failure" },
+    });
     return { text, artifactId, summary };
   }
 
@@ -826,6 +1021,22 @@ async function gateWithRevisions(
     ttlMs: approval?.ttlMs ?? 7 * 24 * 60 * 60 * 1000,
     gateRefs,
     notify: approval?.notify,
+  });
+
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    agentId: input.agentId,
+    kind: "approval.requested",
+    status: "pending",
+    summary,
+    payload: {
+      requestId: request.requestId,
+      expiresAt: request.expiresAt,
+      riskClass,
+      requestType: "gate_failure",
+    },
   });
 
   return {
@@ -863,6 +1074,19 @@ export async function requestApproval(
       draftArtifactId: input.draftArtifactId,
       riskClass: input.approval.riskClass,
       runCostCny,
+    });
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stageId: input.stageId,
+      kind: "approval.auto_approved",
+      status: "completed",
+      summary: input.summary,
+      payload: {
+        riskClass: input.approval.riskClass,
+        runCostCny,
+        requestType: input.requestType,
+      },
     });
     return { required: false, autoApproved: true, runCostCny };
   }
@@ -905,6 +1129,21 @@ export async function requestApproval(
     ttlMs: input.approval.ttlMs,
     notify: input.approval.notify,
     stageSuffix,
+  });
+
+  await safeActivity(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    kind: "approval.requested",
+    status: "pending",
+    summary: input.summary,
+    payload: {
+      requestId: request.requestId,
+      expiresAt: request.expiresAt,
+      riskClass: input.approval.riskClass,
+      requestType: input.requestType,
+    },
   });
 
   return {
