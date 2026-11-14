@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { failureModeSchema } from "./degradation";
 
 export const retryPolicySchema = z.object({
   max: z.number().int().positive(),
@@ -49,6 +50,7 @@ export const workflowStageSchema = z
     position: z.object({ x: z.number(), y: z.number() }).optional(),
     revisionAgent: z.string().min(1).optional(),
     approval: stageApprovalSchema.optional(),
+    failureMode: failureModeSchema.optional(),
   })
   .superRefine((stage, ctx) => {
     if (stage.inputFrom && stage.inputsFrom) {

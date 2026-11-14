@@ -1,3 +1,4 @@
+import { readOnlyBlockMessage } from "@/lib/degradation";
 import { sameOriginError } from "@/lib/http";
 import { jobErrorResponse } from "@/lib/job-api";
 import { getRepoRoot } from "@/lib/paths";
@@ -48,6 +49,10 @@ export async function POST(request: Request) {
 
   try {
     await ensureStoreSchema();
+    const blocked = await readOnlyBlockMessage();
+    if (blocked) {
+      return NextResponse.json({ error: blocked }, { status: 423 });
+    }
     const result = await startJob(
       getStore(),
       {

@@ -317,6 +317,36 @@ CREATE TABLE IF NOT EXISTS activity_events (
   created_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS degradation_state (
+  scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  triggers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  behavior TEXT NOT NULL,
+  quality_floor JSONB NOT NULL DEFAULT '{}'::jsonb,
+  exit_criteria JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL,
+  entered_at TIMESTAMPTZ NOT NULL,
+  entered_by TEXT NOT NULL,
+  exited_at TIMESTAMPTZ,
+  exit_reason TEXT,
+  PRIMARY KEY (scope, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS degradation_audit (
+  audit_id TEXT PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  detail JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
@@ -637,6 +667,36 @@ CREATE TABLE IF NOT EXISTS activity_events (
   payload TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS degradation_state (
+  scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  triggers TEXT NOT NULL DEFAULT '[]',
+  behavior TEXT NOT NULL,
+  quality_floor TEXT NOT NULL DEFAULT '{}',
+  exit_criteria TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL,
+  entered_at TEXT NOT NULL,
+  entered_by TEXT NOT NULL,
+  exited_at TEXT,
+  exit_reason TEXT,
+  PRIMARY KEY (scope, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS degradation_audit (
+  audit_id TEXT PRIMARY KEY,
+  occurred_at TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
 
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 

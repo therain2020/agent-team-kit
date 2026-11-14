@@ -102,6 +102,10 @@ export async function buildPackRun(
       stageSpec.includeInitialInput = true;
     }
 
+    if (stage.failureMode) {
+      stageSpec.failureMode = stage.failureMode;
+    }
+
     if (stage.inputFrom) {
       stageSpec.inputFromStageId = `${runId}:${stage.inputFrom}`;
     }

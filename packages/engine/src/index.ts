@@ -1,3 +1,4 @@
+export * from "./degradation-guard";
 export * from "./heartbeat";
 export * from "./local-runner";
 export * from "./pack-activities";

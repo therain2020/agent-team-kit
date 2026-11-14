@@ -1,4 +1,9 @@
-import type { Producer } from "@kit/core";
+import type {
+  DegradationTrigger,
+  ExitCriteria,
+  Producer,
+  QualityFloor,
+} from "@kit/core";
 import {
   bigint,
   boolean,
@@ -132,6 +137,43 @@ export const runRequests = pgTable("run_requests", {
     withTimezone: true,
     mode: "string",
   }).notNull(),
+});
+
+export const degradationState = pgTable(
+  "degradation_state",
+  {
+    scope: text("scope").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    modeId: text("mode_id").notNull(),
+    kind: text("kind").notNull(),
+    triggers: jsonb("triggers").$type<DegradationTrigger[]>().notNull(),
+    behavior: text("behavior").notNull(),
+    qualityFloor: jsonb("quality_floor").$type<QualityFloor>().notNull(),
+    exitCriteria: jsonb("exit_criteria").$type<ExitCriteria>().notNull(),
+    status: text("status").notNull(),
+    enteredAt: timestamp("entered_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    enteredBy: text("entered_by").notNull(),
+    exitedAt: timestamp("exited_at", { withTimezone: true, mode: "string" }),
+    exitReason: text("exit_reason"),
+  },
+  (table) => [primaryKey({ columns: [table.scope, table.workspaceId] })],
+);
+
+export const degradationAudit = pgTable("degradation_audit", {
+  auditId: text("audit_id").primaryKey(),
+  occurredAt: timestamp("occurred_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+  actor: text("actor").notNull(),
+  action: text("action").notNull(),
+  scope: text("scope").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  modeId: text("mode_id").notNull(),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull(),
 });
 
 export const autopilotState = pgTable(
