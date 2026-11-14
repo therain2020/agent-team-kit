@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "title": "Agent Team Kit · Published runs",
+  "description": "A public archive of runs from a private agent team: artifacts, stages, costs and provenance.",
+  "updatedAt": "2026-11-14T17:18:12.462Z",
+  "runs": [
+    {
+      "runId": "run_01M7D53HFMBPVM8Y8N92M3XMS7",
+      "title": "Report from root package.json",
+      "summary": "3 dependencies — note: this root manifest has no \"dependencies\" field; it declares devDependencies only (lines 20–26). Reporting three verbatim from that block:",
+      "workflowId": "starter",
+      "status": "succeeded",
+      "runMode": "DRY_RUN",
+      "createdAt": "2026-11-14 13:49:14.98+00",
+      "artifactCount": 2,
+      "costCny": 0.0030719999999999996,
+      "path": "runs/run_01M7D53HFMBPVM8Y8N92M3XMS7/index.html"
+    }
+  ]
+}

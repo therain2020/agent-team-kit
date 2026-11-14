@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Report from root package.json · Agent Team Kit</title>
+<meta name="description" content="3 dependencies — note: this root manifest has no &quot;dependencies&quot; field; it declares devDependencies only (lines 20–26). Reporting three verbatim from that block:" />
+<meta name="generator" content="Agent Team Kit" />
+<meta name="theme-color" content="#09090b" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Agent Team Kit · Published runs" />
+<meta property="og:title" content="Report from root package.json" />
+<meta property="og:description" content="3 dependencies — note: this root manifest has no &quot;dependencies&quot; field; it declares devDependencies only (lines 20–26). Reporting three verbatim from that block:" />
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content="Report from root package.json" />
+<meta name="twitter:description" content="3 dependencies — note: this root manifest has no &quot;dependencies&quot; field; it declares devDependencies only (lines 20–26). Reporting three verbatim from that block:" />
+<link rel="canonical" href="https://therain2020.github.io/agent-team-kit/runs/run_01M7D53HFMBPVM8Y8N92M3XMS7/art_01M7D53P6PMSE9GGT0650ZVBBV.html" />
+<meta property="og:url" content="https://therain2020.github.io/agent-team-kit/runs/run_01M7D53HFMBPVM8Y8N92M3XMS7/art_01M7D53P6PMSE9GGT0650ZVBBV.html" />
+<link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="../../assets/site.css" />
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>Agent Team Kit</span></div>
+    <p class="brand-sub">Published runs</p>
+    <nav class="nav" aria-label="Site navigation">
+      <span class="nav-label">Archive</span>
+      <a href="../../index.html">All runs</a><a href="./index.html">Current run</a><a href="./art_01M7D53HGDGDDYSA7CT4GNJPQA.html">Mission Assignment</a><a href="./art_01M7D53P6PMSE9GGT0650ZVBBV.html" class="active" aria-current="page">Report from root package.json</a>
+    </nav>
+    <div class="sidebar-foot">Static glass box<br/>No server · no telemetry</div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <div class="crumbs"><a href="../../index.html">All runs</a><span class="sep">/</span><a href="./index.html">Report from root package.json</a><span class="sep">/</span><span class="current">Report from root package.json</span></div>
+      <div class="status"><span class="status-pill success">Succeeded</span></div>
+    </header>
+    <main class="content" id="main">
+      <div class="page-header">
+  <p class="eyebrow">Artifact · inspect</p>
+  <h1 class="page-title">Report from root package.json</h1>
+  <p class="page-summary">3 dependencies — note: this root manifest has no &quot;dependencies&quot; field; it declares devDependencies only (lines 20–26). Reporting three verbatim from that block:</p>
+  <div class="badges">
+    <span class="badge outline">Report</span>
+    <span class="badge outline">DRY_RUN</span>
+    <span class="badge outline mono">inspect</span>
+    <span class="badge outline">14 Nov 2026, 13:49 UTC</span>
+  </div>
+</div>
+
+<div class="artifact-layout">
+  <div>
+    <article class="prose"><table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Project name</strong></td>
+<td><code>agent-team-kit</code> (line 2)</td>
+</tr>
+<tr>
+<td><strong>Version</strong></td>
+<td><code>1.0.0</code> (line 3)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>3 dependencies</strong> — note: this root manifest has <strong>no <code>&quot;dependencies&quot;</code> field</strong>; it declares <code>devDependencies</code> only (lines 20–26). Reporting three verbatim from that block:</p>
+<ol>
+<li><code>&quot;@biomejs/biome&quot;: &quot;^1.9.4&quot;</code> (line 21)</li>
+<li><code>&quot;@types/node&quot;: &quot;^22.10.0&quot;</code> (line 22)</li>
+<li><code>&quot;vitest&quot;: &quot;^2.1.8&quot;</code> (line 25)</li>
+</ol>
+<p>(The block also lists <code>tsx</code> <code>^4.19.2</code> and <code>typescript</code> <code>^5.7.2</code>; I stopped at three as requested rather than inventing a runtime dependency set.)</p>
+<p>Other context read: <code>&quot;private&quot;: true</code>, <code>&quot;type&quot;: &quot;module&quot;</code>, workspaces <code>apps/*</code> and <code>packages/*</code>, and <code>trustedDependencies</code> (<code>@biomejs/biome</code>, <code>@swc/core</code>, <code>esbuild</code>, <code>protobufjs</code>).</p>
+<hr>
+<p><strong>Findings:</strong> Project is <code>agent-team-kit</code> v1.0.0, a private ESM monorepo (Bun scripts, Biome/Vitest/tsc toolchain). Root manifest lists devDependencies only — a runtime dependency set, if any, would live in the <code>apps/*</code> / <code>packages/*</code> workspace manifests, which were not read here.</p>
+<p><strong>Files changed:</strong> None. This was a read-only inspection; no <code>workspace.write</code> or <code>workspace.diff</code> was used, and the real repository is unmodified.</p>
+<p><strong>Tests/commands run:</strong> None — <code>repo_read</code> on <code>package.json</code> only. No <code>bun test</code>, <code>typecheck</code>, or <code>lint</code> was executed.</p>
+<p><strong>Risks:</strong> Low. Main caveat is interpretive: labeling lines 21–25 as &quot;dependencies&quot; would be slightly inaccurate, since the key is <code>devDependencies</code>. Any reliance on a root runtime dependency list would be unfounded. No data was invented — all values above are quoted from the read output.</p>
+<p><strong>Next action:</strong> If you need true runtime dependencies, read <code>apps/*/package.json</code> and <code>packages/*/package.json</code> to enumerate per-workspace <code>dependencies</code> fields.</p>
+</article>
+    <details class="raw"><summary>Raw Markdown</summary><pre>## Report from root `package.json`
+
+| Field | Value |
+|---|---|
+| **Project name** | `agent-team-kit` (line 2) |
+| **Version** | `1.0.0` (line 3) |
+
+**3 dependencies** — note: this root manifest has **no `&quot;dependencies&quot;` field**; it declares `devDependencies` only (lines 20–26). Reporting three verbatim from that block:
+
+1. `&quot;@biomejs/biome&quot;: &quot;^1.9.4&quot;` (line 21)
+2. `&quot;@types/node&quot;: &quot;^22.10.0&quot;` (line 22)
+3. `&quot;vitest&quot;: &quot;^2.1.8&quot;` (line 25)
+
+(The block also lists `tsx` `^4.19.2` and `typescript` `^5.7.2`; I stopped at three as requested rather than inventing a runtime dependency set.)
+
+Other context read: `&quot;private&quot;: true`, `&quot;type&quot;: &quot;module&quot;`, workspaces `apps/*` and `packages/*`, and `trustedDependencies` (`@biomejs/biome`, `@swc/core`, `esbuild`, `protobufjs`).
+
+---
+
+**Findings:** Project is `agent-team-kit` v1.0.0, a private ESM monorepo (Bun scripts, Biome/Vitest/tsc toolchain). Root manifest lists devDependencies only — a runtime dependency set, if any, would live in the `apps/*` / `packages/*` workspace manifests, which were not read here.
+
+**Files changed:** None. This was a read-only inspection; no `workspace.write` or `workspace.diff` was used, and the real repository is unmodified.
+
+**Tests/commands run:** None — `repo_read` on `package.json` only. No `bun test`, `typecheck`, or `lint` was executed.
+
+**Risks:** Low. Main caveat is interpretive: labeling lines 21–25 as &quot;dependencies&quot; would be slightly inaccurate, since the key is `devDependencies`. Any reliance on a root runtime dependency list would be unfounded. No data was invented — all values above are quoted from the read output.
+
+**Next action:** If you need true runtime dependencies, read `apps/*/package.json` and `packages/*/package.json` to enumerate per-workspace `dependencies` fields.</pre></details>
+  </div>
+  <aside class="provenance" aria-label="Provenance">
+    <h2>Provenance</h2>
+    <div class="prov-row"><span class="prov-key">Agent</span><span class="prov-value">worker</span></div>
+    <div class="prov-row"><span class="prov-key">Model</span><span class="prov-value">deepseek-flash</span></div>
+    <div class="prov-row"><span class="prov-key">Stage</span><span class="prov-value">inspect</span></div>
+    <div class="prov-row"><span class="prov-key">Kind</span><span class="prov-value">Report</span></div>
+    <div class="prov-row"><span class="prov-key">Created</span><span class="prov-value">14 Nov 2026, 13:49 UTC</span></div>
+    <div class="prov-row"><span class="prov-key">Cost</span><span class="prov-value">¥0.0031</span></div>
+    <div class="prov-row"><span class="prov-key">Tokens</span><span class="prov-value">2,425</span></div>
+    <div class="prov-row"><span class="prov-key">Artifact</span><span class="prov-value">art_01M7D53P6PMSE9GGT0650ZVBBV</span></div>
+    <div class="prov-row"><span class="prov-key">Version</span><span class="prov-value">v1</span></div>
+    <div class="prov-row"><span class="prov-key">Run mode</span><span class="prov-value">DRY_RUN</span></div>
+  </aside>
+</div>
+    </main>
+    <footer class="footer">
+      <span>Generated by Agent Team Kit · artifacts published as-is · tool and approval internals excluded</span>
+      <a href="https://github.com/therain2020/agent-team-kit" target="_blank" rel="noreferrer noopener">Source repository</a>
+    </footer>
+  </div>
+</div>
+</body>
+</html>
