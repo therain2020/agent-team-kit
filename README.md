@@ -222,9 +222,9 @@ bun run kit pack simulate packs/tech-radar
 bun run kit model check --alias deepseek-flash
 ```
 
-Templates: `minimal`, `research`, and `content`. The browser wizard at
-`/packs/new` produces the same files; `/packs/<dir>/studio` edits them with
-full-pack validation on every save.
+Templates: `minimal`, `research`, `content`, and `product`. The browser
+wizard at `/packs/new` produces the same files; `/packs/<dir>/studio` edits
+them with full-pack validation on every save.
 
 - `validate` checks schema, agent/skill frontmatter, workflow/policy structure,
   references, kit compatibility, and obvious secrets.
