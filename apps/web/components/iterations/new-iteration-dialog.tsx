@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Play, RefreshCw, Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -49,11 +50,14 @@ const DOMAINS = ["cyber", "ux", "perf", "docs"];
 
 export function NewIterationDialog({
   defaultOpen = false,
-  triggerLabel = "New iteration",
+  triggerLabel,
+  onOpenChange,
 }: {
   defaultOpen?: boolean;
   triggerLabel?: string;
+  onOpenChange?: (open: boolean) => void;
 }) {
+  const t = useTranslations("newIteration");
   const router = useRouter();
   const [open, setOpen] = useState(defaultOpen);
   const [step, setStep] = useState<"goal" | "review">("goal");
@@ -72,6 +76,12 @@ export function NewIterationDialog({
   const [live, setLive] = useState(false);
   const [pending, setPending] = useState<"draft" | "start" | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (defaultOpen) {
+      setOpen(true);
+    }
+  }, [defaultOpen]);
 
   const loadProjects = useCallback(async () => {
     setProjectsError(null);
@@ -93,9 +103,7 @@ export function NewIterationDialog({
           : (payload.projects?.[0]?.id ?? "self"),
       );
     } catch (cause) {
-      setProjectsError(
-        cause instanceof Error ? cause.message : "failed to list projects",
-      );
+      setProjectsError(cause instanceof Error ? cause.message : "");
     }
   }, []);
 
@@ -108,7 +116,7 @@ export function NewIterationDialog({
   const generate = async () => {
     setError(null);
     if (!goal.trim()) {
-      setError("先描述你想完成的目标。");
+      setError(t("goalRequired"));
       return;
     }
     setPending("draft");
@@ -132,10 +140,25 @@ export function NewIterationDialog({
       setLive(false);
       setStep("review");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "生成方案失败");
+      setError(cause instanceof Error ? cause.message : t("draftFailed"));
     } finally {
       setPending(null);
     }
+  };
+
+  const reset = () => {
+    setStep("goal");
+    setDraft(null);
+    setError(null);
+    setLive(false);
+  };
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      reset();
+    }
+    onOpenChange?.(next);
   };
 
   const start = async () => {
@@ -168,50 +191,32 @@ export function NewIterationDialog({
         throw new Error(payload.error ?? `HTTP ${response.status}`);
       }
       toast.success(
-        `Iteration ${payload.jobId} started on ${draft.project.name}`,
+        t("started", { jobId: payload.jobId, project: draft.project.name }),
       );
-      setOpen(false);
-      reset();
+      handleOpenChange(false);
       router.push(`/iterations/${encodeURIComponent(payload.jobId)}`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "启动失败");
+      setError(cause instanceof Error ? cause.message : t("startFailed"));
     } finally {
       setPending(null);
     }
   };
 
-  const reset = () => {
-    setStep("goal");
-    setDraft(null);
-    setError(null);
-    setLive(false);
-  };
-
   const selectedProject = projects.find((project) => project.id === projectId);
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) {
-          reset();
-        }
-      }}
-    >
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button size="sm">
           <Play className="size-3.5" />
-          {triggerLabel}
+          {triggerLabel ?? t("trigger")}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>New iteration</DialogTitle>
+          <DialogTitle>{t("title")}</DialogTitle>
           <DialogDescription>
-            {step === "goal"
-              ? "选择要操作的项目，用一句话说明目标；AI 会生成执行方案供你确认。"
-              : "检查 AI 生成的方案，按需修改后批准执行。只有点击批准才会启动。"}
+            {step === "goal" ? t("goalDescription") : t("reviewDescription")}
           </DialogDescription>
         </DialogHeader>
 
@@ -222,7 +227,7 @@ export function NewIterationDialog({
                 htmlFor="iteration-project"
                 className="text-xs font-medium text-zinc-300"
               >
-                操作项目
+                {t("project")}
               </label>
               <select
                 id="iteration-project"
@@ -233,7 +238,7 @@ export function NewIterationDialog({
                 {projects.map((project) => (
                   <option key={project.id} value={project.id}>
                     {project.name}
-                    {project.source === "kit" ? " (Kit repository)" : ""}
+                    {project.source === "kit" ? ` ${t("kitRepository")}` : ""}
                   </option>
                 ))}
               </select>
@@ -241,13 +246,15 @@ export function NewIterationDialog({
                 <p className="font-mono text-[10px] text-zinc-500">
                   {selectedProject.path}
                   {selectedProject.checks.length > 0
-                    ? ` · checks: ${selectedProject.checks.join(", ")}`
-                    : " · no verification scripts"}
+                    ? ` · ${t("checks", { checks: selectedProject.checks.join(", ") })}`
+                    : ` · ${t("noChecks")}`}
                 </p>
               ) : null}
-              {projectsError ? (
+              {projectsError !== null ? (
                 <p className="text-[11px] text-red-300">
-                  无法加载项目列表：{projectsError}
+                  {t("projectLoadFailed", {
+                    error: projectsError || t("draftFailed"),
+                  })}
                 </p>
               ) : null}
             </div>
@@ -257,13 +264,13 @@ export function NewIterationDialog({
                 htmlFor="iteration-goal"
                 className="text-xs font-medium text-zinc-300"
               >
-                目标
+                {t("goal")}
               </label>
               <Textarea
                 id="iteration-goal"
                 value={goal}
                 onChange={(event) => setGoal(event.target.value)}
-                placeholder="例如：尝试找到系统的安全漏洞并修复它"
+                placeholder={t("goalPlaceholder")}
                 className="min-h-24 text-sm"
               />
             </div>
@@ -280,8 +287,8 @@ export function NewIterationDialog({
                 </span>
                 <Badge variant={draft.model === "live" ? "success" : "outline"}>
                   {draft.model === "live"
-                    ? "AI proposal"
-                    : "heuristic proposal"}
+                    ? t("aiProposal")
+                    : t("heuristicProposal")}
                 </Badge>
               </div>
               <p className="mt-2 text-sm text-zinc-200">{goal}</p>
@@ -304,7 +311,7 @@ export function NewIterationDialog({
                   htmlFor="review-domain"
                   className="text-xs font-medium text-zinc-300"
                 >
-                  领域
+                  {t("domain")}
                 </label>
                 <select
                   id="review-domain"
@@ -327,7 +334,7 @@ export function NewIterationDialog({
                   htmlFor="review-tasks"
                   className="text-xs font-medium text-zinc-300"
                 >
-                  任务数
+                  {t("taskCount")}
                 </label>
                 <Input
                   id="review-tasks"
@@ -344,7 +351,7 @@ export function NewIterationDialog({
                   htmlFor="review-apply"
                   className="text-xs font-medium text-zinc-300"
                 >
-                  自动落地
+                  {t("applyMode")}
                 </label>
                 <select
                   id="review-apply"
@@ -369,7 +376,7 @@ export function NewIterationDialog({
                 htmlFor="review-acceptance"
                 className="text-xs font-medium text-zinc-300"
               >
-                完成标准
+                {t("acceptance")}
               </label>
               <Textarea
                 id="review-acceptance"
@@ -389,12 +396,10 @@ export function NewIterationDialog({
               />
               <span>
                 <span className="block text-xs font-medium text-zinc-300">
-                  LIVE 执行
+                  {t("live")}
                 </span>
                 <span className="block text-[10px] text-zinc-500">
-                  {liveAllowed
-                    ? "允许按自动落地策略提交改动；高风险仍会进入待审批。"
-                    : "服务端未开启 LIVE（需要 KIT_UI_ALLOW_LIVE=1）。"}
+                  {liveAllowed ? t("liveAllowed") : t("liveBlocked")}
                 </span>
               </span>
             </label>
@@ -409,10 +414,10 @@ export function NewIterationDialog({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setOpen(false)}
+                onClick={() => handleOpenChange(false)}
                 disabled={pending !== null}
               >
-                Cancel
+                {t("cancel")}
               </Button>
               <Button
                 size="sm"
@@ -420,7 +425,7 @@ export function NewIterationDialog({
                 disabled={pending !== null || projects.length === 0}
               >
                 <Sparkles className="size-3.5" />
-                {pending === "draft" ? "Generating…" : "Generate proposal"}
+                {pending === "draft" ? t("generating") : t("generate")}
               </Button>
             </>
           ) : (
@@ -435,7 +440,7 @@ export function NewIterationDialog({
                 disabled={pending !== null}
               >
                 <ArrowLeft className="size-3.5" />
-                Back
+                {t("back")}
               </Button>
               <Button
                 size="sm"
@@ -444,7 +449,7 @@ export function NewIterationDialog({
                 disabled={pending !== null}
               >
                 <RefreshCw className="size-3.5" />
-                Regenerate
+                {t("regenerate")}
               </Button>
               <Button
                 size="sm"
@@ -452,7 +457,7 @@ export function NewIterationDialog({
                 disabled={pending !== null}
               >
                 <Play className="size-3.5" />
-                {pending === "start" ? "Starting…" : "Approve & start"}
+                {pending === "start" ? t("starting") : t("approveStart")}
               </Button>
             </>
           )}

@@ -5,13 +5,14 @@ import { PageHeader } from "@/components/kit/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useRiskLabel, useStatusLabel } from "@/lib/iteration-labels";
 import type {
   IterationDetail,
   IterationEventView,
   IterationTaskView,
   IterationTurnView,
 } from "@/lib/iteration-types";
-import { cn } from "@/lib/utils";
+import { cn, formatDuration, timeAgo } from "@/lib/utils";
 import {
   ArrowLeft,
   ChevronDown,
@@ -21,11 +22,14 @@ import {
   Square,
   Wrench,
 } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 type EventFilter = "all" | "tools" | "text" | "errors";
+
+const EVENT_FILTERS = ["all", "tools", "text", "errors"] as const;
 
 export function IterationDetailView({
   iterationId,
@@ -34,6 +38,9 @@ export function IterationDetailView({
   iterationId: string;
   initialTask: string | null;
 }) {
+  const t = useTranslations("iterationDetail");
+  const statusLabel = useStatusLabel();
+  const locale = useLocale();
   const [detail, setDetail] = useState<IterationDetail | null>(null);
   const [events, setEvents] = useState<IterationEventView[]>([]);
   const [turns, setTurns] = useState<IterationTurnView[]>([]);
@@ -60,9 +67,7 @@ export function IterationDetailView({
         );
         if (!response.ok) {
           throw new Error(
-            response.status === 404
-              ? "iteration not found"
-              : `HTTP ${response.status}`,
+            response.status === 404 ? t("notFound") : `HTTP ${response.status}`,
           );
         }
         const data = (await response.json()) as IterationDetail;
@@ -85,7 +90,7 @@ export function IterationDetailView({
     return () => {
       stopped = true;
     };
-  }, [iterationId]);
+  }, [iterationId, t]);
 
   const abort = async () => {
     try {
@@ -97,12 +102,10 @@ export function IterationDetailView({
       if (!response.ok) {
         throw new Error(payload.error ?? `HTTP ${response.status}`);
       }
-      toast.success("Abort requested");
+      toast.success(t("abortRequested"));
       reloadRef.current();
     } catch (cause) {
-      toast.error(
-        cause instanceof Error ? cause.message : "failed to abort iteration",
-      );
+      toast.error(cause instanceof Error ? cause.message : t("abortFailed"));
     }
   };
 
@@ -259,14 +262,18 @@ export function IterationDetailView({
           title={run.goal}
           description={
             <span className="flex flex-wrap items-center gap-2">
-              <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
+              <Badge variant={statusVariant(run.status)}>
+                {statusLabel(run.status)}
+              </Badge>
               <Badge variant="outline">{run.phase}</Badge>
-              {run.stalled ? <Badge variant="warning">stalled</Badge> : null}
+              {run.stalled ? (
+                <Badge variant="warning">{statusLabel("stalled")}</Badge>
+              ) : null}
               <span className="font-mono text-[10px] text-zinc-500">
                 {run.iterationId}
               </span>
               <span className="text-[10px] text-zinc-500">
-                {run.runMode} / apply {run.applyMode}
+                {t("runMeta", { mode: run.runMode, applyMode: run.applyMode })}
               </span>
             </span>
           }
@@ -274,7 +281,7 @@ export function IterationDetailView({
             <div className="flex items-center gap-2">
               <Badge variant={connection === "live" ? "success" : "warning"}>
                 <Radio className="size-2.5" />
-                {connection === "live" ? "live" : "reconnecting"}
+                {connection === "live" ? t("live") : t("reconnecting")}
               </Badge>
               {["running", "paused", "queued"].includes(run.status) ? (
                 <Button
@@ -283,28 +290,35 @@ export function IterationDetailView({
                   onClick={() => void abort()}
                 >
                   <Square className="size-3.5" />
-                  Abort
+                  {t("abort")}
                 </Button>
               ) : null}
               <Button size="sm" variant="outline" asChild>
                 <Link href="/iterations">
                   <ArrowLeft className="size-3.5" />
-                  All iterations
+                  {t("allIterations")}
                 </Link>
               </Button>
             </div>
           }
         />
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
-          <span>{run.tokens.toLocaleString()} tokens</span>
-          <span>{run.turnCount} turns</span>
-          <span>{run.toolCalls} tools</span>
+          <span>{t("tokens", { tokens: run.tokens.toLocaleString() })}</span>
+          <span>{t("turns", { turns: run.turnCount })}</span>
+          <span>{t("tools", { tools: run.toolCalls })}</span>
           <span>
-            elapsed {elapsed(run.startedAt, run.finishedAt ?? run.updatedAt)}
+            {t("elapsed", {
+              time: formatDuration(
+                run.startedAt,
+                run.finishedAt ?? run.updatedAt,
+                locale,
+              ),
+            })}
           </span>
           <span>
-            heartbeat{" "}
-            {run.lastHeartbeatAt ? timeAgo(run.lastHeartbeatAt) : "none"}
+            {run.lastHeartbeatAt
+              ? t("heartbeat", { time: timeAgo(run.lastHeartbeatAt, locale) })
+              : t("heartbeatNone")}
           </span>
           {run.error ? <span className="text-red-400">{run.error}</span> : null}
           <RunArtifactLinks run={run} />
@@ -320,7 +334,7 @@ export function IterationDetailView({
           onChange={(value) => setTaskFilter(value)}
         />
         <div className="flex items-center gap-1">
-          {(["all", "tools", "text", "errors"] as const).map((filter) => (
+          {EVENT_FILTERS.map((filter) => (
             <button
               key={filter}
               type="button"
@@ -330,7 +344,7 @@ export function IterationDetailView({
                 eventFilter === filter && "bg-accent text-zinc-100",
               )}
             >
-              {filter}
+              {t(`filter${filter.charAt(0).toUpperCase()}${filter.slice(1)}`)}
             </button>
           ))}
         </div>
@@ -340,7 +354,7 @@ export function IterationDetailView({
             variant={follow ? "outline" : "default"}
             onClick={() => setFollow((value) => !value)}
           >
-            {follow ? "Following live" : "Jump to latest"}
+            {follow ? t("followingLive") : t("jumpToLatest")}
           </Button>
         </div>
       </div>
@@ -353,7 +367,7 @@ export function IterationDetailView({
             disabled={loadingOlder}
             onClick={() => void loadOlder()}
           >
-            {loadingOlder ? "Loading..." : "Load older events"}
+            {loadingOlder ? t("loading") : t("loadOlder")}
           </Button>
         </div>
       ) : null}
@@ -362,7 +376,7 @@ export function IterationDetailView({
         <Card>
           <CardHeader>
             <CardTitle className="text-xs uppercase tracking-wider text-zinc-500">
-              Run events
+              {t("runEvents")}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-1.5">
@@ -386,7 +400,7 @@ export function IterationDetailView({
 
       {tasks.length === 0 ? (
         <div className="rounded-lg border border-border bg-card px-4 py-6 text-center text-xs text-muted-foreground">
-          No matching task.
+          {t("noMatchingTask")}
         </div>
       ) : null}
       <div ref={bottomRef} />
@@ -395,13 +409,14 @@ export function IterationDetailView({
 }
 
 function BackLink() {
+  const t = useTranslations("iterationDetail");
   return (
     <Link
       href="/iterations"
       className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-200"
     >
       <ArrowLeft className="size-3" />
-      Iterations
+      {t("backToList")}
     </Link>
   );
 }
@@ -415,6 +430,7 @@ function TaskFilter({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const t = useTranslations("iterationDetail");
   return (
     <div className="flex flex-wrap items-center gap-1">
       <button
@@ -425,7 +441,7 @@ function TaskFilter({
           value === "all" && "bg-accent text-zinc-100",
         )}
       >
-        all tasks
+        {t("taskFilterAll")}
       </button>
       {tasks.map((task) => (
         <button
@@ -457,6 +473,9 @@ function TaskSection({
   eventFilter: EventFilter;
   runId: string;
 }) {
+  const t = useTranslations("iterationDetail");
+  const statusLabel = useStatusLabel();
+  const riskLabel = useRiskLabel();
   return (
     <Card>
       <CardHeader className="space-y-2">
@@ -464,18 +483,25 @@ function TaskSection({
           <CardTitle className="font-mono text-sm text-zinc-200">
             {task.taskId}
           </CardTitle>
-          <Badge variant={statusVariant(task.status)}>{task.status}</Badge>
+          <Badge variant={statusVariant(task.status)}>
+            {statusLabel(task.status)}
+          </Badge>
           <Badge variant="outline">{task.phase}</Badge>
           <Badge variant="violet">{task.domain}</Badge>
           {task.risk ? (
             <Badge variant={task.risk === "high" ? "danger" : "outline"}>
-              risk {task.risk}
+              {t("risk", { level: riskLabel(task.risk) })}
             </Badge>
           ) : null}
-          {task.stalled ? <Badge variant="warning">stalled</Badge> : null}
+          {task.stalled ? (
+            <Badge variant="warning">{statusLabel("stalled")}</Badge>
+          ) : null}
           <span className="ml-auto text-[10px] text-zinc-500">
-            {task.tokens.toLocaleString()} tokens · {task.toolCalls} tools ·{" "}
-            {turns.length} turns
+            {t("taskMeta", {
+              tokens: task.tokens.toLocaleString(),
+              tools: task.toolCalls,
+              turns: turns.length,
+            })}
           </span>
         </div>
         <p className="text-xs text-zinc-400">{task.goal}</p>
@@ -483,7 +509,7 @@ function TaskSection({
           <TaskArtifactLinks runId={runId} task={task} />
           {task.commit ? (
             <span className="font-mono text-zinc-500">
-              commit {task.commit.slice(0, 10)}
+              {t("commit", { sha: task.commit.slice(0, 10) })}
             </span>
           ) : null}
         </div>
@@ -508,7 +534,7 @@ function TaskSection({
           return phaseEvents.length > 0 ? (
             <div className="space-y-1.5 rounded-md border border-border/60 bg-background/30 px-3 py-2">
               <p className="text-[9px] uppercase tracking-wider text-zinc-600">
-                Task events
+                {t("taskEvents")}
               </p>
               {phaseEvents.map((event) => (
                 <EventRow key={event.eventId} event={event} toolName={null} />
@@ -518,7 +544,7 @@ function TaskSection({
         })()}
         {turns.length === 0 ? (
           <p className="py-3 text-center text-[11px] text-muted-foreground">
-            Waiting for the coder's first turn...
+            {t("waitingFirstTurn")}
           </p>
         ) : (
           turns.map((turn, index) => (
@@ -549,6 +575,9 @@ function TurnCard({
   eventFilter: EventFilter;
   defaultOpen: boolean;
 }) {
+  const t = useTranslations("iterationDetail");
+  const statusLabel = useStatusLabel();
+  const locale = useLocale();
   const visible = events.filter((event) => matchesFilter(event, eventFilter));
   const toolNames = new Map<string, string | null>(
     events
@@ -566,13 +595,22 @@ function TurnCard({
       <summary className="flex cursor-pointer flex-wrap items-center gap-2 px-3 py-2">
         <ChevronDown className="size-3.5 text-zinc-500 transition-transform group-open:rotate-180" />
         <span className="font-mono text-xs text-zinc-200">
-          turn {turn.turn}
+          {t("turn", { turn: turn.turn })}
         </span>
-        <Badge variant={statusVariant(turn.status)}>{turn.status}</Badge>
+        <Badge variant={statusVariant(turn.status)}>
+          {statusLabel(turn.status)}
+        </Badge>
         <span className="text-[10px] text-zinc-500">
-          {turn.steps} steps · {turn.toolCalls} tools ·{" "}
-          {turn.tokens.toLocaleString()} tokens ·{" "}
-          {elapsed(turn.startedAt, turn.finishedAt ?? new Date().toISOString())}
+          {t("turnMeta", {
+            steps: turn.steps,
+            toolCalls: turn.toolCalls,
+            tokens: turn.tokens.toLocaleString(),
+            time: formatDuration(
+              turn.startedAt,
+              turn.finishedAt ?? new Date().toISOString(),
+              locale,
+            ),
+          })}
         </span>
         {turn.summary ? (
           <span className="ml-2 min-w-0 flex-1 truncate text-[11px] text-zinc-500">
@@ -586,7 +624,7 @@ function TurnCard({
         ) : null}
         {visible.length === 0 ? (
           <p className="py-2 text-center text-[11px] text-muted-foreground">
-            No events for this filter.
+            {t("noEventsForFilter")}
           </p>
         ) : (
           visible.map((event) => (
@@ -611,18 +649,21 @@ function EventRow({
   event: IterationEventView;
   toolName: string | null | undefined;
 }) {
+  const t = useTranslations("iterationDetail");
+  const statusLabel = useStatusLabel();
+  const locale = useLocale();
   if (event.kind === "coder.tool_call") {
     return (
       <div className="rounded border border-sky-500/20 bg-sky-500/5 px-2 py-1.5">
         <div className="flex items-center gap-2 text-[11px]">
           <Wrench className="size-3 text-sky-400" />
-          <Badge variant="info">{event.tool ?? "tool"}</Badge>
+          <Badge variant="info">{event.tool ?? t("toolFallback")}</Badge>
           <span className="text-zinc-300">{event.summary}</span>
           <span className="ml-auto text-[9px] text-zinc-600">
-            {timeOnly(event.createdAt)}
+            {timeOnly(event.createdAt, locale)}
           </span>
         </div>
-        <PayloadDetails label="input" value={event.payload.input} />
+        <PayloadDetails label={t("input")} value={event.payload.input} />
       </div>
     );
   }
@@ -645,19 +686,21 @@ function EventRow({
             )}
           />
           <Badge variant={failed ? "danger" : "success"}>
-            {event.status ?? "completed"}
+            {statusLabel(event.status ?? "completed")}
           </Badge>
           <span className="text-zinc-400">
-            {toolName ?? event.tool ?? "tool"} result
+            {t("toolResult", {
+              tool: toolName ?? event.tool ?? t("toolFallback"),
+            })}
           </span>
           <span className="ml-auto text-[9px] text-zinc-600">
-            {timeOnly(event.createdAt)}
+            {timeOnly(event.createdAt, locale)}
           </span>
         </div>
         <p className="mt-1 line-clamp-3 whitespace-pre-wrap font-mono text-[10px] text-zinc-500">
           {event.summary}
         </p>
-        <PayloadDetails label="result" value={event.payload.result} />
+        <PayloadDetails label={t("result")} value={event.payload.result} />
       </div>
     );
   }
@@ -688,9 +731,9 @@ function EventRow({
     return (
       <div className="flex items-center gap-2 px-1 text-[10px] text-zinc-600">
         <span className="font-mono">{event.kind.replace("coder.", "")}</span>
-        {event.step ? <span>step {event.step}</span> : null}
-        {event.status ? <span>{event.status}</span> : null}
-        <span className="ml-auto">{timeOnly(event.createdAt)}</span>
+        {event.step ? <span>{t("step", { step: event.step })}</span> : null}
+        {event.status ? <span>{statusLabel(event.status)}</span> : null}
+        <span className="ml-auto">{timeOnly(event.createdAt, locale)}</span>
       </div>
     );
   }
@@ -706,7 +749,7 @@ function EventRow({
       </Badge>
       <span className="min-w-0 flex-1">{event.summary}</span>
       <span className="text-[9px] text-zinc-600">
-        {timeOnly(event.createdAt)}
+        {timeOnly(event.createdAt, locale)}
       </span>
     </div>
   );
@@ -740,17 +783,18 @@ function PayloadDetails({
 }
 
 function RunArtifactLinks({ run }: { run: IterationDetail["run"] }) {
+  const t = useTranslations("iterationDetail");
   return (
     <span className="flex items-center gap-3">
       <ArtifactLink
         iterationId={run.iterationId}
         artifactId={run.planArtifactId}
-        label="plan"
+        label={t("artifactPlan")}
       />
       <ArtifactLink
         iterationId={run.iterationId}
         artifactId={run.reportArtifactId}
-        label="report"
+        label={t("artifactReport")}
       />
     </span>
   );
@@ -763,27 +807,28 @@ function TaskArtifactLinks({
   runId: string;
   task: IterationTaskView;
 }) {
+  const t = useTranslations("iterationDetail");
   return (
     <>
       <ArtifactLink
         iterationId={runId}
         artifactId={task.diffArtifactId}
-        label="diff"
+        label={t("artifactDiff")}
       />
       <ArtifactLink
         iterationId={runId}
         artifactId={task.transcriptArtifactId}
-        label="transcript"
+        label={t("artifactTranscript")}
       />
       <ArtifactLink
         iterationId={runId}
         artifactId={task.verificationArtifactId}
-        label="verification"
+        label={t("artifactVerification")}
       />
       <ArtifactLink
         iterationId={runId}
         artifactId={task.applyArtifactId}
-        label="apply"
+        label={t("artifactApply")}
       />
     </>
   );
@@ -945,45 +990,11 @@ function statusVariant(status: string) {
   return "warning" as const;
 }
 
-function elapsed(start: string, end: string | null): string {
-  const startMs = new Date(start).getTime();
-  const endMs = end ? new Date(end).getTime() : Date.now();
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
-    return "unknown";
-  }
-  const seconds = Math.max(0, Math.round((endMs - startMs) / 1000));
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  if (minutes < 60) {
-    return `${minutes}m ${rest}s`;
-  }
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
-function timeAgo(value: string): string {
-  const ms = Date.now() - new Date(value).getTime();
-  if (!Number.isFinite(ms) || ms < 0) {
-    return "just now";
-  }
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) {
-    return `${seconds}s ago`;
-  }
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) {
-    return `${minutes}m ago`;
-  }
-  return `${Math.round(minutes / 60)}h ago`;
-}
-
-function timeOnly(value: string): string {
+function timeOnly(value: string, locale: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleTimeString(undefined, {
+    : date.toLocaleTimeString(locale === "zh" ? "zh-CN" : "en", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
