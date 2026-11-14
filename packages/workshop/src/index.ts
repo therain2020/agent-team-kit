@@ -119,6 +119,10 @@ export interface WorkshopInstallRecord {
   permissions: WorkshopManifest["permissions"];
   fileCount: number;
   trust: WorkshopTrust;
+  manifest: Pick<
+    WorkshopManifest,
+    "id" | "name" | "version" | "kind" | "description"
+  > | null;
 }
 
 export interface WorkshopPublishFile {
@@ -506,6 +510,7 @@ export async function listInstalledWorkshop(
             ? Object.keys(rawFiles).length
             : 0,
         trust: normalizeTrust(raw.trust),
+        manifest: normalizeManifestSummary(raw.manifest),
       });
     } catch {
       // corrupt install records stay on disk but are skipped by the console
@@ -977,7 +982,10 @@ function normalizeTrust(value: unknown): WorkshopTrust {
 
 function normalizeManifestSummary(
   value: unknown,
-): InstalledWorkshop["manifest"] {
+): Pick<
+  WorkshopManifest,
+  "id" | "name" | "version" | "kind" | "description"
+> | null {
   if (!value || typeof value !== "object") {
     return null;
   }
