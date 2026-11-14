@@ -47,6 +47,12 @@ body:
     attributes:
       label: Logs or artifacts
       description: Relevant console output, run id, artifact id or digest. Redact secrets.
+  - type: input
+    id: plan-reference
+    attributes:
+      label: Related issue, plan or design reference (optional)
+      description: Link the parent issue or the plan section this bug affects.
+      placeholder: "#123 or `61-reliability-degradation.md §3.5`"
   - type: checkboxes
     id: checks
     attributes:

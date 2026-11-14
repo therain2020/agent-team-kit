@@ -1,0 +1,68 @@
+name: Plan task
+description: A planned implementation slice with a plan reference, scope and acceptance criteria.
+title: "[<plan-slice>] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for plan-driven work. The issue must be readable without access to the
+        local plan directory: cite the section, then summarize the gap and acceptance in
+        your own words. Before starting, assign the issue and comment
+        `claimed by <worktree/session>` so parallel workers do not duplicate the task.
+  - type: input
+    id: parent
+    attributes:
+      label: Parent issue
+      description: Link the umbrella issue, if any.
+      placeholder: "#11"
+  - type: input
+    id: plan-reference
+    attributes:
+      label: Plan reference
+      description: Plan file and section this slice implements. Do not paste the whole plan.
+      placeholder: "61-reliability-degradation.md §3.5, §5"
+    validations:
+      required: true
+  - type: textarea
+    id: current-state
+    attributes:
+      label: Current state
+      description: What already exists and which gap this slice closes. Cite files and symbols.
+      placeholder: |
+        - `RunRequestStore` already has claimNext / heartbeat / finish.
+        - Missing: artifact hash verification after recovery.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: What to implement
+      description: Checkable implementation items. Keep it to one concern.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Measurable outcomes that close the issue.
+      placeholder: |
+        - Artifact integrity check passes 100% of the time after recovery.
+        - Split-brain double execution = 0.
+    validations:
+      required: true
+  - type: textarea
+    id: code-scope
+    attributes:
+      label: Code scope
+      description: Packages and apps this may touch, so parallel worktrees do not collide.
+      placeholder: "packages/store, packages/engine, apps/runtime"
+    validations:
+      required: true
+  - type: input
+    id: branch
+    attributes:
+      label: Branch name (optional)
+      description: Convention is `feat/<issue>-<slug>` or `fix/<issue>-<slug>`, from `origin/develop`.
+      placeholder: "feat/37-run-lease"

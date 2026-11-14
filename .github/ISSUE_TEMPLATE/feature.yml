@@ -3,6 +3,11 @@ description: Propose a capability, a UX improvement or a workflow.
 title: "feat: "
 labels: ["enhancement"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        For plan-driven implementation slices, use the **Plan task** template instead —
+        it captures the plan section, current state, acceptance criteria and code scope.
   - type: textarea
     id: problem
     attributes:
@@ -17,6 +22,19 @@ body:
       description: What should happen? Include commands, files or screens if you can.
     validations:
       required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How will we know this works? Prefer measurable outcomes over task lists.
+    validations:
+      required: true
+  - type: input
+    id: plan-reference
+    attributes:
+      label: Plan or design reference (optional)
+      description: Link the parent issue, plan section or doc this follows.
+      placeholder: "#123 or `61-reliability-degradation.md §3.5`"
   - type: textarea
     id: alternatives
     attributes:
