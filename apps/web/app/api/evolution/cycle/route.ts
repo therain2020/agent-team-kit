@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     packDir?: unknown;
     agentId?: unknown;
     evidenceText?: unknown;
+    hypothesis?: unknown;
     stub?: unknown;
     autoApply?: unknown;
     force?: unknown;
@@ -64,6 +65,10 @@ export async function POST(request: Request) {
       packDir,
       agentId: typeof body.agentId === "string" ? body.agentId : undefined,
       inputFile,
+      hypothesis:
+        typeof body.hypothesis === "string"
+          ? body.hypothesis.trim().slice(0, 500)
+          : undefined,
       stub: body.stub !== false,
       autoApply: body.autoApply === true,
       force: body.force !== false,

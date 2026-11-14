@@ -227,6 +227,8 @@ export interface DecisionRecord {
   decidedBy: string;
   createdAt: string;
   requestId?: string;
+  batchId?: string;
+  riskClass?: "low" | "medium" | "high";
 }
 
 export interface ApprovalRequestView {
@@ -251,7 +253,12 @@ export async function recordDecision(
   runId: string,
   option: string,
   note: string,
-  details: { requestId?: string; actor?: string } = {},
+  details: {
+    requestId?: string;
+    actor?: string;
+    batchId?: string;
+    riskClass?: "low" | "medium" | "high";
+  } = {},
 ): Promise<{ decision: DecisionRecord; artifactId: string }> {
   const allowed = new Set(["approve", "revise", "abort"]);
   if (!allowed.has(option)) {
@@ -271,6 +278,8 @@ export async function recordDecision(
     decidedBy: details.actor ?? "operator",
     createdAt: new Date().toISOString(),
     ...(details.requestId ? { requestId: details.requestId } : {}),
+    batchId: details.batchId ?? newId("batch"),
+    ...(details.riskClass ? { riskClass: details.riskClass } : {}),
   };
 
   const published = await store.artifactService.publish({

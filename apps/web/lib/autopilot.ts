@@ -8,11 +8,21 @@ import { getPacksRoot } from "./paths";
 import { loadArtifactContent } from "./runs";
 import { ensureStoreSchema, getStore } from "./store";
 
+const DEFAULT_AUTOPILOT: AutopilotConfig = {
+  version: 1,
+  enabled: false,
+  timezone: "UTC",
+  schedules: [],
+  iterations: [],
+};
+
 export interface AutopilotPackView {
   dirName: string;
   name: string;
   enabled: boolean;
+  hasConfig: boolean;
   config: AutopilotConfig;
+  workflows: Array<{ id: string; stages: number }>;
   state: {
     lastTickAt: string | null;
     runsToday: number;
@@ -76,30 +86,36 @@ export async function loadAutopilotOverview(): Promise<AutopilotOverview> {
         continue;
       }
       const loaded = await loadPack(dir);
-      if (!loaded.ok || !loaded.autopilot) {
+      if (!loaded.ok) {
         continue;
       }
+      const config = loaded.autopilot ?? DEFAULT_AUTOPILOT;
       const state = stateByPack.get(entry.name);
-      const enabled = state?.enabled ?? loaded.autopilot.enabled;
+      const enabled = state?.enabled ?? config.enabled;
       packs.push({
         dirName: entry.name,
         name: loaded.pack.metadata.name,
         enabled,
-        config: loaded.autopilot,
+        hasConfig: Boolean(loaded.autopilot),
+        config,
+        workflows: loaded.workflows.map((workflow) => ({
+          id: workflow.id,
+          stages: workflow.stages.length,
+        })),
         state: {
           lastTickAt: state?.lastTickAt ?? null,
           runsToday: state?.runsToday ?? 0,
           spentToday: state?.spentToday ?? 0,
           lastError: state?.lastError ?? null,
         },
-        schedules: loaded.autopilot.schedules.map((schedule) => {
+        schedules: config.schedules.map((schedule) => {
           let nextRun = state?.nextRuns[schedule.id] ?? null;
           if (!nextRun) {
             try {
               nextRun = nextCronOccurrence(
                 schedule.cron,
                 new Date(),
-                loaded.autopilot?.timezone ?? "UTC",
+                config.timezone || "UTC",
               ).toISOString();
             } catch {
               nextRun = null;
@@ -115,20 +131,19 @@ export async function loadAutopilotOverview(): Promise<AutopilotOverview> {
             dailyCostCny: schedule.budget?.dailyCostCny,
           };
         }),
-        autoApprove: loaded.autopilot.approval?.autoApprove
+        autoApprove: config.approval?.autoApprove
           ? {
-              enabled: loaded.autopilot.approval.autoApprove.enabled,
-              maxRisk: loaded.autopilot.approval.autoApprove.maxRisk,
-              maxRunCostCny:
-                loaded.autopilot.approval.autoApprove.maxRunCostCny,
-              onTimeout: loaded.autopilot.approval.autoApprove.onTimeout,
+              enabled: config.approval.autoApprove.enabled,
+              maxRisk: config.approval.autoApprove.maxRisk,
+              maxRunCostCny: config.approval.autoApprove.maxRunCostCny,
+              onTimeout: config.approval.autoApprove.onTimeout,
             }
           : null,
-        evolution: loaded.autopilot.evolution
+        evolution: config.evolution
           ? {
-              enabled: loaded.autopilot.evolution.enabled,
-              cadence: loaded.autopilot.evolution.cadence,
-              autoApply: loaded.autopilot.evolution.autoApply,
+              enabled: config.evolution.enabled,
+              cadence: config.evolution.cadence,
+              autoApply: config.evolution.autoApply,
             }
           : null,
       });

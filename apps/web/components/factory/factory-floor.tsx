@@ -1,5 +1,7 @@
 "use client";
 
+import { DetailDrawer } from "@/components/factory/detail-drawer";
+import { PixelWorkpiece } from "@/components/factory/pixel-workpiece";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,52 +15,295 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   type FactoryItem,
+  type FactorySnapshot,
+  type FactoryStation,
+  type FactoryStationId,
+  MAX_BATCH_SIZE,
+  batchTargetsFor,
   lowRiskItems,
   needsConfirmation,
   orderGateItems,
 } from "@/lib/factory";
-import { formatCny, timeAgo } from "@/lib/utils";
+import { cn, formatCny, timeAgo } from "@/lib/utils";
 import {
   CheckCircle2,
   CircleAlert,
   Factory,
+  RefreshCw,
+  ScrollText,
   ShieldAlert,
   XCircle,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type Decision = "approve" | "abort";
 
+const STATION_I18N: Record<
+  FactoryStationId,
+  | "stationDemand"
+  | "stationBuild"
+  | "stationQa"
+  | "stationGatekeeper"
+  | "stationDeliver"
+> = {
+  demand: "stationDemand",
+  build: "stationBuild",
+  qa: "stationQa",
+  gatekeeper: "stationGatekeeper",
+  deliver: "stationDeliver",
+};
+
+type BatchResponse = {
+  error?: string;
+  batchId?: string;
+  approved?: number;
+  failed?: number;
+  results?: Array<{ requestId?: string; ok: boolean }>;
+};
+
+function sameItem(left: FactoryItem, right: FactoryItem): boolean {
+  return (
+    left.runId === right.runId &&
+    (left.requestId ?? "") === (right.requestId ?? "")
+  );
+}
+
 export function FactoryFloor({
   initialItems,
+  initialStations,
 }: {
   initialItems: FactoryItem[];
+  initialStations: FactoryStation[];
 }) {
   const t = useTranslations("factory");
   const riskT = useTranslations("risk");
   const locale = useLocale();
-  const router = useRouter();
   const [items, setItems] = useState(initialItems);
+  const [stations, setStations] = useState(initialStations);
   const [selectedId, setSelectedId] = useState(
     initialItems.find((item) => item.kind === "approval")?.requestId ?? "",
   );
-  const [done, setDone] = useState(0);
+  const [drawerItem, setDrawerItem] = useState<FactoryItem | null>(null);
+  const [shift, setShift] = useState({ approved: 0, rejected: 0 });
   const [decision, setDecision] = useState<{
     kind: Decision;
     item: FactoryItem;
   } | null>(null);
   const [note, setNote] = useState("");
   const [pending, setPending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState("");
 
   const gate = useMemo(() => orderGateItems(items), [items]);
   const blocked = items.filter((item) => item.kind === "failed");
   const selected =
     gate.find((item) => item.requestId === selectedId) ?? gate[0];
+  const lowCount = lowRiskItems(items).length;
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const response = await fetch("/api/factory", { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+      const snapshot = (await response.json()) as FactorySnapshot;
+      setItems(snapshot.items);
+      setStations(snapshot.stations);
+    } catch {
+      // Keep the current workpieces; the operator can retry manually.
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  const submit = useCallback(
+    async (
+      item: FactoryItem,
+      kind: Decision,
+      text: string,
+    ): Promise<boolean> => {
+      if (!item.requestId) {
+        return false;
+      }
+      if (kind === "abort" && text.trim().length === 0) {
+        setError(t("noteRequired"));
+        return false;
+      }
+
+      const previous = items;
+      setPending(true);
+      setError(null);
+      setItems((current) => current.filter((entry) => !sameItem(entry, item)));
+      try {
+        const response = await fetch(
+          `/api/runs/${encodeURIComponent(item.runId)}/decision`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              decision: kind,
+              note: text,
+              requestId: item.requestId,
+            }),
+          },
+        );
+        const payload = (await response.json()) as { error?: string };
+        if (!response.ok) {
+          throw new Error(payload.error ?? t("actionFailed"));
+        }
+        setShift((current) =>
+          kind === "approve"
+            ? { ...current, approved: current.approved + 1 }
+            : { ...current, rejected: current.rejected + 1 },
+        );
+        const message =
+          kind === "approve" ? t("approveToast") : t("abortToast");
+        toast.success(message);
+        setAnnounce(message);
+        setDrawerItem(null);
+        void refresh();
+        return true;
+      } catch (problem) {
+        const message =
+          problem instanceof Error ? problem.message : t("actionFailed");
+        setItems(previous);
+        setError(message);
+        setAnnounce(t("announceFailed", { message }));
+        toast.error(message);
+        void refresh();
+        return false;
+      } finally {
+        setPending(false);
+      }
+    },
+    [items, refresh, t],
+  );
+
+  const requestApprove = useCallback(
+    (item: FactoryItem) => {
+      setError(null);
+      if (!needsConfirmation(item)) {
+        void submit(item, "approve", "");
+        return;
+      }
+      setDrawerItem(null);
+      setDecision({ kind: "approve", item });
+      setNote("");
+    },
+    [submit],
+  );
+
+  const requestAbort = useCallback((item: FactoryItem) => {
+    setError(null);
+    setDrawerItem(null);
+    setDecision({ kind: "abort", item });
+    setNote("");
+  }, []);
+
+  async function confirmDecision() {
+    if (!decision) {
+      return;
+    }
+    const ok = await submit(decision.item, decision.kind, note);
+    if (ok) {
+      setDecision(null);
+      setNote("");
+      setError(null);
+    }
+  }
+
+  const approveAllLow = useCallback(async () => {
+    const targets = batchTargetsFor(items);
+    if (targets.length === 0) {
+      toast.message(t("batchEmpty"));
+      return;
+    }
+
+    const targetIds = new Set(targets.map((target) => target.requestId));
+    const previous = items;
+    setPending(true);
+    setError(null);
+    setItems((current) =>
+      current.filter(
+        (entry) => !(entry.requestId && targetIds.has(entry.requestId)),
+      ),
+    );
+    try {
+      const response = await fetch("/api/approvals/batch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ items: targets }),
+      });
+      const payload = (await response.json()) as BatchResponse;
+      if (!response.ok) {
+        throw new Error(payload.error ?? t("actionFailed"));
+      }
+
+      const approved = payload.approved ?? 0;
+      const failed = payload.failed ?? 0;
+      if (approved > 0) {
+        setShift((current) => ({
+          ...current,
+          approved: current.approved + approved,
+        }));
+      }
+
+      if (failed > 0) {
+        const failedIds = new Set(
+          (payload.results ?? [])
+            .filter((result) => !result.ok && result.requestId)
+            .map((result) => result.requestId),
+        );
+        setItems((current) => {
+          const present = new Set(
+            current
+              .map((entry) => entry.requestId)
+              .filter((id): id is string => Boolean(id)),
+          );
+          const restore = previous.filter(
+            (entry) =>
+              entry.requestId &&
+              failedIds.has(entry.requestId) &&
+              !present.has(entry.requestId),
+          );
+          return [...current, ...restore];
+        });
+        const message = t("batchPartial", { approved, failed });
+        toast.error(message);
+        setAnnounce(message);
+      } else {
+        const message = t("batchToast", { count: approved });
+        toast.success(message);
+        setAnnounce(message);
+      }
+
+      if (lowCount > targets.length) {
+        toast.message(t("batchLimit", { max: MAX_BATCH_SIZE }));
+      }
+      void refresh();
+    } catch (problem) {
+      const message =
+        problem instanceof Error ? problem.message : t("actionFailed");
+      setItems(previous);
+      setError(message);
+      setAnnounce(t("announceFailed", { message }));
+      toast.error(message);
+      void refresh();
+    } finally {
+      setPending(false);
+    }
+  }, [items, lowCount, refresh, t]);
+
+  const openDrawer = useCallback((item: FactoryItem) => {
+    if (item.requestId) {
+      setSelectedId(item.requestId);
+    }
+    setDrawerItem(item);
+  }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -71,105 +316,83 @@ export function FactoryFloor({
       ) {
         return;
       }
-      if (!selected || pending || decision) {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      if (!selected || pending || decision || drawerItem) {
+        return;
+      }
+      const interactive =
+        target &&
+        (target.tagName === "BUTTON" ||
+          target.tagName === "A" ||
+          target.tagName === "SELECT");
+      if (interactive && (event.key === " " || event.key === "Enter")) {
+        return;
+      }
+
+      if (
+        event.key === "ArrowLeft" ||
+        event.key === "ArrowRight" ||
+        event.key === "j" ||
+        event.key === "k"
+      ) {
         event.preventDefault();
         const index = gate.findIndex(
           (item) => item.requestId === selected.requestId,
         );
-        const delta = event.key === "ArrowLeft" ? -1 : 1;
+        const backwards = event.key === "ArrowLeft" || event.key === "k";
+        const delta = backwards ? -1 : 1;
         const next = gate[(index + delta + gate.length) % gate.length];
         if (next?.requestId) {
           setSelectedId(next.requestId);
         }
+        return;
       }
       if (event.key === " ") {
         event.preventDefault();
         requestApprove(selected);
+        return;
       }
       if (event.key === "Backspace") {
         event.preventDefault();
         requestAbort(selected);
+        return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        openDrawer(selected);
+        return;
+      }
+      if (event.key === "a" || event.key === "A") {
+        event.preventDefault();
+        void approveAllLow();
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [decision, gate, pending, selected]);
+  }, [
+    approveAllLow,
+    decision,
+    drawerItem,
+    gate,
+    openDrawer,
+    pending,
+    requestAbort,
+    requestApprove,
+    selected,
+  ]);
 
-  async function submit(item: FactoryItem, kind: Decision, text: string) {
-    if (!item.requestId) {
-      return;
-    }
-    if (kind === "abort" && text.trim().length === 0) {
-      setError(t("noteRequired"));
-      return;
-    }
-    setPending(true);
-    setError(null);
-    try {
-      const response = await fetch(
-        `/api/runs/${encodeURIComponent(item.runId)}/decision`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            decision: kind,
-            note: text,
-            requestId: item.requestId,
-          }),
-        },
-      );
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error ?? t("actionFailed"));
-      }
-      setItems((current) =>
-        current.filter((entry) => entry.requestId !== item.requestId),
-      );
-      setDone((current) => current + 1);
-      toast.success(kind === "approve" ? t("approveToast") : t("abortToast"));
-      setDecision(null);
-      setNote("");
-      router.refresh();
-    } catch (problem) {
-      setError(problem instanceof Error ? problem.message : t("actionFailed"));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  function requestApprove(item: FactoryItem) {
-    setError(null);
-    if (!needsConfirmation(item)) {
-      void submit(item, "approve", "");
-      return;
-    }
-    setDecision({ kind: "approve", item });
-    setNote("");
-  }
-
-  function requestAbort(item: FactoryItem) {
-    setError(null);
-    setDecision({ kind: "abort", item });
-    setNote("");
-  }
-
-  async function approveAllLow() {
-    const low = lowRiskItems(items);
-    if (low.length === 0) {
-      toast.message(t("batchEmpty"));
-      return;
-    }
-    for (const item of low) {
-      await submit(item, "approve", "");
-    }
-    toast.success(t("batchToast", { count: low.length }));
-  }
+  const drawer =
+    drawerItem &&
+    (items.find((entry) => sameItem(entry, drawerItem)) ?? drawerItem);
 
   return (
     <div className="space-y-5">
+      <output className="sr-only" aria-live="polite">
+        {announce}
+      </output>
+
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 font-mono text-lg font-semibold uppercase tracking-tight text-emerald-300">
@@ -178,15 +401,64 @@ export function FactoryFloor({
           </h1>
           <p className="mt-1 text-xs text-zinc-500">{t("description")}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase text-zinc-500">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="hidden font-mono text-[10px] uppercase text-zinc-500 sm:inline">
             {t("shortcuts")}
           </span>
-          <Button size="sm" variant="outline" onClick={approveAllLow}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void refresh()}
+            disabled={refreshing || pending}
+            aria-label={t("refresh")}
+          >
+            <RefreshCw
+              className={cn(
+                "size-3.5",
+                refreshing && "animate-spin motion-reduce:animate-none",
+              )}
+            />
+            {t("refresh")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void approveAllLow()}
+            disabled={pending}
+          >
             <CheckCircle2 className="size-3.5" />
             {t("batch")}
           </Button>
         </div>
+      </div>
+
+      {error && !decision ? (
+        <p className="border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-300">
+          {error}
+        </p>
+      ) : null}
+
+      <div className="flex items-stretch gap-1 overflow-x-auto border-2 border-zinc-800 bg-zinc-950 p-1.5">
+        {stations.map((station, index) => (
+          <div key={station.id} className="flex items-center gap-1">
+            <div
+              className={cn(
+                "min-w-24 border px-2 py-1 font-mono text-[9px] uppercase tracking-wide",
+                station.count > 0
+                  ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-300"
+                  : "border-zinc-800 text-zinc-600",
+              )}
+            >
+              <span className="flex items-center justify-between gap-2">
+                <span>{t(STATION_I18N[station.id])}</span>
+                <span>{station.count}</span>
+              </span>
+            </div>
+            {index < stations.length - 1 ? (
+              <span className="text-zinc-700">→</span>
+            ) : null}
+          </div>
+        ))}
       </div>
 
       <section className="rounded-none border-2 border-zinc-700 bg-[#0d1117] p-3 shadow-[4px_4px_0_#000]">
@@ -196,8 +468,9 @@ export function FactoryFloor({
             {t("gatekeeper")} · {gate.length}
           </span>
         </div>
+
         <div
-          className="flex min-h-44 items-stretch gap-2 overflow-x-auto border-y-2 border-zinc-800 bg-[repeating-linear-gradient(90deg,#18181b_0,#18181b_18px,#27272a_18px,#27272a_20px)] p-3"
+          className="factory-belt hidden min-h-44 items-stretch gap-2 overflow-x-auto border-y-2 border-zinc-800 p-3 md:flex"
           aria-live="polite"
         >
           {gate.length === 0 ? (
@@ -212,18 +485,20 @@ export function FactoryFloor({
                 <button
                   key={item.requestId}
                   type="button"
-                  onClick={() =>
-                    item.requestId && setSelectedId(item.requestId)
-                  }
-                  className={`min-w-52 border-2 px-3 py-2 text-left font-mono transition-colors ${
+                  onClick={() => openDrawer(item)}
+                  className={cn(
+                    "min-w-52 border-2 px-3 py-2 text-left font-mono transition-colors",
                     active
                       ? "border-emerald-400 bg-emerald-500/10"
-                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-500"
-                  }`}
+                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-500",
+                  )}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-zinc-200">
-                      {item.stageName ?? item.workflowId ?? item.runId}
+                    <span className="flex min-w-0 items-center gap-2 text-[11px] text-zinc-200">
+                      <PixelWorkpiece item={item} size={24} />
+                      <span className="truncate">
+                        {item.stageName ?? item.workflowId ?? item.runId}
+                      </span>
                     </span>
                     <Badge
                       variant={
@@ -250,6 +525,83 @@ export function FactoryFloor({
             })
           )}
         </div>
+
+        <div className="space-y-2 md:hidden" aria-live="polite">
+          {gate.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-4 font-mono text-xs text-zinc-600">
+              <CheckCircle2 className="size-4" />
+              {t("empty")}
+            </div>
+          ) : (
+            gate.map((item) => (
+              <div
+                key={item.requestId}
+                className={cn(
+                  "border-2 p-2",
+                  selected?.requestId === item.requestId
+                    ? "border-emerald-400 bg-emerald-500/10"
+                    : "border-zinc-700 bg-zinc-900",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => openDrawer(item)}
+                  className="flex w-full items-start gap-2 text-left"
+                >
+                  <PixelWorkpiece item={item} size={28} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center justify-between gap-2 font-mono text-[11px] text-zinc-200">
+                      <span className="truncate">
+                        {item.stageName ?? item.workflowId ?? item.runId}
+                      </span>
+                      <Badge
+                        variant={
+                          item.riskClass === "high"
+                            ? "danger"
+                            : item.riskClass === "medium"
+                              ? "warning"
+                              : "outline"
+                        }
+                        className="rounded-none text-[9px] uppercase"
+                      >
+                        {riskT(item.riskClass)}
+                      </Badge>
+                    </span>
+                    <span className="mt-1 block line-clamp-2 text-[11px] leading-relaxed text-zinc-400">
+                      {item.summary}
+                    </span>
+                    <span className="mt-1 flex justify-between text-[9px] text-zinc-600">
+                      <span>{formatCny(item.costCny)}</span>
+                      <span>{timeAgo(item.updatedAt, locale)}</span>
+                    </span>
+                  </span>
+                </button>
+                <div className="mt-2 flex gap-2">
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => requestApprove(item)}
+                    disabled={pending}
+                  >
+                    <CheckCircle2 className="size-3.5" />
+                    {t("approve")}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 border-red-500/30 text-red-300 hover:bg-red-500/10"
+                    onClick={() => requestAbort(item)}
+                    disabled={pending}
+                  >
+                    <XCircle className="size-3.5" />
+                    {t("abort")}
+                  </Button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
         <div className="mt-3 flex flex-wrap items-center gap-2 border-2 border-zinc-800 bg-zinc-950 p-3">
           <ShieldAlert className="size-4 text-amber-300" />
           <span className="font-mono text-[10px] uppercase text-zinc-500">
@@ -278,10 +630,14 @@ export function FactoryFloor({
                 <XCircle className="size-3.5" />
                 {t("abort")}
               </Button>
-              <Button size="sm" variant="ghost" asChild>
-                <Link href={`/runs/${encodeURIComponent(selected.runId)}`}>
-                  {t("run")}
-                </Link>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => openDrawer(selected)}
+                disabled={pending}
+              >
+                <ScrollText className="size-3.5" />
+                {t("evidence")}
               </Button>
             </>
           ) : (
@@ -301,17 +657,21 @@ export function FactoryFloor({
               <p className="text-xs text-zinc-600">{t("blockedEmpty")}</p>
             ) : (
               blocked.map((item) => (
-                <Link
+                <button
                   key={`${item.runId}-${item.updatedAt}`}
-                  href={`/runs/${encodeURIComponent(item.runId)}`}
-                  className="block border border-red-500/20 bg-red-500/5 px-3 py-2 font-mono text-[11px] text-zinc-400 transition-colors hover:border-red-500/40"
+                  type="button"
+                  onClick={() => openDrawer(item)}
+                  className="block w-full border border-red-500/20 bg-red-500/5 px-3 py-2 text-left font-mono text-[11px] text-zinc-400 transition-colors hover:border-red-500/40"
                 >
-                  <span className="text-zinc-200">{item.summary}</span>
+                  <span className="flex items-center gap-2">
+                    <PixelWorkpiece item={item} size={20} />
+                    <span className="text-zinc-200">{item.summary}</span>
+                  </span>
                   <span className="mt-1 flex justify-between text-[9px] text-zinc-600">
                     <span>{item.runId}</span>
                     <span>{timeAgo(item.updatedAt, locale)}</span>
                   </span>
-                </Link>
+                </button>
               ))
             )}
           </div>
@@ -320,11 +680,34 @@ export function FactoryFloor({
         <section className="border-2 border-zinc-800 bg-[#0d1117] p-3">
           <h2 className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-widest text-emerald-300">
             <CheckCircle2 className="size-4" />
-            {t("done")} · {done}
+            {t("done")}
           </h2>
-          <p className="mt-3 text-xs text-zinc-600">{t("doneHint")}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-[10px] uppercase text-zinc-500">
+            <span>
+              {t("approvedCount")}{" "}
+              <span className="text-emerald-300">{shift.approved}</span>
+            </span>
+            <span>
+              {t("rejectedCount")}{" "}
+              <span className="text-red-300">{shift.rejected}</span>
+            </span>
+          </div>
+          <p className="mt-2 text-xs text-zinc-600">{t("doneHint")}</p>
         </section>
       </div>
+
+      <DetailDrawer
+        item={drawer || null}
+        open={drawer !== null && drawer !== undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDrawerItem(null);
+          }
+        }}
+        onApprove={requestApprove}
+        onReject={requestAbort}
+        pending={pending}
+      />
 
       <Dialog
         open={decision !== null}
@@ -381,9 +764,7 @@ export function FactoryFloor({
             </Button>
             <Button
               variant={decision?.kind === "abort" ? "destructive" : "default"}
-              onClick={() =>
-                decision && submit(decision.item, decision.kind, note)
-              }
+              onClick={() => void confirmDecision()}
               disabled={
                 pending ||
                 (decision?.kind === "abort" && note.trim().length === 0)

@@ -680,6 +680,123 @@ export async function setStagePositions(
   return content;
 }
 
+export interface StageEdge {
+  from: string;
+  to: string;
+}
+
+/**
+ * Rewrites stage dependencies from the canvas edges. Dependencies become
+ * explicit `inputFrom`/`inputsFrom` entries and stages are re-ordered
+ * topologically, because validation and the runtime both require upstream
+ * stages to appear before their dependents.
+ */
+export async function setStageEdges(
+  packDir: string,
+  relative: string,
+  edges: StageEdge[],
+): Promise<string> {
+  const raw = await readPackFile(packDir, relative);
+  const doc = parse(raw) as {
+    stages?: Array<Record<string, unknown>>;
+  };
+  const stages = doc.stages;
+  if (!Array.isArray(stages)) {
+    throw new Error("workflow stages missing");
+  }
+
+  const stageOrder = new Map<string, number>();
+  for (const [index, stage] of stages.entries()) {
+    const id = stage.id;
+    if (typeof id !== "string" || !id) {
+      throw new Error(`workflow stage ${index + 1} is missing an id`);
+    }
+    if (stageOrder.has(id)) {
+      throw new Error(`duplicate workflow stage id: ${id}`);
+    }
+    stageOrder.set(id, index);
+  }
+
+  const dependencies = new Map<string, string[]>();
+  for (const id of stageOrder.keys()) {
+    dependencies.set(id, []);
+  }
+  const seenEdges = new Set<string>();
+  for (const edge of edges) {
+    const from = edge?.from;
+    const to = edge?.to;
+    if (typeof from !== "string" || typeof to !== "string") {
+      throw new Error("every edge needs a from and to stage");
+    }
+    if (!stageOrder.has(from) || !stageOrder.has(to)) {
+      throw new Error(`edge references unknown stage: ${from} -> ${to}`);
+    }
+    if (from === to) {
+      throw new Error(`stage ${to} cannot depend on itself`);
+    }
+    const key = `${from}->${to}`;
+    if (seenEdges.has(key)) {
+      throw new Error(`duplicate edge: ${from} -> ${to}`);
+    }
+    seenEdges.add(key);
+    dependencies.get(to)?.push(from);
+  }
+
+  // Stable topological sort: the earliest-declared ready stage goes next.
+  const ordered: Array<Record<string, unknown>> = [];
+  const placed = new Set<string>();
+  while (ordered.length < stages.length) {
+    const next = stages.find((stage) => {
+      const id = stage.id as string;
+      return (
+        !placed.has(id) &&
+        (dependencies.get(id) ?? []).every((upstream) => placed.has(upstream))
+      );
+    });
+    if (!next) {
+      const remaining = stages
+        .map((stage) => stage.id)
+        .filter((id): id is string => typeof id === "string")
+        .filter((id) => !placed.has(id));
+      throw new Error(`workflow has a cycle: ${remaining.join(", ")}`);
+    }
+    placed.add(next.id as string);
+    ordered.push(next);
+  }
+
+  const roots = ordered.filter(
+    (stage) => (dependencies.get(stage.id as string) ?? []).length === 0,
+  );
+  if (roots.length !== 1) {
+    // The runtime treats a stage without links as depending on the previous
+    // stage, so a graph can only have one real entry point.
+    const rootIds = roots.map((stage) => String(stage.id)).join(", ");
+    throw new Error(
+      `workflow must have exactly one entry stage without upstream links (found: ${rootIds}); connect the extra entry stages to an upstream stage`,
+    );
+  }
+
+  for (const stage of ordered) {
+    const id = stage.id as string;
+    const upstreams = [...(dependencies.get(id) ?? [])].sort(
+      (left, right) =>
+        (stageOrder.get(left) ?? 0) - (stageOrder.get(right) ?? 0),
+    );
+    stage.inputFrom = undefined;
+    stage.inputsFrom = undefined;
+    if (upstreams.length === 1) {
+      stage.inputFrom = upstreams[0];
+    } else if (upstreams.length > 1) {
+      stage.inputsFrom = upstreams;
+    }
+  }
+  doc.stages = ordered;
+
+  const content = stringify(doc);
+  await writeWorkflowFile(packDir, relative, content);
+  return content;
+}
+
 export async function setStageApproval(
   packDir: string,
   relative: string,
