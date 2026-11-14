@@ -1,14 +1,14 @@
 # Open platform guide
 
-This guide covers the 1.0 control surface: Studio, source market, Autopilot,
+This guide covers the 0.9.0 control surface: Studio, source market, Autopilot,
 task-centric Manager Office, approvals, evolution, and the controlled tool loop
 with Cyber/UX domain squads.
 
 ## 1. Pack Studio
 
-- **Create:** open `/packs/new`, pick `Minimal`, `Research`, or `Content`, name
-  the team, add employees, and create. The same result is available from the
-  CLI:
+- **Create:** open `/packs/new`, pick `Minimal`, `Research`, `Content`, or
+  `Product`, name the team, add employees, and create. The same result is
+  available from the CLI:
 
   ```bash
   bun run kit init packs/my-team --template research

@@ -1,0 +1,99 @@
+apiVersion: agentteam/v1
+kind: TeamTemplate
+id: research
+name: Research Team
+description: Gather evidence, write a cited brief, then review it.
+roles:
+  requireSeller: false
+  requireBuilder: true
+  allowCombined: true
+
+agents:
+  - id: researcher
+    description: Collects and verifies source evidence
+    model: deepseek-flash
+    role: builder
+    tools: [web_search, fetch]
+    skills: []
+    instructions: |
+      You are a researcher. Gather verifiable evidence, keep provenance for
+      every claim, and return a compact evidence set with citations.
+  - id: writer
+    description: Turns evidence into a structured brief
+    model: deepseek-pro
+    role: builder
+    tools: []
+    skills: []
+    instructions: |
+      You are a writer. Turn the evidence set into a structured brief. Cite
+      every factual claim with [S#]; never invent citations.
+  - id: reviewer
+    description: Checks citations, clarity, and actionability
+    model: deepseek-pro
+    role: specialist
+    tools: []
+    skills: []
+    instructions: |
+      You are a reviewer. Check citations against the evidence set, flag
+      unsupported claims, and suggest concrete fixes.
+
+workflow:
+  id: starter
+  version: 1.0
+  trigger:
+    event: task.received
+  stages:
+    - id: researcher
+      type: agent
+      agent: researcher
+      inputs: [task]
+      outputs: [researcher_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+    - id: writer
+      type: agent
+      agent: writer
+      inputs: [researcher_output]
+      outputs: [writer_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+    - id: reviewer
+      type: agent
+      agent: reviewer
+      inputs: [writer_output]
+      outputs: [reviewer_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+      approval:
+        mode: required
+        position: after
+        riskClass: medium
+        ttl: 72h
+  delivery:
+    channel: local_file
+
+policy:
+  version: 1
+  actions:
+    - {match: "tool.web_search", class: "A"}
+    - {match: "tool.fetch", class: "A"}
+    - {match: "tool.deliver_external", class: "C", approval: {ttl: "2h", scope: "per_item"}}
+    - {match: "tool.delete", class: "D"}
+
+autopilot:
+  version: 1
+  enabled: false
+  timezone: Asia/Shanghai
+  schedules: []
+  iterations: []
+  approval:
+    autoApprove:
+      enabled: false
+      maxRisk: low
+      onTimeout: wait
+  evolution:
+    enabled: false
+    cadence: weekly
+    autoApply: false

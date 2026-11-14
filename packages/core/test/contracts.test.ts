@@ -5,6 +5,8 @@ import {
   manifestSchema,
   runModeSchema,
   teamPackSchema,
+  workflowStageSchema,
+  workshopManifestSchema,
 } from "../src/index";
 
 const at = "2026-11-14T00:00:00.000Z";
@@ -97,6 +99,78 @@ describe("artifact contracts", () => {
       createdAt: at,
     };
     expect(artifactVersionSchema.safeParse(artifact).success).toBe(false);
+  });
+});
+
+describe("workflow stages", () => {
+  it("parses a coder stage", () => {
+    const parsed = workflowStageSchema.parse({
+      id: "build",
+      type: "coder",
+      coder: "dsh",
+      goal: "fix the bug",
+      acceptance: "tests pass",
+      inputs: ["findings"],
+      outputs: ["patch"],
+      timeout: "20m",
+    });
+    expect(parsed.coder).toBe("dsh");
+  });
+
+  it("rejects a coder stage without coder", () => {
+    const result = workflowStageSchema.safeParse({
+      id: "build",
+      type: "coder",
+      inputs: ["findings"],
+      outputs: ["patch"],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an agent stage without agent", () => {
+    const result = workflowStageSchema.safeParse({
+      id: "write",
+      type: "agent",
+      inputs: ["findings"],
+      outputs: ["draft"],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("workshop manifest", () => {
+  const manifest = {
+    apiVersion: "agentteam/v1",
+    kind: "workflow",
+    id: "demo-flow",
+    name: "Demo Flow",
+    version: "1.0.0",
+    entry: "workflows/demo.yaml",
+    files: ["workflows/demo.yaml"],
+  };
+
+  it("parses a valid manifest", () => {
+    const parsed = workshopManifestSchema.parse(manifest);
+    expect(parsed.permissions.code).toBe(false);
+  });
+
+  it("requires entry to be listed in files", () => {
+    expect(
+      workshopManifestSchema.safeParse({
+        ...manifest,
+        entry: "workflows/other.yaml",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects path traversal in files", () => {
+    expect(
+      workshopManifestSchema.safeParse({
+        ...manifest,
+        entry: "../evil.yaml",
+        files: ["../evil.yaml"],
+      }).success,
+    ).toBe(false);
   });
 });
 

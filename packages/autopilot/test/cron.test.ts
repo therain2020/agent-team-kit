@@ -1,3 +1,4 @@
+import { autopilotSchema } from "@kit/core";
 import { describe, expect, it } from "vitest";
 import { nextCronOccurrence } from "../src/cron";
 
@@ -31,5 +32,24 @@ describe("cron", () => {
 
   it("rejects malformed expressions", () => {
     expect(() => nextCronOccurrence("not a cron", new Date(), "UTC")).toThrow();
+  });
+
+  it("parses iteration schedules", () => {
+    const config = autopilotSchema.parse({
+      version: 1,
+      enabled: true,
+      schedules: [],
+      iterations: [
+        {
+          id: "system-iterate",
+          cron: "0 3 * * *",
+          goal: "improve the system",
+          mode: "DRY_RUN",
+        },
+      ],
+    });
+    expect(config.iterations).toHaveLength(1);
+    expect(config.iterations[0]?.maxTasks).toBe(2);
+    expect(config.iterations[0]?.applyMode).toBe("none");
   });
 });

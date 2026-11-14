@@ -1,6 +1,75 @@
 # Changelog
 
-## 1.0.0 — 2026-11-14
+> `1.0.0` is not released. It is gated on the unattended autonomy acceptance in
+> `plans/agent-pipeline/85-autonomy-1.0.md`. The current preview is `0.9.0`.
+
+## 0.9.0 — 2026-11-14
+
+- Autonomy foundation: external coder adapters for DSH (live), Codex and
+  OpenCode (generic CLI), isolated repository-copy sandboxes, transcript/diff
+  evidence, and environment scrubbing.
+- `coder` workflow stage (`type: coder`) with goal/acceptance and a 40-minute
+  activity budget; the stage publishes result, transcript and diff artifacts.
+- Signed event gateway (`apps/gateway`): generic HMAC and GitHub webhook
+  normalization, replay/rate/body limits, canonical events on NATS.
+- Runtime Event Router: matches workflow triggers (exact, prefix, `*`) and
+  starts `packWorkflow` with dedupe and overlap protection.
+- `kit up` / `kit down` / `kit up status`: one supervised command for Docker
+  Compose, event runtime, Temporal worker, Autopilot and gateway, with restart
+  and health checks.
+- `kit iterate`: Planner → task plan → external coder → verify → repair →
+  risk classifier → low-risk apply with commit + backup → report; evidence is
+  stored as artifacts.
+- `packs/self-improve/iteration.yaml`: Cyber/UX/docs domain routing for the
+  system to improve itself.
+- Version reset: workspace packages and compatibility checks are `0.9.0`;
+  task-centric features remain, but 1.0 is reserved for unattended operation.
+- First autonomy pilot: DSH found a CWE-22 path traversal in the Pack loader
+  and produced a fix plus a regression test; it was human-approved and landed
+  in `3e8f586` (74 tests pass). A low-risk docs iteration was verified and
+  auto-applied as `c092472` (`autonomy: docs-update (docs)`). A UX iteration
+  produced a verified Inbox hierarchy fix
+  (`apps/web/app/(console)/inbox/page.tsx`) classified as medium risk; it
+  remains pending rather than auto-applied.
+- External coder sandboxes now live outside the repository
+  (`%TEMP%/agent-team-kit`, override `KIT_CODER_SANDBOX_ROOT`). This fixed the
+  Windows ACL failure that blocked DSH's `pwsh` tool; a live smoke ran
+  `node -e "console.log(6*7)"` and returned `42` with no file changes. The
+  external Verifier still runs `typecheck`/`lint`/`test` independently.
+- Recovery kernel v1 (`scripts/kitd.ps1` + installer): installed outside the
+  repository at `%USERPROFILE%\.agent-team-kit`; external LKG bundle, audit
+  JSONL, kill switch, health checks and guarded rollback. Verified
+  `status`/`check`/`snapshot`/`rollback -DryRun` with the live supervisor.
+- Self-optimization data plane: every iteration publishes a `fitness` artifact
+  and appends per-task signals to `%USERPROFILE%\.agent-team-kit\signals`.
+  `kit signals summarize` aggregates pass/apply rates by domain;
+  `kit signals propose` writes manual improvement proposals for low-pass
+  domains. Promotion/canary remains gated.
+- Medium-risk canary gate: `--apply low-medium` runs `typecheck`, `lint`,
+  `test` and a production `web:build` after applying; failure reverts the
+  commit. High-risk changes are never auto-applied.
+- Apply hardening: changed files are formatted with Biome before commit and
+  `.gitattributes` enforces LF. The medium canary applied a UX patch and
+  auto-reverted it when post-apply lint detected CRLF damage — proof that the
+  gate catches sandbox-vs-main integration drift. A clean medium auto-apply is
+  still pending because the final UX rerun hit the DSH 10-minute timeout.
+- Open templates: built-in `minimal/research/content/product` are now data in
+  `templates/<id>/template.yaml`; `kit init --list` and the new-pack wizard read
+  from a validated registry instead of TypeScript enums.
+- Workflow CRUD: list/create/rename/delete APIs plus Studio controls; new
+  workflows are validated, written atomically, and referenced from `team.yaml`.
+- Creative workshop: `workshop.yaml` contract and `@kit/workshop` with GitHub
+  topic discovery (`agent-team-workshop`), preview, and commit-pinned install;
+  path traversal/size limits and explicit consent for code-bearing items.
+  CLI: `kit workshop search|preview|install`.
+- Pixel factory: `/factory` conveyor with Gatekeeper, one-key low-risk approve,
+  batch low-risk approve, high-risk confirmation, keyboard controls, and links
+  to run evidence. Actions use the existing decision API and DecisionRecord
+  audit; `/inbox` remains the list/accessibility fallback.
+- Tests: full suite passing (coder, gateway, iteration, signals, templates,
+  workflow CRUD, workshop; plus the existing suite).
+
+## 1.0.0 — 2026-11-14 (not released)
 
 - Task-centric team: Builder/Seller/Specialist roles, Pack-level
   `roles.requireSeller/requireBuilder/allowCombined`, and definition-of-done on

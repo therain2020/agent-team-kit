@@ -14,7 +14,7 @@ const nextConfig: NextConfig = {
     "@kit/workflow",
     "@kit/source",
   ],
-  serverExternalPackages: ["postgres", "@aws-sdk/client-s3"],
+  serverExternalPackages: ["postgres", "better-sqlite3", "@aws-sdk/client-s3"],
 };
 
 export default withNextIntl(nextConfig);

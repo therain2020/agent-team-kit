@@ -2,6 +2,7 @@ export * from "./artifact";
 export * from "./autopilot";
 export * from "./event";
 export * from "./ids";
+export * from "./iteration";
 export * from "./pack";
 export * from "./policy";
 export * from "./rubric";

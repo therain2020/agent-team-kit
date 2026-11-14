@@ -9,10 +9,7 @@ import {
   newId,
 } from "@kit/core";
 import type { BlobClient } from "./blob";
-import type {
-  PostgresArtifactStore,
-  PostgresBlobRepository,
-} from "./repositories";
+import type { ArtifactStore, BlobRepository } from "./repositories";
 
 export interface PublishInput {
   workspaceId: string;
@@ -36,8 +33,8 @@ export interface PublishResult {
 
 export class ArtifactService {
   constructor(
-    private readonly blobs: PostgresBlobRepository,
-    private readonly artifacts: PostgresArtifactStore,
+    private readonly blobs: BlobRepository,
+    private readonly artifacts: ArtifactStore,
     private readonly blobClient: BlobClient,
   ) {}
 

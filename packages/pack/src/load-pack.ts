@@ -6,12 +6,14 @@ import {
   type AgentRole,
   type AgentSpec,
   type AutopilotConfig,
+  type IterationConfig,
   type Policy,
   type SkillFrontmatter,
   type TeamPack,
   type WorkflowDefinition,
   agentFrontmatterSchema,
   autopilotSchema,
+  iterationConfigSchema,
   policySchema,
   rubricSetSchema,
   skillFrontmatterSchema,
@@ -35,6 +37,7 @@ export interface LoadedPack {
   workflows: WorkflowDefinition[];
   policies: Policy[];
   autopilot?: AutopilotConfig;
+  iteration?: IterationConfig;
   roleRules: RoleRules;
   warnings: string[];
 }
@@ -43,7 +46,7 @@ export type LoadResult =
   | ({ ok: true } & LoadedPack)
   | { ok: false; dir: string; errors: string[] };
 
-const KIT_VERSION = "1.0.0";
+const KIT_VERSION = "0.9.0";
 
 const SECRET_PATTERNS = [
   /sk-[A-Za-z0-9]{16,}/,
@@ -99,7 +102,11 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
       continue;
     }
 
-    const agentPath = path.join(dir, agent.file);
+    const agentPath = resolvePackPath(dir, agent.file);
+    if (!agentPath) {
+      errors.push(`agent file escapes the pack: ${agent.file}`);
+      continue;
+    }
     if (!existsSync(agentPath)) {
       errors.push(`agent file missing: ${agent.file}`);
       continue;
@@ -158,8 +165,13 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     });
   }
 
-  if (pack.manager && !existsSync(path.join(dir, pack.manager.agent))) {
-    errors.push(`manager agent file missing: ${pack.manager.agent}`);
+  if (pack.manager) {
+    const managerPath = resolvePackPath(dir, pack.manager.agent);
+    if (!managerPath) {
+      errors.push(`manager file escapes the pack: ${pack.manager.agent}`);
+    } else if (!existsSync(managerPath)) {
+      errors.push(`manager agent file missing: ${pack.manager.agent}`);
+    }
   }
 
   const skills = new Map<string, SkillFrontmatter>();
@@ -170,7 +182,14 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
         continue;
       }
 
-      const skillPath = path.join(dir, "skills", skill, "SKILL.md");
+      const skillPath = resolvePackPath(
+        dir,
+        path.join("skills", skill, "SKILL.md"),
+      );
+      if (!skillPath) {
+        errors.push(`skill escapes the pack: ${skill}`);
+        continue;
+      }
       if (!existsSync(skillPath)) {
         errors.push(`skill missing: skills/${skill}/SKILL.md`);
         continue;
@@ -210,7 +229,11 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
   const workflowIds = new Set<string>();
 
   for (const workflowFile of pack.workflows) {
-    const workflowPath = path.join(dir, workflowFile);
+    const workflowPath = resolvePackPath(dir, workflowFile);
+    if (!workflowPath) {
+      errors.push(`${workflowFile}: file escapes the pack`);
+      continue;
+    }
     if (!existsSync(workflowPath)) {
       errors.push(`workflow file missing: ${workflowFile}`);
       continue;
@@ -253,6 +276,18 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
           `${workflowFile}: stage ${stage.id} inputFrom must reference an earlier stage: ${stage.inputFrom}`,
         );
       }
+      if (stage.inputFrom && stage.inputsFrom) {
+        errors.push(
+          `${workflowFile}: stage ${stage.id} cannot use inputFrom and inputsFrom together`,
+        );
+      }
+      for (const upstream of stage.inputsFrom ?? []) {
+        if (!seenStageIds.has(upstream)) {
+          errors.push(
+            `${workflowFile}: stage ${stage.id} inputsFrom must reference an earlier stage: ${upstream}`,
+          );
+        }
+      }
       if (stage.revisionAgent && !agents.has(stage.revisionAgent)) {
         errors.push(
           `${workflowFile}: stage ${stage.id} revisionAgent references unknown agent: ${stage.revisionAgent}`,
@@ -269,12 +304,29 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
         );
       }
 
+      if (stage.type === "coder") {
+        if (!stage.coder) {
+          errors.push(
+            `${workflowFile}: stage ${stage.id} is a coder stage without coder`,
+          );
+        }
+        if (stage.agent && !agents.has(stage.agent)) {
+          errors.push(
+            `${workflowFile}: stage ${stage.id} references unknown agent for instructions: ${stage.agent}`,
+          );
+        }
+      }
+
       if (stage.gate) {
         const [gateFileRaw, gateKey] = stage.gate.split("#");
         const gateFile = gateFileRaw ?? "";
-        const gatePath = path.join(dir, gateFile);
+        const gatePath = resolvePackPath(dir, gateFile);
 
-        if (!existsSync(gatePath)) {
+        if (!gatePath) {
+          errors.push(
+            `${workflowFile}: stage ${stage.id} gate file escapes the pack: ${gateFile}`,
+          );
+        } else if (!existsSync(gatePath)) {
           errors.push(
             `${workflowFile}: stage ${stage.id} gate file missing: ${gateFile}`,
           );
@@ -317,7 +369,11 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
   const policies: Policy[] = [];
 
   for (const policyFile of pack.policies) {
-    const policyPath = path.join(dir, policyFile);
+    const policyPath = resolvePackPath(dir, policyFile);
+    if (!policyPath) {
+      errors.push(`policy file escapes the pack: ${policyFile}`);
+      continue;
+    }
     if (!existsSync(policyPath)) {
       errors.push(`policy file missing: ${policyFile}`);
       continue;
@@ -348,8 +404,13 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     policies.push(parsedPolicy.data);
   }
 
-  if (pack.evals?.rubrics && !existsSync(path.join(dir, pack.evals.rubrics))) {
-    errors.push(`evals rubric file missing: ${pack.evals.rubrics}`);
+  if (pack.evals?.rubrics) {
+    const rubricPath = resolvePackPath(dir, pack.evals.rubrics);
+    if (!rubricPath) {
+      errors.push(`evals rubric file escapes the pack: ${pack.evals.rubrics}`);
+    } else if (!existsSync(rubricPath)) {
+      errors.push(`evals rubric file missing: ${pack.evals.rubrics}`);
+    }
   }
 
   let autopilot: AutopilotConfig | undefined;
@@ -392,6 +453,41 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     }
   }
 
+  let iteration: IterationConfig | undefined;
+  const iterationPath = path.join(dir, "iteration.yaml");
+  if (existsSync(iterationPath)) {
+    const text = await readFile(iterationPath, "utf8");
+    scanSecrets(text, "iteration.yaml", errors);
+    try {
+      const parsedIteration = iterationConfigSchema.safeParse(parse(text));
+      if (!parsedIteration.success) {
+        errors.push(
+          ...parsedIteration.error.issues.map(
+            (issue) =>
+              `iteration.yaml: ${issue.path.join(".")}: ${issue.message}`,
+          ),
+        );
+      } else {
+        iteration = parsedIteration.data;
+        for (const [domain, config] of Object.entries(iteration.domains)) {
+          if (!workflowIds.has(config.workflow)) {
+            errors.push(
+              `iteration.yaml: domain ${domain} references unknown workflow: ${config.workflow}`,
+            );
+          }
+          if (config.agent && !agents.has(config.agent)) {
+            errors.push(
+              `iteration.yaml: domain ${domain} references unknown agent: ${config.agent}`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`iteration.yaml: parse error: ${message}`);
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, dir, errors };
   }
@@ -404,10 +500,17 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     skills,
     workflows,
     policies,
-    autopilot,
+    ...(autopilot ? { autopilot } : {}),
+    ...(iteration ? { iteration } : {}),
     roleRules: getRoleRules(pack),
     warnings,
   };
+}
+
+function resolvePackPath(dir: string, relative: string): string | null {
+  const root = path.resolve(dir);
+  const target = path.resolve(root, relative);
+  return target.startsWith(`${root}${path.sep}`) ? target : null;
 }
 
 function parseFrontmatter(text: string): unknown {

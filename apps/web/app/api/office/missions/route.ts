@@ -1,4 +1,5 @@
 import { sameOriginError } from "@/lib/http";
+import { submitLocalRun } from "@/lib/local-runner";
 import { resolvePackDir } from "@/lib/paths";
 import { getStore } from "@/lib/store";
 import { eventEnvelopeSchema, missionAssignmentSchema, newId } from "@kit/core";
@@ -227,6 +228,34 @@ export async function POST(request: Request) {
     retentionClass: "artifact_365d",
   });
 
+  if (store.driver === "sqlite") {
+    try {
+      const queued = await submitLocalRun(built.input);
+      return NextResponse.json(
+        {
+          runId: built.input.runId,
+          requestId: queued.requestId,
+          engine: "local",
+          pack: loaded.pack.metadata.name,
+          workflow: workflowId,
+          mission,
+        },
+        { status: 202 },
+      );
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "failed to queue local run",
+          runId: built.input.runId,
+        },
+        { status: 502 },
+      );
+    }
+  }
+
   const { client, connection } = await createTemporalClient();
   try {
     const handle = await client.workflow.start("packWorkflow", {
@@ -238,6 +267,7 @@ export async function POST(request: Request) {
       {
         runId: built.input.runId,
         workflowId: handle.workflowId,
+        engine: "temporal",
         pack: loaded.pack.metadata.name,
         workflow: workflowId,
         mission,

@@ -1,0 +1,28 @@
+name: validate-packs
+
+on:
+  pull_request:
+    paths:
+      - "packs/**"
+      - "templates/**"
+      - "packages/pack/**"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Validate built-in packs
+        run: |
+          set -euo pipefail
+          for dir in packs/*/; do
+            echo "validating $dir"
+            bun run kit pack validate "$dir"
+          done
+      - name: Validate templates
+        run: bunx vitest run packages/pack/test/templates.test.ts

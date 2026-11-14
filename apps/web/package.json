@@ -1,6 +1,6 @@
 {
   "name": "@kit/web",
-  "version": "1.0.0",
+  "version": "0.9.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -23,6 +23,7 @@
     "@kit/store": "workspace:*",
     "@kit/workflow": "workspace:*",
     "ai": "^7.0.173",
+    "better-sqlite3": "^13.2.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

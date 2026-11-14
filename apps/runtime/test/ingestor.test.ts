@@ -29,6 +29,19 @@ describe("event ingestor", () => {
     expect(insert).toHaveBeenCalledWith(event);
   });
 
+  it("accepts gateway wrappers with payloads", async () => {
+    const insert = vi.fn().mockResolvedValue({ inserted: true });
+    const ingestor = new EventIngestor({ insert });
+
+    const result = await ingestor.handle(
+      encode({ event, payload: { issue: { number: 7 } } }),
+    );
+
+    expect(result.status).toBe("inserted");
+    expect(result.payload).toEqual({ issue: { number: 7 } });
+    expect(result.event).toEqual(event);
+  });
+
   it("reports duplicates", async () => {
     const insert = vi.fn().mockResolvedValue({ inserted: false });
     const ingestor = new EventIngestor({ insert });

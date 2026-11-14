@@ -1,6 +1,26 @@
 # Agent Team Kit
 
-A distributable, self-hosted kit for building private agent teams.
+**Own a private team of AI agents — with approvals, audit and rollback.**
+
+[![ci](https://github.com/therain2020/agent-team-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/therain2020/agent-team-kit/actions/workflows/ci.yml)
+![license](https://img.shields.io/badge/license-Apache--2.0-blue)
+![status](https://img.shields.io/badge/status-0.9.0_preview-orange)
+![runtime](https://img.shields.io/badge/runtime-Bun%201.4%2B-black)
+
+Self-hosted, file-based agent teams you can run, inspect, approve and improve.
+Not another agent library: a runtime plus a governance layer for teams that do
+real work.
+
+- **Teams are files** — a Team Pack is YAML and Markdown; diff it, review it, roll it back.
+- **Glass box by default** — every artifact carries provenance, gates and cost.
+- **Your data stays yours** — local-first, no telemetry, explicit approval for external effects.
+
+**Start here**
+- Live sample run: https://therain2020.github.io/agent-team-kit/
+- First hour: `bun run kit demo` (no Docker) · zero-config: `kit bootstrap` → `/welcome`
+- Create a team: `kit init my-team --template research` · [docs/pack-authoring.md](./docs/pack-authoring.md)
+- Docs: [docs/install.md](./docs/install.md) · Community: [CONTRIBUTING.md](./CONTRIBUTING.md) · [SUPPORT.md](./SUPPORT.md) · [ROADMAP.md](./ROADMAP.md)
+- 中文说明: [README.zh-CN.md](./README.zh-CN.md)
 
 The kit provides:
 - **Runtime Core** — events, orchestration, durable execution, artifact store, model/tool gateway.
@@ -17,30 +37,59 @@ The kit provides:
 - **Evolution** — failure signals → proposed role change → evaluation → canary → reversible promotion.
 - **Manager Console** — glass-box, streaming Manager chat, approval inbox, pack runner, evolution and trace links.
 
-Status: **Agent Team Kit 1.0** — runtime, quality gates, Manager Console, Pack
-Studio, source market, Autopilot, task-centric Office, open approvals, evolution
-and a controlled tool loop with sandbox patches are implemented. Agents can read
-and search the repo, run fixed checks and static scans, and propose patches;
-`kit patch apply` writes a reviewed patch with a backup. M3 cloud deployment is
-deferred until credentials are available.
+Status: **Agent Team Kit 0.9.0 — autonomy preview**. Runtime, quality gates,
+Manager Console, Pack Studio, source market, Autopilot, task-centric Office,
+open approvals, evolution and a controlled tool loop are implemented. The
+0.9.0 preview adds external coding-agent delegation (DSH / Codex / OpenCode),
+a signed event gateway, a supervised `kit up` runtime, and a task-centric
+iteration loop (`kit iterate`) that plans, delegates, verifies, classifies risk
+and applies low-risk changes.
+
+**1.0 is not claimed yet.** 1.0 means the system runs without the operator and
+optimizes itself: a goal and budget go in, tasks are planned and executed,
+low-risk changes land automatically, and the operator only handles high-risk
+approval and release confirmation. The acceptance gate is public in
+[ROADMAP.md](./ROADMAP.md).
 
 ## Requirements
 
 - Bun 1.4+
-- Docker Desktop (for the local stack)
+- Node 24 (the Temporal worker runs on Node/tsx)
+- Docker Desktop (for the local stack; `kit demo` runs without it)
 - Windows / macOS / Linux
+- Optional: DSH, Codex or OpenCode CLI for external coder tasks
+
+Run `bun run kit doctor` to check all of the above.
 
 ## Quick start
 
 ```bash
 bun install
-docker compose -f deploy/docker-compose.yml up -d
-$env:KIT_BLOB_BACKEND="s3"   # PowerShell
+bun run kit doctor          # Bun, Node, Docker, ports and model key
+bun run kit demo            # demo team + static plan (no Docker required)
+bun run kit init packs/my-team --template research
+bun run kit up --web        # infra + runtime + worker + autopilot + gateway + console
+bun run kit up status       # supervisor, children and gateway health
+bun run web:dev             # console only → http://localhost:3000
+bun run kit down            # stop the supervisor (and compose unless --keep-infra)
+```
 
+For the zero-config path, run `kit bootstrap` (or open `/welcome` after
+`kit up --web`) and paste a model API key.
+
+`kit up` starts a detached supervisor with restart-on-exit, health checks and
+logs under `.tmp/supervisor/`. It starts Postgres, MinIO, NATS, Temporal,
+Jaeger and the OTel collector through Docker Compose. Use `--no-infra` when
+the stack is already running; `--web` also starts the console.
+
+Manual fallback (legacy):
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d
 bun run worker                                   # terminal A (Node/tsx)
-bun run kit run --pack packs/minimal --dry-run   # terminal B
-bun run web:dev                                  # terminal C → http://localhost:3000
-bun run autopilot                                # terminal D (optional, autonomous)
+bun run apps/runtime/src/index.ts                # terminal B (event router)
+bun run kit run --pack packs/minimal --dry-run   # terminal C
+bun run web:dev                                  # terminal D → http://localhost:3000
 ```
 
 Services: Postgres 5432, MinIO 9000/9001, NATS 4222, Temporal 7233,
@@ -50,6 +99,152 @@ MinIO console: http://localhost:9001 (`kit` / `kitkitkit` by default).
 The web process must use the same blob backend as the worker. If the worker
 uses `s3`, start the web app with `KIT_BLOB_BACKEND=s3` too; otherwise artifact
 metadata renders but content shows as unavailable.
+
+### Autonomous runtime (0.9.0 preview)
+
+`kit up` is the supervisor. It starts the runtime event consumer, Temporal
+worker, Autopilot, and the signed event gateway. Each child is restarted on
+exit; the gateway is health-checked every 15 seconds. State lives in
+`.tmp/supervisor/state.json`.
+
+| Command | What it does |
+|---|---|
+| `kit up` | Start infra and the supervised runtime (detached) |
+| `kit up --foreground` | Keep the supervisor attached to the terminal |
+| `kit up status` | Show PIDs, restarts and gateway/web health |
+| `kit down` | Stop supervisor and compose (`--keep-infra` keeps compose) |
+
+The current process still needs the operator to start it; the recovery kernel
+that watches `kit up` and rolls back to the last-known-good tag is the next
+slice before 1.0.
+
+### Recovery kernel (kitd)
+
+The recovery kernel deliberately lives **outside the repository** at
+`%USERPROFILE%\.agent-team-kit`, so a bad self-change cannot remove the
+ability to recover.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-kitd.ps1
+```
+
+| Command | What it does |
+|---|---|
+| `kitd status` | supervisor + gateway (+ web) health |
+| `kitd check` | one health check; writes the external audit JSONL |
+| `kitd snapshot` | tag `lkg-0.9.0-preview` and create an external git bundle |
+| `kitd rollback -DryRun` | show the preserved branch + reset plan |
+| `kitd rollback` | preserve `recovery/<timestamp>`, reset to LKG, reinstall, restart |
+| `kitd watch` | health loop; 3 failures -> rollback; `KILL` file stops the system |
+| `kitd install-task` | optional Windows logon scheduled task |
+
+Audit: `%USERPROFILE%\.agent-team-kit\audit\kitd.jsonl`.
+Kill switch: `%USERPROFILE%\.agent-team-kit\KILL`.
+Rollback refuses a dirty working tree; it first creates a `recovery/<timestamp>`
+branch so the bad state is not lost. The current v1 is PowerShell/Windows; a
+POSIX service wrapper is a later slice.
+
+### Task-centric self-iteration
+
+```bash
+bun run kit iterate \
+  --pack packs/self-improve \
+  --goal "Improve security and UX with small verified changes" \
+  --max-tasks 2 --live --apply low
+```
+
+Flow: Planner → task plan artifact → external coder (DSH by default) in an
+isolated repository copy under `%TEMP%/agent-team-kit` (override with
+`KIT_CODER_SANDBOX_ROOT`) → independent `typecheck`/`lint`/`test` → repair with
+feedback → risk classifier → low-risk apply with commit + backup → report.
+
+- `--stub` uses a deterministic three-task plan (security + UX + docs) without
+  a planner model call; the coder still runs for real.
+- `--apply none|low|low-medium` controls auto-apply. High-risk changes are
+  never auto-applied.
+- Coder overrides: `--coder dsh|codex|opencode|command`. Codex/OpenCode commands
+  can be configured with `KIT_CODER_CODEX_CMD` / `KIT_CODER_OPENCODE_CMD`.
+- Evidence is stored as artifacts (`plan`, `coder.result`, `coder.transcript`,
+  `coder.diff`, `verification`, `risk`, `apply`, `report`).
+
+### Open templates and workshop
+
+Built-in teams are data, not code: `templates/<id>/template.yaml` is validated
+and listed by the CLI and the new-pack wizard.
+
+```bash
+bun run kit init .tmp/my-team --template research
+bun run kit init .tmp/list --list
+```
+
+Pack Studio can list, create, rename and delete workflows; every write is
+validated and `team.yaml` is updated atomically.
+
+The GitHub workshop is topic-indexed (`agent-team-workshop`) and uses a
+`workshop.yaml` manifest. Installs pin a commit, reject unsafe paths, enforce
+size limits, and require explicit consent for code-bearing items.
+
+```bash
+bun run kit workshop search --query "code review"
+bun run kit workshop preview acme/team-pack
+bun run kit workshop install acme/team-pack --target packs --yes
+```
+
+Items with `permissions.code: true` additionally require `--allow-code`.
+
+### Fitness signals and proposals
+
+Each iteration publishes a `fitness` artifact and appends one JSONL line per
+task to `%USERPROFILE%\.agent-team-kit\signals\iterations.jsonl` (override
+`KIT_SIGNALS_ROOT`).
+
+```bash
+bun run kit signals summarize
+bun run kit signals propose --dry-run
+bun run kit signals propose
+```
+
+`propose` writes Markdown proposals to
+`%USERPROFILE%\.agent-team-kit\proposals` for domains below 50% pass over at
+least two tasks. Proposals are manual; canary/promotion remains gated.
+
+### External events
+
+The gateway accepts signed requests and publishes canonical events to NATS.
+The runtime routes events to workflows whose `trigger.event` matches
+(exact, prefix `github.*`, or `*`).
+
+| Route | Env | Events |
+|---|---|---|
+| `POST /ingest/generic` | `KIT_EVENT_SECRET` | `{type, payload, occurredAt?, idempotencyKey?}` |
+| `POST /ingest/github` | `GITHUB_WEBHOOK_SECRET`, optional `KIT_GITHUB_REPO` | issues, issue_comment, workflow_run, check_run, pull_request |
+| `POST /ingest/sentry` | — | scheduled for the next slice |
+| `GET /health` | — | gateway health |
+
+```bash
+$env:KIT_EVENT_SECRET="..."   # PowerShell
+bun run kit event emit --type signal.test --payload-file .tmp/event.json
+```
+
+GitHub/Sentry delivery needs a public URL or tunnel. `kit event emit` uses the
+same signature path locally. Set `KIT_EVENT_RUN_MODE=live` to let routed events
+start LIVE runs; the default is DRY_RUN.
+
+### Autonomy boundary
+
+The repository is fully modifiable by the system inside task sandboxes. The
+recovery kernel (LKG, rollback, audit sink, kill switch) must live outside the
+repository and outside the agent's write surface; otherwise one bad change can
+remove the ability to recover. Product changes are classified:
+
+| Risk | Examples | Default |
+|---|---|---|
+| low | docs, tests, i18n copy, non-core styles | auto-apply after checks |
+| medium | non-core feature code, pages, scripts | auto in `low-medium` after checks + production build (canary gate) |
+| high | runtime/orchestrator, auth, approval/apply, dependencies, deploy, secrets | human approval |
+
+Forbidden changes (secrets, `.git`, deleting audit/tests, escaping the sandbox)
+are blocked outright.
 
 ### Storage backends
 
@@ -124,9 +319,9 @@ bun run kit pack simulate packs/tech-radar
 bun run kit model check --alias deepseek-flash
 ```
 
-Templates: `minimal`, `research`, and `content`. The browser wizard at
-`/packs/new` produces the same files; `/packs/<dir>/studio` edits them with
-full-pack validation on every save.
+Templates: `minimal`, `research`, `content`, and `product`. The browser
+wizard at `/packs/new` produces the same files; `/packs/<dir>/studio` edits
+them with full-pack validation on every save.
 
 - `validate` checks schema, agent/skill frontmatter, workflow/policy structure,
   references, kit compatibility, and obvious secrets.
@@ -278,6 +473,38 @@ auto-approves matching paused runs, and records heartbeat state. The console at
 and a kill switch. `KIT_AUTOPILOT_DISABLED=1` stops all ticks. See
 [docs/open-platform.md](./docs/open-platform.md).
 
+### Delivery and publishing
+
+A workflow can deliver its final artifact after the run when it declares a
+`delivery` block:
+
+```yaml
+delivery:
+  channel: email        # email | webhook | im | local_file
+  approval: required_if_published
+```
+
+- **Email** uses `KIT_SMTP_*` plus `KIT_DELIVERY_EMAIL_TO`. QQ Mail requires the
+  SMTP authorization code, not the account password.
+- **Webhook** posts the artifact to `KIT_DELIVERY_WEBHOOK_URL` with an optional
+  HMAC signature; `im` is the same mechanism for chat robots.
+- **local_file** writes to `~/.agent-team-kit/outbox`.
+- `DRY_RUN` never sends. Every attempt is recorded as a `delivery` artifact.
+
+Publish runs to a static archive and push it to GitHub Pages:
+
+```bash
+bun run kit publish <runId> --push --yes
+```
+
+The archive gets a root index, a run page with metrics and a stage timeline, and
+one Markdown artifact page per artifact with provenance and a raw-content
+toggle. Tool calls, gates, approvals and delivery records are excluded; artifacts
+that match high-confidence secret patterns block the publish. Output lives in
+`~/.agent-team-kit/publish`; repeat publishes merge into the same archive.
+
+See [docs/delivery.md](./docs/delivery.md) for SMTP, Pages and safer alternatives.
+
 ### Task-centric team and tools
 
 Agents carry `role: builder | seller | manager | specialist`; a Pack decides
@@ -317,6 +544,7 @@ bun run web:dev   # http://localhost:3000
 | `/office` | Task-first Manager Office: Demand/Build/Deliver/Blocked/Done board, Seller/Builder/Specialist assignment, manager chat, pixel roster |
 | `/` | Command Center: exceptions, in-flight runs, spend, recent artifacts |
 | `/manager` | Streaming Manager chat with artifact citations and exchange artifacts |
+| `/factory` | Pixel approval conveyor: one-key low-risk, batch low, high-risk confirmation, keyboard; `/inbox` remains the list fallback |
 | `/inbox` | Paused approvals; evidence, draft, diff, approve/abort |
 | `/runs/[runId]` | Stage timeline, gate evidence, artifact viewer, provenance |
 | `/packs` | Inspect/validate/simulate packs; start DRY_RUN workflows; create teams |
@@ -365,13 +593,17 @@ bunx vitest run packages/store/test/integration.test.ts
 ## Layout
 
 ```
-apps/cli        CLI
-apps/runtime    NATS consumer + ingestor + Temporal workers (D4)
+apps/cli        CLI (incl. kit up/down/iterate/event)
+apps/runtime    NATS event router + Temporal workers + iteration activities
+apps/gateway    Signed event gateway (generic + GitHub webhooks)
 apps/web        Manager Console (glass-box + chat + approvals + runner)
 packages/core   contracts (events, runs, artifacts, packs)
 packages/store  Postgres repositories + fs/S3 blob adapters
 packages/queue  NATS JetStream adapter
 packages/workflow Temporal adapter
+packages/coder  external coding-agent adapters + sandbox/diff evidence
+packages/delivery email, webhook and local-outbox delivery
+packages/workshop GitHub workshop manifest/search/preview/install
 packages/model  model gateway (DeepSeek)
 packages/manager Manager briefs, decisions, approval lookup
 packages/pack   Pack loading/validation, run builder, simulation, Studio CRUD
@@ -380,9 +612,10 @@ packages/autopilot Cron parser, daemon, budgets, auto-approvals, state
 packages/evolution Variant lab, canary, self-evolution cycle
 packages/tools  Tool registry: repo, security scans, checks, sandbox patches, web
 packages/telemetry OpenTelemetry
+templates/      data-driven built-in team templates
 packs/minimal   minimal example Team Pack
 packs/tech-radar reference mold + sample autopilot policy
-packs/self-improve task-centric Cyber/UX squad for this repository
+packs/self-improve task-centric Cyber/UX squad + iteration.yaml routing
 examples/sources example market source
 deploy          docker compose + collector config
 ```
@@ -394,6 +627,16 @@ bun run typecheck
 bun run test
 bun run lint
 ```
+
+## Community
+
+- **Contribute:** [CONTRIBUTING.md](./CONTRIBUTING.md) — teams, docs, translations and code.
+- **Questions:** [SUPPORT.md](./SUPPORT.md) and GitHub Discussions.
+- **Security:** [SECURITY.md](./SECURITY.md) — private reports only.
+- **Roadmap:** [ROADMAP.md](./ROADMAP.md).
+- **Share a team:** publish a pack in your own repository and open a "Team pack submission"
+  issue, or tag it with the `agent-team-workshop` topic so `kit workshop search` finds it.
+- **中文说明:** [README.zh-CN.md](./README.zh-CN.md).
 
 ## License
 

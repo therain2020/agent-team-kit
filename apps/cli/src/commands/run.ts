@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+﻿import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { eventEnvelopeSchema, newId } from "@kit/core";
 import { loadPack } from "@kit/pack";
@@ -110,7 +110,7 @@ export function registerRun(program: Command): void {
       } finally {
         span.end();
         await connection.close();
-        await store.sql.end();
+        await store.close();
         await shutdownTelemetry();
       }
     });

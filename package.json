@@ -1,8 +1,31 @@
 {
   "name": "agent-team-kit",
-  "version": "1.0.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
+  "description": "Self-hosted private agent teams with approvals, audit and rollback",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/therain2020/agent-team-kit.git"
+  },
+  "homepage": "https://github.com/therain2020/agent-team-kit",
+  "bugs": {
+    "url": "https://github.com/therain2020/agent-team-kit/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "agent-team",
+    "multi-agent",
+    "agent-orchestration",
+    "autonomy",
+    "self-hosted",
+    "local-first",
+    "typescript",
+    "bun",
+    "temporal",
+    "deepseek"
+  ],
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "kit": "bun run apps/cli/src/index.ts",

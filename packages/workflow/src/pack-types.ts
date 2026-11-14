@@ -27,14 +27,20 @@ export interface PackApprovalSpec {
 export interface PackStageSpec {
   stageId: string;
   stageName: string;
-  type: "workflow" | "agent";
+  type: "workflow" | "agent" | "coder";
   agentId?: string;
+  coder?: "dsh" | "codex" | "opencode" | "command";
+  goal?: string;
+  acceptance?: string;
   modelAlias?: string;
   instructions?: string;
   tools?: string[];
+  timeoutMs?: number;
   gate?: StageGate;
   includeInitialInput?: boolean;
   inputFromStageId?: string;
+  inputsFromStageIds?: string[];
+  position?: { x: number; y: number };
   revision?: RevisionSpec;
   approval?: PackApprovalSpec;
 }
@@ -49,6 +55,10 @@ export interface PackRunInput {
   initialInput: string;
   stages: PackStageSpec[];
   stub: boolean;
+  delivery?: {
+    channel: "im" | "email" | "local_file" | "webhook";
+    approval?: "never" | "required_if_published";
+  };
 }
 
 export interface PreparePackRunInput {
@@ -67,6 +77,7 @@ export interface PackStageExecutionInput extends PackStageSpec {
   runMode: "DRY_RUN" | "LIVE";
   inputText: string;
   inputArtifactId?: string;
+  inputArtifactIds?: string[];
   evidenceText?: string;
   stub: boolean;
   gateApproved?: boolean;

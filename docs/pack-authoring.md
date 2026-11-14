@@ -6,8 +6,8 @@ any editor; every save through the console is validated first.
 
 ## Create
 
-Browser: open `/packs/new`, pick `Minimal`, `Research`, or `Content`, name the
-team, add employees, and create.
+Browser: open `/packs/new`, pick `Minimal`, `Research`, `Content`, or
+`Product`, name the team, add employees, and create.
 
 CLI (same result):
 

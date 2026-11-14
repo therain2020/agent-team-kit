@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a capability, a UX improvement or a workflow.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user and the moment where they get stuck.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should happen? Include commands, files or screens if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: area
+    attributes:
+      label: Area
+      options:
+        - label: Runtime / orchestration
+        - label: CLI
+        - label: Manager Console
+        - label: Packs and templates
+        - label: Docs and translations
+        - label: Tooling / CI
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Are you willing to contribute this?
+      options:
+        - label: I can open a PR for this.

@@ -3,8 +3,11 @@ node_modules/
 .env.local
 dist/
 .next/
+*.tsbuildinfo
 .tmp/
+.backup/
 variants/
 *.log
 .DS_Store
 .gstack/
+.claude/worktrees/

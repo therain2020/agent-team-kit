@@ -72,12 +72,12 @@
   the self-evolution cycle (`kit evolve cycle`). Verified by 36 tests, a
   production build, and browser E2E: Office mission completion, approval pause →
   auto-approve, evolution canary, Autopilot heartbeat, and EN/中文 switching.
-- Task-centric 1.0: Builder/Seller/Specialist roles and Pack role rules; a
-  Demand → Build → Deliver → Blocked → Done task board; `product` and
+- Task-centric preview (0.9.0): Builder/Seller/Specialist roles and Pack role
+  rules; a Demand → Build → Deliver → Blocked → Done task board; `product` and
   `self-improve` (Cyber/UX) packs; a controlled model/tool loop over repo
   read/search/diff, static security scans, fixed checks, sandbox patches,
   HTTP fetch and browser inspection; `kit patch apply` with backups. Verified by
-  46 tests, a live `repo_read` tool run, and the self-improve task board.
+  the test suite, a live `repo_read` tool run, and the self-improve task board.
 
 ## Further reading
 
