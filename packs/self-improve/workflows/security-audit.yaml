@@ -1,0 +1,51 @@
+id: security-audit
+version: 1.0
+trigger:
+  event: security.audit.requested
+stages:
+  - id: intake
+    type: workflow
+    inputs: [request]
+    outputs: [scope]
+    timeout: 2m
+  - id: audit
+    type: agent
+    agent: cyber-auditor
+    inputs: [scope]
+    outputs: [findings]
+    includeInitialInput: true
+    timeout: 25m
+    retry:
+      max: 1
+      backoff: fixed
+  - id: patch
+    type: agent
+    agent: patcher
+    inputs: [findings]
+    outputs: [patch]
+    includeInitialInput: true
+    timeout: 30m
+    retry:
+      max: 1
+      backoff: fixed
+  - id: verify
+    type: agent
+    agent: verifier
+    inputs: [patch]
+    outputs: [verification]
+    includeInitialInput: true
+    timeout: 25m
+  - id: deliver
+    type: agent
+    agent: seller
+    inputs: [verification]
+    outputs: [security_report]
+    includeInitialInput: true
+    timeout: 10m
+    approval:
+      mode: required
+      position: after
+      riskClass: high
+      ttl: 24h
+delivery:
+  channel: local_file

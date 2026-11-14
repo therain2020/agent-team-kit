@@ -1,0 +1,19 @@
+version: 1
+rubrics:
+  radar:
+    dimensions:
+      factuality:
+        weight: 0.3
+        threshold: 4
+      citations:
+        weight: 0.25
+        threshold: 0.95
+      coverage:
+        weight: 0.2
+        threshold: 3
+      structure:
+        weight: 0.15
+        threshold: 3
+      actionability:
+        weight: 0.1
+        threshold: 3

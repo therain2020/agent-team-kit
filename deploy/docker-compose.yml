@@ -1,0 +1,100 @@
+name: agent-team-kit
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kit}
+      POSTGRES_DB: ${POSTGRES_DB:-kit}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # MinIO community images were removed from Docker Hub/Quay in 2026.
+  # Chainguard publishes a maintained, non-root build; digest is pinned.
+  minio-perms:
+    image: postgres:16-alpine
+    user: "0:0"
+    volumes:
+      - miniodata:/data
+    command: ["sh", "-c", "chown -R 65532:65532 /data"]
+
+  minio:
+    image: cgr.dev/chainguard/minio:latest@sha256:ddfab4c402bf32e7701600d16d8c40dbccfab4c4e5340eef4c324394349c7926
+    depends_on:
+      minio-perms:
+        condition: service_completed_successfully
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-kit}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-kitkitkit}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  temporal:
+    image: temporalio/auto-setup:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-kit}
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:-kit}
+      POSTGRES_SEEDS: postgres
+    ports:
+      - "7233:7233"
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000,http://localhost:3001
+    ports:
+      - "8080:8080"
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4319:4317"
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    depends_on:
+      - jaeger
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+volumes:
+  pgdata:
+  miniodata:

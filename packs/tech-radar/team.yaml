@@ -1,0 +1,49 @@
+apiVersion: agentteam/v1
+kind: TeamPack
+metadata:
+  name: tech-radar
+  version: 1.0.0
+  description: Internal technology trend radar (reference mold)
+  license: Apache-2.0
+  compatibility:
+    kit: ">=0.1 <2.0"
+
+manager:
+  agent: agents/manager.md
+  model: deepseek-pro
+  budget:
+    tokens: 16000
+    costCny: 3
+    wallClockSeconds: 180
+
+agents:
+  - id: researcher
+    file: agents/researcher.md
+    model: deepseek-flash
+    tools: [web_search, fetch, rss]
+    skills: [citation-check]
+  - id: writer
+    file: agents/writer.md
+    model: deepseek-pro
+    tools: []
+    skills: [citation-check]
+  - id: reviewer
+    file: agents/reviewer.md
+    model: deepseek-pro
+    tools: []
+    skills: [citation-check]
+
+workspaces:
+  radar:
+    agents: [researcher, writer, reviewer]
+    delivery: local_file
+
+workflows:
+  - workflows/daily-radar.yaml
+  - workflows/flash-radar.yaml
+
+policies:
+  - policies/autonomy.yaml
+
+evals:
+  rubrics: evals/rubrics.yaml

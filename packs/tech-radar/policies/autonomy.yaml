@@ -1,0 +1,15 @@
+version: 1
+actions:
+  - match: tool.web_search
+    class: A
+  - match: tool.fetch
+    class: A
+  - match: tool.rss
+    class: A
+  - match: tool.deliver_external
+    class: C
+    approval:
+      ttl: 2h
+      scope: per_item
+  - match: tool.delete
+    class: D

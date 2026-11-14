@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@kit/core": ["./packages/core/src/index.ts"],
+      "@kit/store": ["./packages/store/src/index.ts"],
+      "@kit/queue": ["./packages/queue/src/index.ts"],
+      "@kit/workflow": ["./packages/workflow/src/index.ts"],
+      "@kit/model": ["./packages/model/src/index.ts"],
+      "@kit/manager": ["./packages/manager/src/index.ts"],
+      "@kit/pack": ["./packages/pack/src/index.ts"],
+      "@kit/evolution": ["./packages/evolution/src/index.ts"],
+      "@kit/telemetry": ["./packages/telemetry/src/index.ts"],
+      "@kit/testing": ["./packages/testing/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "apps/*/src/**/*.ts",
+    "apps/*/test/**/*.ts"
+  ]
+}

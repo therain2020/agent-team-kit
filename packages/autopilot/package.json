@@ -1,0 +1,17 @@
+{
+  "name": "@kit/autopilot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kit/core": "workspace:*",
+    "@kit/evolution": "workspace:*",
+    "@kit/manager": "workspace:*",
+    "@kit/pack": "workspace:*",
+    "@kit/store": "workspace:*",
+    "@kit/workflow": "workspace:*"
+  }
+}

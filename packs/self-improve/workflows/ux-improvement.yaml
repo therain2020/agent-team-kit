@@ -1,0 +1,48 @@
+id: ux-improvement
+version: 1.0
+trigger:
+  event: ux.improvement.requested
+stages:
+  - id: intake
+    type: workflow
+    inputs: [request]
+    outputs: [scope]
+    timeout: 2m
+  - id: research
+    type: agent
+    agent: ux-researcher
+    inputs: [scope]
+    outputs: [ux_findings]
+    includeInitialInput: true
+    timeout: 20m
+  - id: build
+    type: agent
+    agent: frontend-builder
+    inputs: [ux_findings]
+    outputs: [ux_patch]
+    includeInitialInput: true
+    timeout: 30m
+    retry:
+      max: 1
+      backoff: fixed
+  - id: verify
+    type: agent
+    agent: verifier
+    inputs: [ux_patch]
+    outputs: [ux_verification]
+    includeInitialInput: true
+    timeout: 25m
+  - id: deliver
+    type: agent
+    agent: seller
+    inputs: [ux_verification]
+    outputs: [ux_report]
+    includeInitialInput: true
+    timeout: 10m
+    approval:
+      mode: required
+      position: after
+      riskClass: medium
+      ttl: 24h
+delivery:
+  channel: local_file

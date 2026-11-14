@@ -1,0 +1,31 @@
+apiVersion: agentteam/v1
+kind: TeamPack
+metadata:
+  name: minimal
+  version: 1.0.0
+  description: Minimal echo team for M0 smoke tests
+  license: Apache-2.0
+  compatibility:
+    kit: ">=0.1 <2.0"
+
+manager:
+  agent: agents/echo.md
+  model: deepseek-flash
+
+agents:
+  - id: echo
+    file: agents/echo.md
+    model: deepseek-flash
+    tools: []
+    skills: []
+
+workspaces:
+  default:
+    agents: [echo]
+    delivery: local_file
+
+workflows:
+  - workflows/demo.yaml
+
+policies:
+  - policies/autonomy.yaml

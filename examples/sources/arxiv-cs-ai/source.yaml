@@ -1,0 +1,24 @@
+apiVersion: agentteam/source/v1
+kind: Source
+metadata:
+  name: arxiv-cs-ai
+  version: 1.0.0
+  description: Latest arXiv cs.AI submissions via the public Atom feed
+  license: CC0-1.0
+  homepage: https://arxiv.org
+  author: agent-team-kit
+spec:
+  type: rss
+  request:
+    url: https://export.arxiv.org/rss/cs.AI
+    headers:
+      user-agent: agent-team-kit/0.1
+  limits:
+    timeoutMs: 20000
+    maxItems: 20
+compliance:
+  tos: https://info.arxiv.org/help/api/tou.html
+  attribution: required
+  notes: Follow arXiv API terms and rate limits.
+security:
+  dataOnly: true

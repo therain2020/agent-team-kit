@@ -1,0 +1,27 @@
+{
+  "name": "@kit/cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "kit": "./src/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kit/core": "workspace:*",
+    "@kit/evolution": "workspace:*",
+    "@kit/manager": "workspace:*",
+    "@kit/model": "workspace:*",
+    "@kit/pack": "workspace:*",
+    "@kit/source": "workspace:*",
+    "@kit/store": "workspace:*",
+    "@kit/telemetry": "workspace:*",
+    "@kit/workflow": "workspace:*",
+    "@opentelemetry/api": "^1.9.0",
+    "commander": "^12.1.0",
+    "jszip": "^3.10.1",
+    "yaml": "^2.6.1"
+  }
+}

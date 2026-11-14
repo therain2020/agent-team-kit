@@ -1,0 +1,16 @@
+version: 1
+enabled: false
+timezone: Asia/Shanghai
+schedules: []
+approval:
+  autoApprove:
+    enabled: false
+    maxRisk: low
+    maxRunCostCny: 1
+    onTimeout: wait
+evolution:
+  enabled: false
+  cadence: weekly
+  agent: seller
+  autoApply: false
+  budgetCny: 2

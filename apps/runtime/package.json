@@ -1,0 +1,26 @@
+{
+  "name": "@kit/runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kit/autopilot": "workspace:*",
+    "@kit/core": "workspace:*",
+    "@kit/model": "workspace:*",
+    "@kit/pack": "workspace:*",
+    "@kit/queue": "workspace:*",
+    "@kit/store": "workspace:*",
+    "@kit/telemetry": "workspace:*",
+    "@kit/tools": "workspace:*",
+    "@kit/workflow": "workspace:*",
+    "@opentelemetry/api": "^1.9.0",
+    "@temporalio/activity": "^1.15.0",
+    "@temporalio/client": "^1.15.0",
+    "@temporalio/common": "^1.15.0",
+    "@temporalio/worker": "^1.15.0",
+    "@temporalio/workflow": "^1.15.0"
+  }
+}

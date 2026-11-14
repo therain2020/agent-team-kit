@@ -1,0 +1,25 @@
+id: flash-radar
+version: 1.0
+trigger:
+  event: tech.signal.priority
+stages:
+  - id: triage
+    type: agent
+    agent: researcher
+    inputs: [priority_signal]
+    outputs: [triage_note]
+    timeout: 5m
+  - id: summarize
+    type: agent
+    agent: writer
+    inputs: [triage_note]
+    outputs: [flash_note]
+    timeout: 10m
+  - id: deliver
+    type: workflow
+    inputs: [flash_note]
+    outputs: [delivery_record]
+    timeout: 5m
+    inputFrom: summarize
+delivery:
+  channel: local_file

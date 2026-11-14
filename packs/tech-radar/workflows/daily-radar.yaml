@@ -1,0 +1,49 @@
+id: daily-radar
+version: 1.0
+trigger:
+  event: radar.window.closed
+  schedule: "30 6 * * *"
+stages:
+  - id: collect
+    type: workflow
+    inputs: [raw_capture]
+    outputs: [canonical_events]
+    timeout: 5m
+    retry:
+      max: 3
+      backoff: exp
+  - id: cluster
+    type: agent
+    agent: researcher
+    inputs: [canonical_events]
+    outputs: [candidate_set]
+    timeout: 15m
+    retry:
+      max: 2
+      backoff: fixed
+  - id: synthesize
+    type: agent
+    agent: writer
+    inputs: [candidate_set]
+    outputs: [radar_draft]
+    timeout: 30m
+    includeInitialInput: true
+  - id: review
+    type: agent
+    agent: reviewer
+    inputs: [radar_draft]
+    outputs: [gate_result]
+    timeout: 10m
+    includeInitialInput: true
+    gate: evals/rubrics.yaml#radar
+  - id: deliver
+    type: workflow
+    inputs: [gate_result]
+    outputs: [delivery_record]
+    timeout: 10m
+    inputFrom: synthesize
+    retry:
+      max: 3
+      backoff: exp
+delivery:
+  channel: local_file

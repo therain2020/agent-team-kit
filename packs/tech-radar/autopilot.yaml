@@ -1,0 +1,25 @@
+version: 1
+enabled: false
+timezone: Asia/Shanghai
+schedules:
+  - id: daily-radar
+    workflow: daily-radar
+    cron: "30 6 * * *"
+    mode: DRY_RUN
+    inputFile: ../../.tmp/evidence.json
+    budget:
+      dailyRuns: 2
+      dailyCostCny: 2
+approval:
+  autoApprove:
+    enabled: false
+    maxRisk: medium
+    maxRunCostCny: 0.5
+    onTimeout: wait
+evolution:
+  enabled: false
+  cadence: weekly
+  agent: writer
+  evidenceFile: ../../.tmp/evidence.json
+  autoApply: false
+  budgetCny: 2

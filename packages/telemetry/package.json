@@ -1,0 +1,14 @@
+{
+  "name": "@kit/telemetry",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.57.2",
+    "@opentelemetry/resources": "^1.30.1",
+    "@opentelemetry/sdk-node": "^0.57.2"
+  }
+}

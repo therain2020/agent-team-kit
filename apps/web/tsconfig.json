@@ -1,0 +1,32 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "allowJs": true,
+    "incremental": true,
+    "jsx": "preserve",
+    "plugins": [{ "name": "next" }],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@kit/core": ["../../packages/core/src/index.ts"],
+      "@kit/store": ["../../packages/store/src/index.ts"],
+      "@kit/queue": ["../../packages/queue/src/index.ts"],
+      "@kit/workflow": ["../../packages/workflow/src/index.ts"],
+      "@kit/model": ["../../packages/model/src/index.ts"],
+      "@kit/manager": ["../../packages/manager/src/index.ts"],
+      "@kit/pack": ["../../packages/pack/src/index.ts"],
+      "@kit/evolution": ["../../packages/evolution/src/index.ts"],
+      "@kit/telemetry": ["../../packages/telemetry/src/index.ts"],
+      "@kit/source": ["../../packages/source/src/index.ts"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "../../packages/*/src/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

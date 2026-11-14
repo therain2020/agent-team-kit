@@ -1,0 +1,83 @@
+apiVersion: agentteam/v1
+kind: TeamPack
+metadata:
+  name: self-improve
+  version: 1.0.0
+  description: Apply the task-centric Builder/Seller model to this repository (cyber + UX squads)
+  license: Apache-2.0
+  compatibility:
+    kit: ">=0.1 <2.0"
+
+manager:
+  agent: agents/manager.md
+  model: deepseek-pro
+  budget:
+    tokens: 32000
+    costCny: 5
+    wallClockSeconds: 600
+
+roles:
+  requireSeller: true
+  requireBuilder: true
+  allowCombined: false
+
+agents:
+  - id: manager
+    file: agents/manager.md
+    model: deepseek-pro
+    role: manager
+    tools: []
+    skills: []
+  - id: seller
+    file: agents/seller.md
+    model: deepseek-pro
+    role: seller
+    tools: [repo_read, repo_search]
+    skills: []
+  - id: cyber-auditor
+    file: agents/cyber-auditor.md
+    model: deepseek-pro
+    role: specialist
+    tools:
+      [repo_list, repo_read, repo_search, repo_diff, security_scan_code, security_scan_dependencies, repo_typecheck, repo_lint, http_fetch]
+    skills: []
+  - id: patcher
+    file: agents/patcher.md
+    model: deepseek-pro
+    role: builder
+    tools:
+      [repo_read, repo_search, workspace_write, workspace_diff, repo_typecheck, repo_test, repo_lint]
+    skills: []
+  - id: ux-researcher
+    file: agents/ux-researcher.md
+    model: deepseek-pro
+    role: specialist
+    tools: [repo_read, repo_search, browser_inspect, http_fetch]
+    skills: []
+  - id: frontend-builder
+    file: agents/frontend-builder.md
+    model: deepseek-pro
+    role: builder
+    tools:
+      [repo_read, repo_search, workspace_write, workspace_diff, repo_build, repo_lint, repo_test]
+    skills: []
+  - id: verifier
+    file: agents/verifier.md
+    model: deepseek-pro
+    role: specialist
+    tools:
+      [repo_typecheck, repo_test, repo_lint, repo_build, workspace_diff, security_scan_code, browser_inspect]
+    skills: []
+
+workspaces:
+  self:
+    agents:
+      [seller, cyber-auditor, patcher, ux-researcher, frontend-builder, verifier]
+    delivery: local_file
+
+workflows:
+  - workflows/security-audit.yaml
+  - workflows/ux-improvement.yaml
+
+policies:
+  - policies/autonomy.yaml

@@ -1,0 +1,199 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.17 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.17 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.696 0.17 162.48);
+  --primary-foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.637 0.237 25.331);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.696 0.17 162.48);
+  --sidebar: oklch(0.13 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.22 0 0);
+  --sidebar-border: oklch(0.24 0 0);
+  --radius: 0.5rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-border: var(--sidebar-border);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas,
+    monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+
+  ::selection {
+    @apply bg-primary/25;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+}
+
+@layer components {
+  .prose-kit {
+    @apply text-sm leading-6 text-zinc-200;
+  }
+
+  .prose-kit h1 {
+    @apply mt-6 mb-3 text-xl font-semibold text-zinc-50;
+  }
+
+  .prose-kit h2 {
+    @apply mt-6 mb-2 text-lg font-semibold text-zinc-50;
+  }
+
+  .prose-kit h3 {
+    @apply mt-5 mb-2 text-base font-semibold text-zinc-100;
+  }
+
+  .prose-kit p {
+    @apply my-2;
+  }
+
+  .prose-kit ul {
+    @apply my-2 list-disc space-y-1 pl-5;
+  }
+
+  .prose-kit ol {
+    @apply my-2 list-decimal space-y-1 pl-5;
+  }
+
+  .prose-kit a {
+    @apply text-emerald-400 underline underline-offset-2 hover:text-emerald-300;
+  }
+
+  .prose-kit code {
+    @apply rounded bg-zinc-800 px-1 py-0.5 font-mono text-[0.85em] text-zinc-100;
+  }
+
+  .prose-kit pre {
+    @apply my-3 overflow-x-auto rounded-md border border-zinc-800 bg-zinc-950 p-3;
+  }
+
+  .prose-kit pre code {
+    @apply bg-transparent p-0;
+  }
+
+  .prose-kit blockquote {
+    @apply my-3 border-l-2 border-zinc-700 pl-3 text-zinc-400;
+  }
+
+  .prose-kit table {
+    @apply my-3 w-full border-collapse text-xs;
+  }
+
+  .prose-kit th,
+  .prose-kit td {
+    @apply border border-zinc-800 px-2 py-1 text-left;
+  }
+
+  .prose-kit th {
+    @apply bg-zinc-900 font-medium;
+  }
+
+  .prose-kit hr {
+    @apply my-4 border-zinc-800;
+  }
+}
+
+@keyframes pixel-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.pixel-bob-idle {
+  animation: pixel-bob 2.4s ease-in-out infinite;
+}
+
+@keyframes office-blink {
+  0%,
+  92%,
+  100% {
+    opacity: 1;
+  }
+  95% {
+    opacity: 0.2;
+  }
+}
+
+@keyframes office-screen {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-bob-idle,
+  .office-blink,
+  .office-screen {
+    animation: none !important;
+  }
+}

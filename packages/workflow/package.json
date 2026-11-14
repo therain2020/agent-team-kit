@@ -1,0 +1,13 @@
+{
+  "name": "@kit/workflow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kit/core": "workspace:*",
+    "@temporalio/client": "^1.15.0"
+  }
+}
