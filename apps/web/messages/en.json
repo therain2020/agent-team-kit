@@ -221,6 +221,7 @@
     "noFailed": "No recent failed runs.",
     "failed": "failed",
     "artifactsCost": "{count, plural, one {# artifact} other {# artifacts}} · {cost}",
+    "failedAgo": "failed {time}",
     "fyi": "FYI",
     "fyiBody": "Canary rollbacks and budget alerts will appear here. Nothing open right now."
   },

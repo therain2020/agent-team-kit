@@ -118,23 +118,34 @@ export default async function InboxPage() {
               <Link
                 key={item.run.runId}
                 href={`/runs/${encodeURIComponent(item.run.runId)}`}
-                className="rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-accent/50"
+                className="group rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:border-zinc-600 hover:bg-accent/50"
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-xs text-zinc-200">
                     {item.run.runId}
                   </span>
                   <Badge variant="danger">{statusT("failed")}</Badge>
-                  <span className="ml-auto text-[10px] text-zinc-500">
-                    {t("artifactsCost", {
-                      count: item.artifactCount,
-                      cost: formatCny(item.costCny),
+                  <span className="ml-auto flex items-center gap-1 text-[10px] text-zinc-500">
+                    <Clock3 className="size-3" />
+                    {t("failedAgo", {
+                      time: timeAgo(item.run.updatedAt, locale),
                     })}
                   </span>
                 </div>
                 <p className="mt-1.5 line-clamp-2 text-xs text-zinc-500">
                   {item.reason}
                 </p>
+                <div className="mt-2 flex items-center gap-3 text-[10px] text-zinc-500">
+                  <span>
+                    {t("artifactsCost", {
+                      count: item.artifactCount,
+                      cost: formatCny(item.costCny),
+                    })}
+                  </span>
+                  <span className="ml-auto text-zinc-400 group-hover:text-zinc-200">
+                    {common("openRun")} →
+                  </span>
+                </div>
               </Link>
             ))}
           </div>
