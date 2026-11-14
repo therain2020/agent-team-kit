@@ -14,7 +14,7 @@
     },
     "apps/cli": {
       "name": "@kit/cli",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "bin": {
         "kit": "./src/index.ts",
       },
@@ -45,7 +45,7 @@
     },
     "apps/runtime": {
       "name": "@kit/runtime",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@kit/autopilot": "workspace:*",
         "@kit/coder": "workspace:*",
@@ -67,7 +67,7 @@
     },
     "apps/web": {
       "name": "@kit/web",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@ai-sdk/openai-compatible": "^3.0.92",
         "@ai-sdk/react": "^4.0.177",
@@ -113,7 +113,7 @@
     },
     "packages/autopilot": {
       "name": "@kit/autopilot",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
         "@kit/evolution": "workspace:*",
@@ -129,7 +129,7 @@
     },
     "packages/core": {
       "name": "@kit/core",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "ulid": "^2.3.0",
         "zod": "^3.24.1",
@@ -137,7 +137,7 @@
     },
     "packages/evolution": {
       "name": "@kit/evolution",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
         "@kit/model": "workspace:*",
@@ -147,7 +147,7 @@
     },
     "packages/manager": {
       "name": "@kit/manager",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
         "@kit/model": "workspace:*",
@@ -156,11 +156,11 @@
     },
     "packages/model": {
       "name": "@kit/model",
-      "version": "1.0.0",
+      "version": "0.9.0",
     },
     "packages/pack": {
       "name": "@kit/pack",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
         "@kit/workflow": "workspace:*",
@@ -169,14 +169,14 @@
     },
     "packages/queue": {
       "name": "@kit/queue",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "nats": "^2.28.0",
       },
     },
     "packages/source": {
       "name": "@kit/source",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "yaml": "^2.6.1",
         "zod": "^3.24.1",
@@ -184,7 +184,7 @@
     },
     "packages/store": {
       "name": "@kit/store",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@aws-sdk/client-s3": "^3.700.0",
         "@kit/core": "workspace:*",
@@ -194,7 +194,7 @@
     },
     "packages/telemetry": {
       "name": "@kit/telemetry",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@opentelemetry/exporter-trace-otlp-grpc": "^0.57.2",
         "@opentelemetry/resources": "^1.30.1",
@@ -203,21 +203,21 @@
     },
     "packages/testing": {
       "name": "@kit/testing",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
       },
     },
     "packages/tools": {
       "name": "@kit/tools",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "diff": "^9.0.0",
       },
     },
     "packages/workflow": {
       "name": "@kit/workflow",
-      "version": "1.0.0",
+      "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
         "@temporalio/client": "^1.15.0",

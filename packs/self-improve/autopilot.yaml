@@ -2,6 +2,16 @@ version: 1
 enabled: false
 timezone: Asia/Shanghai
 schedules: []
+iterations:
+  - id: system-iterate
+    cron: "0 3 * * *"
+    goal: "Find and fix one security weakness and one UX problem in this repository"
+    acceptance: "Small verified changes; high-risk changes remain pending approval"
+    maxTasks: 2
+    maxRepair: 1
+    mode: DRY_RUN
+    applyMode: none
+    coder: dsh
 approval:
   autoApprove:
     enabled: false

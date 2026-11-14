@@ -112,6 +112,18 @@ export async function runAutopilotTick(
           },
         });
 
+        await processIterations({
+          pack,
+          state,
+          now,
+          dryRun: options.dryRun ?? false,
+          result,
+          getTemporal: async () => {
+            temporal ??= await createTemporalClient();
+            return temporal;
+          },
+        });
+
         await processAutoApprovals({
           pack,
           state,
@@ -338,6 +350,120 @@ async function processSchedules(input: {
       const message = error instanceof Error ? error.message : String(error);
       state.lastError = message;
       result.errors.push(`${pack.dirName}/${schedule.id}: ${message}`);
+    }
+  }
+
+  return changed;
+}
+
+async function processIterations(input: {
+  pack: PackContext;
+  state: AutopilotState;
+  now: Date;
+  dryRun: boolean;
+  result: TickResult;
+  getTemporal: () => Promise<Awaited<ReturnType<typeof createTemporalClient>>>;
+}): Promise<boolean> {
+  const { pack, state, now, result } = input;
+  let changed = false;
+
+  for (const iteration of pack.config.iterations) {
+    if (!pack.loaded.iteration) {
+      result.errors.push(
+        `${pack.dirName}/${iteration.id}: iteration.yaml is missing`,
+      );
+      continue;
+    }
+    const key = `__iteration:${iteration.id}`;
+    const nextValue = state.nextRuns[key];
+    if (!nextValue) {
+      try {
+        state.nextRuns[key] = nextCronOccurrence(
+          iteration.cron,
+          now,
+          pack.config.timezone,
+        ).toISOString();
+        changed = true;
+      } catch (error) {
+        result.errors.push(
+          `${pack.dirName}/${iteration.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      continue;
+    }
+
+    const nextAt = new Date(nextValue);
+    if (Number.isNaN(nextAt.getTime()) || nextAt.getTime() > now.getTime()) {
+      continue;
+    }
+
+    try {
+      state.nextRuns[key] = nextCronOccurrence(
+        iteration.cron,
+        now,
+        pack.config.timezone,
+      ).toISOString();
+    } catch (error) {
+      result.errors.push(
+        `${pack.dirName}/${iteration.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+    changed = true;
+
+    if (
+      iteration.budget?.dailyRuns !== undefined &&
+      state.runsToday >= iteration.budget.dailyRuns
+    ) {
+      result.errors.push(
+        `${pack.dirName}/${iteration.id}: skipped, daily run budget reached`,
+      );
+      continue;
+    }
+
+    if (input.dryRun) {
+      result.launched.push({
+        pack: pack.dirName,
+        workflow: `iteration:${iteration.id}`,
+        runId: "dry-run",
+      });
+      continue;
+    }
+
+    const iterationId = newId("it");
+    try {
+      const { client } = await input.getTemporal();
+      await client.workflow.start("iterationWorkflow", {
+        taskQueue,
+        workflowId: `iteration-${iterationId}`,
+        args: [
+          {
+            iterationId,
+            workspaceId: WORKSPACE_ID,
+            packDir: pack.dir,
+            goal: iteration.goal,
+            ...(iteration.acceptance
+              ? { acceptance: iteration.acceptance }
+              : {}),
+            maxTasks: iteration.maxTasks,
+            maxRepair: iteration.maxRepair,
+            runMode: iteration.mode,
+            applyMode: iteration.mode === "LIVE" ? iteration.applyMode : "none",
+            ...(iteration.coder ? { coder: iteration.coder } : {}),
+            stub: false,
+          },
+        ],
+      });
+      state.runsToday += 1;
+      result.launched.push({
+        pack: pack.dirName,
+        workflow: `iteration:${iteration.id}`,
+        runId: iterationId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      state.lastError = message;
+      result.errors.push(`${pack.dirName}/${iteration.id}: ${message}`);
     }
   }
 

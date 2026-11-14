@@ -1,6 +1,33 @@
 # Changelog
 
-## 1.0.0 — 2026-11-14
+> `1.0.0` is not released. It is gated on the unattended autonomy acceptance in
+> `plans/agent-pipeline/85-autonomy-1.0.md`. The current preview is `0.9.0`.
+
+## 0.9.0 — 2026-11-14
+
+- Autonomy foundation: external coder adapters for DSH (live), Codex and
+  OpenCode (generic CLI), isolated repository-copy sandboxes, transcript/diff
+  evidence, and environment scrubbing.
+- `coder` workflow stage (`type: coder`) with goal/acceptance and a 40-minute
+  activity budget; the stage publishes result, transcript and diff artifacts.
+- Signed event gateway (`apps/gateway`): generic HMAC and GitHub webhook
+  normalization, replay/rate/body limits, canonical events on NATS.
+- Runtime Event Router: matches workflow triggers (exact, prefix, `*`) and
+  starts `packWorkflow` with dedupe and overlap protection.
+- `kit up` / `kit down` / `kit up status`: one supervised command for Docker
+  Compose, event runtime, Temporal worker, Autopilot and gateway, with restart
+  and health checks.
+- `kit iterate`: Planner → task plan → external coder → verify → repair →
+  risk classifier → low-risk apply with commit + backup → report; evidence is
+  stored as artifacts.
+- `packs/self-improve/iteration.yaml`: Cyber/UX domain routing for the system
+  to improve itself.
+- Version reset: workspace packages and compatibility checks are `0.9.0`;
+  task-centric features remain, but 1.0 is reserved for unattended operation.
+- Tests: 72 passing (coder sandbox/diff, coder stage, gateway signatures and
+  normalization, router matching, iteration plan/risk, plus the existing suite).
+
+## 1.0.0 — 2026-11-14 (not released)
 
 - Task-centric team: Builder/Seller/Specialist roles, Pack-level
   `roles.requireSeller/requireBuilder/allowCombined`, and definition-of-done on

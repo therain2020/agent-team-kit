@@ -17,7 +17,7 @@ import { registerUp } from "./commands/up";
 
 const program = new Command();
 
-program.name("kit").description("Agent Team Kit CLI").version("1.0.0");
+program.name("kit").description("Agent Team Kit CLI").version("0.9.0");
 
 registerInit(program);
 registerPack(program);

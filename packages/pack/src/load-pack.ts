@@ -46,7 +46,7 @@ export type LoadResult =
   | ({ ok: true } & LoadedPack)
   | { ok: false; dir: string; errors: string[] };
 
-const KIT_VERSION = "1.0.0";
+const KIT_VERSION = "0.9.0";
 
 const SECRET_PATTERNS = [
   /sk-[A-Za-z0-9]{16,}/,

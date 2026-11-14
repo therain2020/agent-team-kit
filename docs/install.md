@@ -5,19 +5,25 @@
 - Bun 1.4+
 - Node 24 (Temporal worker runs on Node/tsx; bun worker support is experimental)
 - Docker Desktop (Postgres, MinIO, NATS, Temporal, OTel collector, Jaeger)
+- Optional: DSH, Codex or OpenCode CLI for external coder tasks
 
 ## Local stack
 
 ```bash
 bun install
-docker compose -f deploy/docker-compose.yml up -d
-$env:KIT_BLOB_BACKEND="s3"   # PowerShell; use export on POSIX
+bun run kit up
+bun run kit up status
 ```
 
-Start the worker in one terminal:
+`kit up` starts Docker Compose, the event runtime, Temporal worker, Autopilot
+and the event gateway under a supervisor (logs in `.tmp/supervisor/`). Use
+`--web` to also start the Manager Console; `--no-infra` if the stack is already
+running. Manual fallback:
 
 ```bash
+docker compose -f deploy/docker-compose.yml up -d
 bun run worker
+bun run apps/runtime/src/index.ts
 ```
 
 Start the Manager Console in another (same `KIT_BLOB_BACKEND` as the worker):
@@ -42,20 +48,41 @@ The console covers the full loop:
 - `/evolution` — evolution cycles, variants, shadow canary, promote/rollback.
 - `/traces` — Jaeger and Temporal deep links.
 
-For autonomous operation, start the daemon in a third terminal:
-
-```bash
-bun run autopilot
-```
-
-It reads `autopilot.yaml` from each pack. See
-[open-platform.md](./open-platform.md).
+For autonomous operation, the supervisor already starts Autopilot. It reads
+`autopilot.yaml` from each pack, including optional `iterations:` schedules
+that start `iterationWorkflow`. See [open-platform.md](./open-platform.md).
 
 To run the self-improvement squads against this repository, use
 `packs/self-improve` in `/office`:
 
 - `security-audit` — Cyber Auditor + Patcher + Verifier + Seller.
 - `ux-improvement` — UX Researcher + Frontend Builder + Verifier + Seller.
+
+The 0.9.0 task-centric iteration loop delegates Builder work to an external
+coder:
+
+```bash
+bun run kit iterate --pack packs/self-improve \
+  --goal "Find one security weakness and one UX problem, fix them, verify" \
+  --max-tasks 2 --live --apply low
+```
+
+`--stub` uses a deterministic security+UX plan; the coder still runs for real.
+Low-risk changes are applied with a commit and backup; high-risk changes stay
+pending. Evidence is stored as artifacts.
+
+### Events
+
+The gateway accepts signed generic and GitHub webhooks:
+
+```bash
+$env:KIT_EVENT_SECRET="..."   # PowerShell
+bun run kit event emit --type signal.test --payload-file .tmp/event.json
+```
+
+GitHub delivery needs `GITHUB_WEBHOOK_SECRET` and a public URL/tunnel; set
+`KIT_GITHUB_REPO` to allowlist one repository. Routed event runs default to
+DRY_RUN until `KIT_EVENT_RUN_MODE=live`.
 
 Agents can inspect the repo, run fixed checks and static scans, and write a
 sandbox patch. Apply a reviewed patch with:
@@ -109,6 +136,17 @@ bun run kit manager brief <runId>
 | `KIT_TOOLS_ALLOW_NETWORK` | unset | `1` allows external HTTP/browser |
 | `KIT_TOOLS_ALLOW_LOCALHOST` | `1` | `0` blocks localhost tools |
 | `KIT_BROWSE_BIN` | unset | Browser adapter binary for UX inspection |
+| `KIT_EVENT_SECRET` | unset | Generic webhook HMAC secret |
+| `GITHUB_WEBHOOK_SECRET` | unset | GitHub webhook HMAC secret |
+| `KIT_GITHUB_REPO` | unset | Optional GitHub repo allowlist (`owner/repo`) |
+| `KIT_EVENT_RUN_MODE` | `dry_run` | `live` lets routed events start LIVE runs |
+| `KIT_GATEWAY_PORT` | `8787` | Event gateway port |
+| `KIT_CODER_CODEX_CMD` | `codex exec --full-auto -` | Codex CLI template |
+| `KIT_CODER_OPENCODE_CMD` | `opencode run -` | OpenCode CLI template |
+| `KIT_CODER_COMMAND` | unset | Generic coder command (stdin prompt) |
+| `KIT_CODER_INSTALL` | `1` | `0` skips `bun install` in coder sandboxes |
+| `KIT_CODER_KEEP` | unset | `1` keeps coder sandboxes for inspection |
+| `KIT_SUPERVISOR_WEB` | `0` | Set by `kit up --web` |
 
 ## Ports
 
@@ -118,7 +156,8 @@ OTel collector 4317/4318 · Jaeger 16686 (OTLP 4319) · Manager Console 3000.
 ## Stop
 
 ```bash
-bun run dev:down
+bun run kit down              # supervisor + compose
+bun run kit down --keep-infra # supervisor only
 ```
 
 Data lives in Docker volumes (`pgdata`, `miniodata`); local blobs under

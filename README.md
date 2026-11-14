@@ -17,30 +17,50 @@ The kit provides:
 - **Evolution** — failure signals → proposed role change → evaluation → canary → reversible promotion.
 - **Manager Console** — glass-box, streaming Manager chat, approval inbox, pack runner, evolution and trace links.
 
-Status: **Agent Team Kit 1.0** — runtime, quality gates, Manager Console, Pack
-Studio, source market, Autopilot, task-centric Office, open approvals, evolution
-and a controlled tool loop with sandbox patches are implemented. Agents can read
-and search the repo, run fixed checks and static scans, and propose patches;
-`kit patch apply` writes a reviewed patch with a backup. M3 cloud deployment is
-deferred until credentials are available.
+Status: **Agent Team Kit 0.9.0 — autonomy preview**. Runtime, quality gates,
+Manager Console, Pack Studio, source market, Autopilot, task-centric Office,
+open approvals, evolution and a controlled tool loop are implemented. The
+0.9.0 preview adds external coding-agent delegation (DSH / Codex / OpenCode),
+a signed event gateway, a supervised `kit up` runtime, and a task-centric
+iteration loop (`kit iterate`) that plans, delegates, verifies, classifies risk
+and applies low-risk changes.
+
+**1.0 is not claimed yet.** 1.0 means the system runs without the operator and
+optimizes itself: a goal and budget go in, tasks are planned and executed,
+low-risk changes land automatically, and the operator only handles high-risk
+approval and release confirmation. The acceptance gate and current gaps are
+documented in `D:\GitHub\plans\agent-pipeline\85-autonomy-1.0.md`.
 
 ## Requirements
 
 - Bun 1.4+
 - Docker Desktop (for the local stack)
 - Windows / macOS / Linux
+- Optional: DSH, Codex or OpenCode CLI for external coder tasks
 
 ## Quick start
 
 ```bash
 bun install
-docker compose -f deploy/docker-compose.yml up -d
-$env:KIT_BLOB_BACKEND="s3"   # PowerShell
+bun run kit up              # infra + runtime + worker + autopilot + gateway
+bun run kit up status       # supervisor, children and gateway health
+bun run web:dev             # optional Manager Console → http://localhost:3000
+bun run kit down            # stop the supervisor (and compose unless --keep-infra)
+```
 
+`kit up` starts a detached supervisor with restart-on-exit, health checks and
+logs under `.tmp/supervisor/`. It starts Postgres, MinIO, NATS, Temporal,
+Jaeger and the OTel collector through Docker Compose. Use `--no-infra` when
+the stack is already running; `--web` also starts the console.
+
+Manual fallback (legacy):
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d
 bun run worker                                   # terminal A (Node/tsx)
-bun run kit run --pack packs/minimal --dry-run   # terminal B
-bun run web:dev                                  # terminal C → http://localhost:3000
-bun run autopilot                                # terminal D (optional, autonomous)
+bun run apps/runtime/src/index.ts                # terminal B (event router)
+bun run kit run --pack packs/minimal --dry-run   # terminal C
+bun run web:dev                                  # terminal D → http://localhost:3000
 ```
 
 Services: Postgres 5432, MinIO 9000/9001, NATS 4222, Temporal 7233,
@@ -50,6 +70,84 @@ MinIO console: http://localhost:9001 (`kit` / `kitkitkit` by default).
 The web process must use the same blob backend as the worker. If the worker
 uses `s3`, start the web app with `KIT_BLOB_BACKEND=s3` too; otherwise artifact
 metadata renders but content shows as unavailable.
+
+### Autonomous runtime (0.9.0 preview)
+
+`kit up` is the supervisor. It starts the runtime event consumer, Temporal
+worker, Autopilot, and the signed event gateway. Each child is restarted on
+exit; the gateway is health-checked every 15 seconds. State lives in
+`.tmp/supervisor/state.json`.
+
+| Command | What it does |
+|---|---|
+| `kit up` | Start infra and the supervised runtime (detached) |
+| `kit up --foreground` | Keep the supervisor attached to the terminal |
+| `kit up status` | Show PIDs, restarts and gateway/web health |
+| `kit down` | Stop supervisor and compose (`--keep-infra` keeps compose) |
+
+The current process still needs the operator to start it; the recovery kernel
+that watches `kit up` and rolls back to the last-known-good tag is the next
+slice before 1.0.
+
+### Task-centric self-iteration
+
+```bash
+bun run kit iterate \
+  --pack packs/self-improve \
+  --goal "Improve security and UX with small verified changes" \
+  --max-tasks 2 --live --apply low
+```
+
+Flow: Planner → task plan artifact → external coder (DSH by default) in an
+isolated repository copy → independent `typecheck`/`lint`/`test` → repair with
+feedback → risk classifier → low-risk apply with commit + backup → report.
+
+- `--stub` uses a deterministic two-task plan (security + UX) without a
+  planner model call; the coder still runs for real.
+- `--apply none|low|low-medium` controls auto-apply. High-risk changes are
+  never auto-applied.
+- Coder overrides: `--coder dsh|codex|opencode|command`. Codex/OpenCode commands
+  can be configured with `KIT_CODER_CODEX_CMD` / `KIT_CODER_OPENCODE_CMD`.
+- Evidence is stored as artifacts (`plan`, `coder.result`, `coder.transcript`,
+  `coder.diff`, `verification`, `risk`, `apply`, `report`).
+
+### External events
+
+The gateway accepts signed requests and publishes canonical events to NATS.
+The runtime routes events to workflows whose `trigger.event` matches
+(exact, prefix `github.*`, or `*`).
+
+| Route | Env | Events |
+|---|---|---|
+| `POST /ingest/generic` | `KIT_EVENT_SECRET` | `{type, payload, occurredAt?, idempotencyKey?}` |
+| `POST /ingest/github` | `GITHUB_WEBHOOK_SECRET`, optional `KIT_GITHUB_REPO` | issues, issue_comment, workflow_run, check_run, pull_request |
+| `POST /ingest/sentry` | — | scheduled for the next slice |
+| `GET /health` | — | gateway health |
+
+```bash
+$env:KIT_EVENT_SECRET="..."   # PowerShell
+bun run kit event emit --type signal.test --payload-file .tmp/event.json
+```
+
+GitHub/Sentry delivery needs a public URL or tunnel. `kit event emit` uses the
+same signature path locally. Set `KIT_EVENT_RUN_MODE=live` to let routed events
+start LIVE runs; the default is DRY_RUN.
+
+### Autonomy boundary
+
+The repository is fully modifiable by the system inside task sandboxes. The
+recovery kernel (LKG, rollback, audit sink, kill switch) must live outside the
+repository and outside the agent's write surface; otherwise one bad change can
+remove the ability to recover. Product changes are classified:
+
+| Risk | Examples | Default |
+|---|---|---|
+| low | docs, tests, i18n copy, non-core styles | auto-apply after checks |
+| medium | non-core feature code, pages, scripts | pending until the canary slice |
+| high | runtime/orchestrator, auth, approval/apply, dependencies, deploy, secrets | human approval |
+
+Forbidden changes (secrets, `.git`, deleting audit/tests, escaping the sandbox)
+are blocked outright.
 
 ### Storage backends
 
@@ -365,13 +463,15 @@ bunx vitest run packages/store/test/integration.test.ts
 ## Layout
 
 ```
-apps/cli        CLI
-apps/runtime    NATS consumer + ingestor + Temporal workers (D4)
+apps/cli        CLI (incl. kit up/down/iterate/event)
+apps/runtime    NATS event router + Temporal workers + iteration activities
+apps/gateway    Signed event gateway (generic + GitHub webhooks)
 apps/web        Manager Console (glass-box + chat + approvals + runner)
 packages/core   contracts (events, runs, artifacts, packs)
 packages/store  Postgres repositories + fs/S3 blob adapters
 packages/queue  NATS JetStream adapter
 packages/workflow Temporal adapter
+packages/coder  external coding-agent adapters + sandbox/diff evidence
 packages/model  model gateway (DeepSeek)
 packages/manager Manager briefs, decisions, approval lookup
 packages/pack   Pack loading/validation, run builder, simulation, Studio CRUD
@@ -382,7 +482,7 @@ packages/tools  Tool registry: repo, security scans, checks, sandbox patches, we
 packages/telemetry OpenTelemetry
 packs/minimal   minimal example Team Pack
 packs/tech-radar reference mold + sample autopilot policy
-packs/self-improve task-centric Cyber/UX squad for this repository
+packs/self-improve task-centric Cyber/UX squad + iteration.yaml routing
 examples/sources example market source
 deploy          docker compose + collector config
 ```
