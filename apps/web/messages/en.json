@@ -240,7 +240,17 @@
     "notFoundDescription": "Pick another run from the selector.",
     "pickAnother": "Pick another run",
     "artifactsCount": "{count, plural, one {# artifact} other {# artifacts}}",
-    "startedAgo": "Started {time}"
+    "startedAgo": "Started {time}",
+    "budgetTitle": "Session budget",
+    "budgetTokens": "Tokens",
+    "budgetCost": "Cost",
+    "budgetRollsIn": "Window rolls in",
+    "budgetBlocked": "{reason} limit reached. Reset the window or wait for it to roll.",
+    "budgetReasonTokens": "Token",
+    "budgetReasonCost": "Cost",
+    "budgetHint": "16K tokens / ¥3 per 3-minute window; resets automatically.",
+    "budgetReset": "Reset window",
+    "budgetResetFailed": "Could not reset the window. Try again."
   },
   "managerChat": {
     "live": "live",
@@ -254,7 +264,7 @@
     "suggestionChanged": "What changed in the last revision?",
     "suggestionNext": "What should I decide next?",
     "placeholder": "Ask about gates, cost, risks, or next steps…",
-    "outputCap": "Output capped at 1,200 tokens · session context is run-scoped",
+    "outputCap": "Output capped at 1,200 tokens · 16K tokens / ¥3 per 3-minute window",
     "send": "Send",
     "stop": "Stop"
   },
@@ -961,7 +971,7 @@
     "emptyTitle": "Talk to the Manager",
     "emptyDesc": "The Manager knows the roster, missions, and current state. It cannot start or approve anything.",
     "placeholder": "Ask about the team, a mission, or what to do next…",
-    "hint": "cap 1,200 tokens",
+    "hint": "cap 1,200 tokens · 16K tokens / ¥3 per 3-minute window",
     "send": "Send",
     "stop": "Stop",
     "suggestionStatus": "Give me a status overview.",

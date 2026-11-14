@@ -3,6 +3,7 @@ import { newId } from "@kit/core";
 import { buildManagerBrief } from "@kit/manager";
 import { calculateCostCny } from "@kit/model";
 import type { UIMessage } from "ai";
+import { recordManagerUsage } from "./manager-budget";
 import { loadArtifactContent, loadRunDetail } from "./runs";
 import { getStore } from "./store";
 
@@ -209,6 +210,14 @@ export async function publishManagerExchange(input: {
       answer: input.answer.slice(0, 1000),
     },
   }).catch(() => undefined);
+
+  await recordManagerUsage({
+    workspaceId: input.workspaceId,
+    sessionId: input.runId,
+    tokens: input.inputTokens + input.outputTokens,
+    costCny,
+    store,
+  });
 
   return { artifactId: published.artifact.artifactId, costCny };
 }
