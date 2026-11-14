@@ -43,7 +43,10 @@ export function registerJob(program: Command): void {
     .option("--domain <name>", "iteration domain")
     .option("--input <text>", "initial input for pack-run")
     .option("--max-tasks <n>", "maximum tasks to plan", "4")
-    .option("--max-repair <n>", "repair attempts per task", "2")
+    .option(
+      "--max-repair <n>",
+      "repair attempts per task (default: KIT_REPAIR_ROUNDS or 2)",
+    )
     .option("--coder <id>", "dsh | codex | opencode | command")
     .option("--apply <mode>", "none | low | low-medium", "low")
     .option("--live", "run in LIVE mode (otherwise DRY_RUN)", false)
@@ -284,7 +287,7 @@ export async function startIterationFromCli(
             ? (parseApplyMode(options.apply) ?? "low")
             : "none",
         maxTasks: options.maxTasks ? Number(options.maxTasks) : 4,
-        maxRepair: options.maxRepair ? Number(options.maxRepair) : 2,
+        maxRepair: options.maxRepair ? Number(options.maxRepair) : undefined,
         coder:
           options.coder === "dsh" ||
           options.coder === "codex" ||

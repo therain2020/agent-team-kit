@@ -223,7 +223,7 @@ The runtime routes events to workflows whose `trigger.event` matches
 |---|---|---|
 | `POST /ingest/generic` | `KIT_EVENT_SECRET` | `{type, payload, occurredAt?, idempotencyKey?}` |
 | `POST /ingest/github` | `GITHUB_WEBHOOK_SECRET`, optional `KIT_GITHUB_REPO` | issues, issue_comment, workflow_run, check_run, pull_request |
-| `POST /ingest/sentry` | — | scheduled for the next slice |
+| `POST /ingest/sentry` | `SENTRY_WEBHOOK_SECRET` | issue created/resolved/assigned/ignored, event alert, metric alert |
 | `GET /health` | — | gateway health |
 
 ```bash
@@ -234,6 +234,25 @@ bun run kit event emit --type signal.test --payload-file .tmp/event.json
 GitHub/Sentry delivery needs a public URL or tunnel. `kit event emit` uses the
 same signature path locally. Set `KIT_EVENT_RUN_MODE=live` to let routed events
 start LIVE runs; the default is DRY_RUN.
+
+Sentry webhooks are verified with the `Sentry-Hook-Signature` HMAC (the raw hex
+digest Sentry sends) and a stale `Sentry-Hook-Timestamp` is rejected. Alert text
+stays in the event payload; it never becomes an instruction.
+
+Before starting a workflow the router enforces a daily budget and skips while a
+run of the same workflow is active. Declare it per workflow:
+
+```yaml
+trigger:
+  event: sentry.issue.created
+  budget:
+    dailyRuns: 20
+    dailyCostCny: 5
+```
+
+Workflows without a declared budget fall back to `KIT_EVENT_DAILY_RUNS` and
+`KIT_EVENT_DAILY_COST_CNY`. Run counts come from the `runs` table for the UTC
+day; cost comes from manifests, with the same estimate Autopilot uses.
 
 ### Autonomy boundary
 
