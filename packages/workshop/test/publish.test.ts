@@ -252,6 +252,7 @@ describe("workshop install records", () => {
       repo: "acme/demo",
       root,
       acceptThirdParty: true,
+      acceptUnsigned: true,
     });
 
     expect(installed.manifestSha256).toMatch(/^[a-f0-9]{64}$/);

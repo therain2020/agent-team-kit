@@ -140,6 +140,14 @@ export type TemplateRoles = z.infer<typeof templateRolesSchema>;
 
 const WORKSHOP_PATH = /^(?!\/)(?!.*\.\.)[A-Za-z0-9._/-]+$/;
 
+export const workshopSignatureSchema = z.object({
+  algorithm: z.literal("ed25519"),
+  keyId: z.string().regex(/^[A-Za-z0-9._-]{1,64}$/),
+  value: z.string().min(16).max(4096),
+});
+
+export type WorkshopSignature = z.infer<typeof workshopSignatureSchema>;
+
 export const workshopManifestSchema = z
   .object({
     apiVersion: z.literal("agentteam/v1").default("agentteam/v1"),
@@ -162,6 +170,7 @@ export const workshopManifestSchema = z
         code: z.boolean().default(false),
       })
       .default({ network: false, filesystem: "workspace", code: false }),
+    signature: workshopSignatureSchema.optional(),
   })
   .superRefine((manifest, ctx) => {
     if (!manifest.files.includes(manifest.entry)) {

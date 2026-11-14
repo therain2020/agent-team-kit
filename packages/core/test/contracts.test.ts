@@ -172,6 +172,27 @@ describe("workshop manifest", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("parses an ed25519 signature", () => {
+    const parsed = workshopManifestSchema.parse({
+      ...manifest,
+      signature: {
+        algorithm: "ed25519",
+        keyId: "kit-2026",
+        value: "A".repeat(64),
+      },
+    });
+    expect(parsed.signature?.keyId).toBe("kit-2026");
+  });
+
+  it("rejects unsupported signature algorithms", () => {
+    expect(
+      workshopManifestSchema.safeParse({
+        ...manifest,
+        signature: { algorithm: "rsa", keyId: "kit", value: "A".repeat(64) },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("team pack", () => {

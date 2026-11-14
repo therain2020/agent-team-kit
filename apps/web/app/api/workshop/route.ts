@@ -37,6 +37,8 @@ export async function POST(request: Request) {
     ref?: unknown;
     confirm?: unknown;
     allowCode?: unknown;
+    acceptUnsigned?: unknown;
+    acceptHighRisk?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -61,6 +63,8 @@ export async function POST(request: Request) {
       root: getWorkshopRoot(),
       acceptThirdParty: true,
       allowCode: body.allowCode === true,
+      acceptUnsigned: body.acceptUnsigned === true,
+      acceptHighRisk: body.acceptHighRisk === true,
     });
     return NextResponse.json(
       {
@@ -72,6 +76,7 @@ export async function POST(request: Request) {
         version: installed.manifest.version,
         kind: installed.manifest.kind,
         manifestSha256: installed.manifestSha256,
+        trust: installed.trust,
       },
       { status: 201 },
     );

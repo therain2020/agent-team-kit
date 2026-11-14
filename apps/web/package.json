@@ -25,6 +25,7 @@
     "@kit/store": "workspace:*",
     "@kit/workshop": "workspace:*",
     "@kit/workflow": "workspace:*",
+    "@kit/workshop": "workspace:*",
     "ai": "^7.0.173",
     "better-sqlite3": "^13.2.0",
     "class-variance-authority": "^0.7.1",

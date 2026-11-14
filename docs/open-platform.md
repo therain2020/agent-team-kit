@@ -207,6 +207,8 @@ for demos and deterministic tests; it cannot auto-promote.
 | `KIT_AUTOPILOT_DISABLED=1` | Global autopilot kill switch |
 | `KIT_AUTOPILOT_INTERVAL_MS` | Daemon tick interval (default 30000) |
 | `KIT_SOURCES_ROOT` | Installed-source directory (default `./sources`) |
+| `KIT_WORKSHOP_ROOT` | Installed-workshop directory (default `./workshop`) |
+| `KIT_WORKSHOP_TRUSTED_KEYS` | Keyring path or inline JSON for workshop signature checks |
 | `KIT_TOOL_MAX_STEPS` / `KIT_TOOL_MAX_CALLS` | Tool loop caps |
 | `KIT_TOOLS_ALLOW_NETWORK` | Allow external tools (`1`) |
 | `KIT_TOOLS_ALLOW_LOCALHOST` | Allow localhost tools (`0` blocks) |
