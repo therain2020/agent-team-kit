@@ -77,6 +77,8 @@ export function PackStudio({
     model: "deepseek-flash",
     role: "builder" as StudioAgent["role"],
   });
+  const [newWorkflowId, setNewWorkflowId] = useState("workflow-2");
+  const [workflowBusy, setWorkflowBusy] = useState(false);
 
   const currentWorkflow = data.workflows.find(
     (workflow) => workflow.file === workflowFile,
@@ -201,6 +203,107 @@ export function PackStudio({
       toast.error(text);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function addWorkflow() {
+    const id = newWorkflowId.trim();
+    if (!id) {
+      return;
+    }
+    setWorkflowBusy(true);
+    try {
+      const response = await fetch(
+        `/api/packs/${encodeURIComponent(data.dirName)}/workflow`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "create failed");
+      }
+      toast.success(t("workflowCreated"));
+      window.location.reload();
+    } catch (problem) {
+      toast.error(
+        problem instanceof Error ? problem.message : t("validationFailed"),
+      );
+    } finally {
+      setWorkflowBusy(false);
+    }
+  }
+
+  async function renameCurrentWorkflow() {
+    if (!currentWorkflow) {
+      return;
+    }
+    const newId = window.prompt(t("renameWorkflowPrompt"), currentWorkflow.id);
+    if (!newId || newId === currentWorkflow.id) {
+      return;
+    }
+    setWorkflowBusy(true);
+    try {
+      const response = await fetch(
+        `/api/packs/${encodeURIComponent(data.dirName)}/workflow`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            file: currentWorkflow.file,
+            newFile: `workflows/${newId}.yaml`,
+            newId,
+          }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "rename failed");
+      }
+      toast.success(t("saved"));
+      window.location.reload();
+    } catch (problem) {
+      toast.error(
+        problem instanceof Error ? problem.message : t("validationFailed"),
+      );
+    } finally {
+      setWorkflowBusy(false);
+    }
+  }
+
+  async function deleteCurrentWorkflow() {
+    if (!currentWorkflow) {
+      return;
+    }
+    if (
+      !window.confirm(t("confirmDeleteWorkflow", { id: currentWorkflow.id }))
+    ) {
+      return;
+    }
+    setWorkflowBusy(true);
+    try {
+      const response = await fetch(
+        `/api/packs/${encodeURIComponent(data.dirName)}/workflow`,
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ file: currentWorkflow.file }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "delete failed");
+      }
+      toast.success(t("workflowDeleted"));
+      window.location.reload();
+    } catch (problem) {
+      toast.error(
+        problem instanceof Error ? problem.message : t("validationFailed"),
+      );
+    } finally {
+      setWorkflowBusy(false);
     }
   }
 
@@ -594,6 +697,23 @@ export function PackStudio({
       {tab === "workflows" ? (
         <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
           <div className="space-y-2 rounded-lg border border-border bg-card p-2">
+            <div className="flex gap-1">
+              <Input
+                value={newWorkflowId}
+                onChange={(event) => setNewWorkflowId(event.target.value)}
+                placeholder={t("workflowId")}
+                className="h-8 font-mono text-[11px]"
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={addWorkflow}
+                disabled={workflowBusy || !newWorkflowId.trim()}
+                aria-label={t("workflowNew")}
+              >
+                <Plus className="size-3.5" />
+              </Button>
+            </div>
             {data.workflows.map((workflow) => (
               <button
                 key={workflow.file}
@@ -632,10 +752,28 @@ export function PackStudio({
                   </span>
                 ))}
               </div>
-              <Button size="sm" onClick={saveWorkflow} disabled={saving}>
-                <Save className="size-3.5" />
-                {t("save")}
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={renameCurrentWorkflow}
+                  disabled={!currentWorkflow || workflowBusy}
+                >
+                  {t("workflowRename")}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={deleteCurrentWorkflow}
+                  disabled={!currentWorkflow || workflowBusy}
+                >
+                  {t("workflowDelete")}
+                </Button>
+                <Button size="sm" onClick={saveWorkflow} disabled={saving}>
+                  <Save className="size-3.5" />
+                  {t("save")}
+                </Button>
+              </div>
             </div>
             <Textarea
               value={workflowRaw}

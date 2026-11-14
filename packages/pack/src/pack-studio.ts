@@ -7,6 +7,7 @@ import {
   type StageApproval,
   autopilotSchema,
   stageApprovalSchema,
+  workflowDefinitionSchema,
 } from "@kit/core";
 import { parse, stringify } from "yaml";
 import { type LoadResult, loadPack } from "./load-pack";
@@ -15,6 +16,8 @@ import { loadTemplate } from "./templates";
 
 const MAX_FILE_BYTES = 256 * 1024;
 const AGENT_ID = /^[a-z][a-z0-9-]*$/;
+const WORKFLOW_ID = /^[a-z][a-z0-9-]*$/;
+const WORKFLOW_FILE = /^workflows\/[a-z][a-z0-9-]*\.yaml$/;
 const ALLOWED_FILES =
   /^(team\.yaml|autopilot\.yaml|README\.md|agents\/[^/]+\.md|workflows\/[^/]+\.yaml|policies\/[^/]+\.yaml|evals\/[^/]+\.yaml|skills\/[^/]+\/SKILL\.md)$/;
 
@@ -451,6 +454,195 @@ export async function writeWorkflowFile(
   }
 }
 
+export interface WorkflowSummary {
+  file: string;
+  id: string;
+}
+
+export interface CreateWorkflowInput {
+  file?: string;
+  id?: string;
+  content?: string;
+}
+
+export interface RenameWorkflowInput {
+  file: string;
+  newFile: string;
+  newId?: string;
+}
+
+export async function listWorkflows(
+  packDir: string,
+): Promise<WorkflowSummary[]> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  return Promise.all(
+    loaded.pack.workflows.map(async (file) => {
+      const raw = await readFile(path.join(loaded.dir, file), "utf8");
+      const doc = parse(raw) as { id?: unknown };
+      return {
+        file,
+        id: typeof doc.id === "string" ? doc.id : file,
+      };
+    }),
+  );
+}
+
+export async function createWorkflow(
+  packDir: string,
+  input: CreateWorkflowInput = {},
+): Promise<WorkflowSummary> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  const id = input.id ?? nextWorkflowId(loaded);
+  if (!WORKFLOW_ID.test(id)) {
+    throw new Error("workflow id must match ^[a-z][a-z0-9-]*$");
+  }
+  const file = input.file ?? `workflows/${id}.yaml`;
+  if (!WORKFLOW_FILE.test(file)) {
+    throw new Error("workflow file must be workflows/<id>.yaml");
+  }
+  if (loaded.pack.workflows.includes(file)) {
+    throw new Error(`workflow file already exists: ${file}`);
+  }
+  if (loaded.workflows.some((workflow) => workflow.id === id)) {
+    throw new Error(`workflow id already exists: ${id}`);
+  }
+
+  const content =
+    input.content ?? stringify(defaultWorkflow(id, firstAgentId(loaded)));
+  const parsed = workflowDefinitionSchema.safeParse(parse(content));
+  if (!parsed.success) {
+    throw new Error(
+      parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("\n"),
+    );
+  }
+  if (parsed.data.id !== id) {
+    throw new Error(
+      `workflow content id "${parsed.data.id}" does not match "${id}"`,
+    );
+  }
+
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  teamDoc.workflows = [...(teamDoc.workflows ?? []), file];
+
+  await writePackFile(packDir, file, content);
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    const created = resolvePackRelative(packDir, file);
+    if (created) {
+      await rm(created, { force: true }).catch(() => undefined);
+    }
+    await writeFile(teamPath, originalTeam, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+
+  return { file, id };
+}
+
+export async function deleteWorkflow(
+  packDir: string,
+  file: string,
+): Promise<void> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  if (!loaded.pack.workflows.includes(file)) {
+    throw new Error(`workflow is not listed in team.yaml: ${file}`);
+  }
+  if (loaded.pack.workflows.length <= 1) {
+    throw new Error("a Pack must keep at least one workflow");
+  }
+  const absolute = resolvePackRelative(packDir, file);
+  if (!absolute || !existsSync(absolute)) {
+    throw new Error(`workflow file not found: ${file}`);
+  }
+
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const originalContent = await readFile(absolute, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  teamDoc.workflows = (teamDoc.workflows ?? []).filter((item) => item !== file);
+
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+  await rm(absolute, { force: true });
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    await writeFile(teamPath, originalTeam, "utf8");
+    await writeFile(absolute, originalContent, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+}
+
+export async function renameWorkflow(
+  packDir: string,
+  input: RenameWorkflowInput,
+): Promise<WorkflowSummary> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  if (!loaded.pack.workflows.includes(input.file)) {
+    throw new Error(`workflow is not listed in team.yaml: ${input.file}`);
+  }
+  if (!WORKFLOW_FILE.test(input.newFile)) {
+    throw new Error("workflow file must be workflows/<id>.yaml");
+  }
+  if (loaded.pack.workflows.includes(input.newFile)) {
+    throw new Error(`workflow file already exists: ${input.newFile}`);
+  }
+  const oldAbsolute = resolvePackRelative(packDir, input.file);
+  const newAbsolute = resolvePackRelative(packDir, input.newFile);
+  if (!oldAbsolute || !newAbsolute || !existsSync(oldAbsolute)) {
+    throw new Error(`workflow file not found: ${input.file}`);
+  }
+  if (existsSync(newAbsolute)) {
+    throw new Error(`workflow file already exists: ${input.newFile}`);
+  }
+
+  const originalContent = await readFile(oldAbsolute, "utf8");
+  const doc = parse(originalContent) as Record<string, unknown>;
+  const nextId =
+    input.newId ?? (typeof doc.id === "string" ? doc.id : input.newFile);
+  if (!WORKFLOW_ID.test(nextId)) {
+    throw new Error("workflow id must match ^[a-z][a-z0-9-]*$");
+  }
+  const nextContent = stringify({ ...doc, id: nextId });
+
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  teamDoc.workflows = (teamDoc.workflows ?? []).map((item) =>
+    item === input.file ? input.newFile : item,
+  );
+
+  await writePackFile(packDir, input.newFile, nextContent);
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+  await rm(oldAbsolute, { force: true });
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    await writeFile(teamPath, originalTeam, "utf8");
+    await rm(newAbsolute, { force: true }).catch(() => undefined);
+    await writeFile(oldAbsolute, originalContent, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+
+  return { file: input.newFile, id: nextId };
+}
+
 export async function setStageApproval(
   packDir: string,
   relative: string,
@@ -526,6 +718,7 @@ export async function validatePack(
 
 export interface TeamDoc {
   manager?: { model?: string };
+  workflows?: string[];
   agents: Array<{
     id: string;
     file: string;
@@ -544,6 +737,48 @@ function parseTeamDoc(text: string): TeamDoc {
     throw new Error("team.yaml agents must be an array");
   }
   return parsed as TeamDoc;
+}
+
+function nextWorkflowId(loaded: {
+  workflows: Array<{ id: string }>;
+}): string {
+  const used = new Set(loaded.workflows.map((workflow) => workflow.id));
+  let index = 1;
+  while (used.has(`workflow-${index}`)) {
+    index += 1;
+  }
+  return `workflow-${index}`;
+}
+
+function firstAgentId(loaded: {
+  agents: ReadonlyMap<string, { spec: { id: string }; role: string }>;
+}): string {
+  for (const agent of loaded.agents.values()) {
+    if (agent.role !== "manager") {
+      return agent.spec.id;
+    }
+  }
+  return "manager";
+}
+
+function defaultWorkflow(id: string, agent: string) {
+  return {
+    id,
+    version: "1.0",
+    trigger: { event: "task.received" },
+    stages: [
+      {
+        id: agent,
+        type: "agent",
+        agent,
+        inputs: ["task"],
+        outputs: [`${agent}_output`],
+        timeout: "15m",
+        retry: { max: 1, backoff: "fixed" },
+      },
+    ],
+    delivery: { channel: "local_file" },
+  };
 }
 
 export function splitFrontmatter(text: string): {
