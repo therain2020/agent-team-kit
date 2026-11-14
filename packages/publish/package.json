@@ -1,0 +1,12 @@
+{
+  "name": "@kit/publish",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "markdown-it": "^15.0.3"
+  }
+}

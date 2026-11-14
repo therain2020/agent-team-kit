@@ -1,18 +1,18 @@
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 export interface PublishSiteOptions {
-  siteDir: string;
   remoteUrl: string;
   branch: string;
   message?: string;
+  prepare: (dir: string) => Promise<void>;
 }
 
 export async function publishSiteToBranch(
   options: PublishSiteOptions,
-): Promise<void> {
+): Promise<boolean> {
   const exists =
     gitExit([
       "ls-remote",
@@ -40,15 +40,17 @@ export async function publishSiteToBranch(
         { quiet: true },
       );
     } else {
+      await mkdir(tempDir, { recursive: true });
       git(["init", tempDir], process.cwd(), { quiet: true });
       git(["-C", tempDir, "checkout", "--orphan", options.branch]);
       git(["-C", tempDir, "remote", "add", "origin", options.remoteUrl]);
     }
 
-    for (const entry of await readdir(options.siteDir)) {
-      await cp(path.join(options.siteDir, entry), path.join(tempDir, entry), {
-        recursive: true,
-      });
+    await options.prepare(tempDir);
+
+    const changes = git(["-C", tempDir, "status", "--porcelain"]);
+    if (!changes) {
+      return false;
     }
 
     const name =
@@ -67,7 +69,7 @@ export async function publishSiteToBranch(
       `user.email=${email}`,
       "commit",
       "-m",
-      options.message ?? `publish ${path.basename(options.siteDir)}`,
+      options.message ?? "publish site",
     ]);
 
     if (exists) {
@@ -75,6 +77,8 @@ export async function publishSiteToBranch(
     } else {
       git(["-C", tempDir, "push", "-u", "origin", options.branch]);
     }
+
+    return true;
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -84,7 +88,21 @@ export function getRemoteUrl(remoteName: string): string | null {
   return gitOptional(["remote", "get-url", remoteName]);
 }
 
-export function pagesUrl(remoteUrl: string): string | null {
+export function githubWebUrl(remoteUrl: string | null): string | null {
+  if (!remoteUrl) {
+    return null;
+  }
+  const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (!match?.[1] || !match[2]) {
+    return null;
+  }
+  return `https://github.com/${match[1]}/${match[2]}`;
+}
+
+export function pagesUrl(remoteUrl: string | null): string | null {
+  if (!remoteUrl) {
+    return null;
+  }
   const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
   if (!match?.[1] || !match[2]) {
     return null;

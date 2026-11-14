@@ -16,6 +16,7 @@
       "@kit/model": ["./packages/model/src/index.ts"],
       "@kit/manager": ["./packages/manager/src/index.ts"],
       "@kit/pack": ["./packages/pack/src/index.ts"],
+      "@kit/publish": ["./packages/publish/src/index.ts"],
       "@kit/evolution": ["./packages/evolution/src/index.ts"],
       "@kit/telemetry": ["./packages/telemetry/src/index.ts"],
       "@kit/testing": ["./packages/testing/src/index.ts"]

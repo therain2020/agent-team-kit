@@ -81,34 +81,49 @@ delivery:
 Writes to `%USERPROFILE%\.agent-team-kit\outbox\<runId>\<artifactId>.md`
 (or `$KIT_HOME/outbox/...`). Useful for desktop flows and tests.
 
-## GitHub Pages: publish a run as a website
+## GitHub Pages: publish a run to the archive
 
 ```bash
-kit publish <runId> --out .tmp/site        # render only
-kit publish <runId> --push --yes           # render and push to gh-pages
+kit publish <runId> --out .tmp/site        # build the local site root
+kit publish <runId> --push --yes           # add the run to the public archive
 ```
+
+Each publish adds a run to a static **archive**, not a single page:
+
+- the root index lists every published run, newest first
+- `runs/<runId>/index.html` is the run page: metrics, stage timeline and artifacts
+- `runs/<runId>/<artifactId>.html` renders the artifact Markdown with a
+  provenance panel and a raw-content toggle
+- `assets/site.css` mirrors the Manager Console design language; `site.json`
+  is the archive index used to re-render the root page
+
+Safety:
+
+- tool calls, gates, approvals, decisions, revisions and delivery records are
+  excluded from the public site
+- artifacts that match high-confidence secret patterns block the publish
+- artifacts larger than 512 KB are truncated with a notice
+
+Options: `--site-title`, `--site-description`, `--repo-url`, `--base-url`.
+Local output defaults to `~/.agent-team-kit/publish`. Re-publishing a run
+updates it in place; other runs stay in the archive.
 
 What `--push` does:
 
-1. Renders `index.html` and one page per committed artifact (tool-call artifacts
-   are excluded).
-2. Resolves the `origin` remote and the `gh-pages` branch (configurable with
-   `--remote` and `--branch`).
-3. Clones or creates the branch in a temporary directory, commits the site, and
-   pushes it. Your main working tree is never touched.
+1. Resolves the `origin` remote and the `gh-pages` branch (`--remote`,
+   `--branch`).
+2. Clones or creates the branch in a temporary directory, copies the run into
+   `runs/<runId>/`, merges `site.json`, re-renders the root index, commits and
+   pushes. Your main working tree is never touched.
+3. Skips the commit when the site is already current.
 
-Then enable Pages in the repository: **Settings → Pages → Deploy from a branch →
-`gh-pages`**. The URL is `https://<owner>.github.io/<repo>/`.
+Enable Pages: **Settings → Pages → Deploy from a branch → `gh-pages`**. The URL
+is `https://<owner>.github.io/<repo>/`. Public repositories work on the free
+plan; private repositories need a plan that includes Pages. If Pages is
+unavailable, push the same site to a public repository or an S3/R2 bucket.
 
-Important:
-
-- Publishing makes artifact content **public**. Pass `--yes` only after reading
-  the artifacts. Secrets in artifacts are not scrubbed automatically.
-- GitHub Pages for **private** repositories requires a plan that includes Pages.
-  If Pages is unavailable, push the same site to a public repository or an S3/R2
-  bucket instead.
-- Artifacts render as escaped text (no raw HTML), so Markdown looks like
-  Markdown on the static page. Rendered Markdown is a later slice.
+`--yes` is required because the content becomes public. The site is static:
+no server, no telemetry, no raw HTML.
 
 ## Safer or better options
 

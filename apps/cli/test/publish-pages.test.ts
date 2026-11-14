@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,32 +14,41 @@ afterEach(async () => {
 });
 
 describe("publish to a branch", () => {
-  it("creates the branch and updates it on a second publish", async () => {
+  it("creates the branch, updates it, and reports no-op publishes", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "kit-pages-test-"));
     roots.push(root);
     const remote = path.join(root, "remote.git");
-    const site = path.join(root, "site");
     git(["init", "--bare", remote]);
-    await mkdir(site, { recursive: true });
-    await writeFile(path.join(site, "index.html"), "v1", "utf8");
 
-    await publishSiteToBranch({
-      siteDir: site,
+    const changed = await publishSiteToBranch({
       remoteUrl: remote,
       branch: "gh-pages",
+      prepare: async (dir) => {
+        await writeFile(path.join(dir, "index.html"), "v1", "utf8");
+      },
     });
-
+    expect(changed).toBe(true);
     expect(show(remote, "gh-pages:index.html")).toContain("v1");
 
-    await writeFile(path.join(site, "index.html"), "v2", "utf8");
-    await publishSiteToBranch({
-      siteDir: site,
+    const updated = await publishSiteToBranch({
       remoteUrl: remote,
       branch: "gh-pages",
+      prepare: async (dir) => {
+        await writeFile(path.join(dir, "index.html"), "v2", "utf8");
+      },
     });
-
+    expect(updated).toBe(true);
     expect(show(remote, "gh-pages:index.html")).toContain("v2");
-  }, 30_000);
+
+    const unchanged = await publishSiteToBranch({
+      remoteUrl: remote,
+      branch: "gh-pages",
+      prepare: async (dir) => {
+        await writeFile(path.join(dir, "index.html"), "v2", "utf8");
+      },
+    });
+    expect(unchanged).toBe(false);
+  }, 20_000);
 });
 
 function git(args: string[]): void {

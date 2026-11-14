@@ -491,11 +491,17 @@ delivery:
 - **local_file** writes to `~/.agent-team-kit/outbox`.
 - `DRY_RUN` never sends. Every attempt is recorded as a `delivery` artifact.
 
-Publish a run as a static site and push it to GitHub Pages:
+Publish runs to a static archive and push it to GitHub Pages:
 
 ```bash
 bun run kit publish <runId> --push --yes
 ```
+
+The archive gets a root index, a run page with metrics and a stage timeline, and
+one Markdown artifact page per artifact with provenance and a raw-content
+toggle. Tool calls, gates, approvals and delivery records are excluded; artifacts
+that match high-confidence secret patterns block the publish. Output lives in
+`~/.agent-team-kit/publish`; repeat publishes merge into the same archive.
 
 See [docs/delivery.md](./docs/delivery.md) for SMTP, Pages and safer alternatives.
 

@@ -18,6 +18,7 @@
     "@kit/manager": "workspace:*",
     "@kit/model": "workspace:*",
     "@kit/pack": "workspace:*",
+    "@kit/publish": "workspace:*",
     "@kit/source": "workspace:*",
     "@kit/store": "workspace:*",
     "@kit/telemetry": "workspace:*",
