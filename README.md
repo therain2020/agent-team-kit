@@ -483,6 +483,7 @@ bun run web:dev   # http://localhost:3000
 | `/office` | Task-first Manager Office: Demand/Build/Deliver/Blocked/Done board, Seller/Builder/Specialist assignment, manager chat, pixel roster |
 | `/` | Command Center: exceptions, in-flight runs, spend, recent artifacts |
 | `/manager` | Streaming Manager chat with artifact citations and exchange artifacts |
+| `/factory` | Pixel approval conveyor: one-key low-risk, batch low, high-risk confirmation, keyboard; `/inbox` remains the list fallback |
 | `/inbox` | Paused approvals; evidence, draft, diff, approve/abort |
 | `/runs/[runId]` | Stage timeline, gate evidence, artifact viewer, provenance |
 | `/packs` | Inspect/validate/simulate packs; start DRY_RUN workflows; create teams |

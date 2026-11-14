@@ -62,6 +62,10 @@
   topic discovery (`agent-team-workshop`), preview, and commit-pinned install;
   path traversal/size limits and explicit consent for code-bearing items.
   CLI: `kit workshop search|preview|install`.
+- Pixel factory: `/factory` conveyor with Gatekeeper, one-key low-risk approve,
+  batch low-risk approve, high-risk confirmation, keyboard controls, and links
+  to run evidence. Actions use the existing decision API and DecisionRecord
+  audit; `/inbox` remains the list/accessibility fallback.
 - Tests: full suite passing (coder, gateway, iteration, signals, templates,
   workflow CRUD, workshop; plus the existing suite).
 
