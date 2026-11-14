@@ -10,6 +10,7 @@
     "@kit/autopilot": "workspace:*",
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",
+    "@kit/delivery": "workspace:*",
     "@kit/model": "workspace:*",
     "@kit/pack": "workspace:*",
     "@kit/queue": "workspace:*",

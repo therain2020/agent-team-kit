@@ -27,7 +27,7 @@ export interface StageDefinition {
 }
 
 export interface DeliveryDefinition {
-  channel: "im" | "email" | "local_file";
+  channel: "im" | "email" | "local_file" | "webhook";
   approval?: "never" | "required_if_published";
 }
 

@@ -471,6 +471,32 @@ auto-approves matching paused runs, and records heartbeat state. The console at
 and a kill switch. `KIT_AUTOPILOT_DISABLED=1` stops all ticks. See
 [docs/open-platform.md](./docs/open-platform.md).
 
+### Delivery and publishing
+
+A workflow can deliver its final artifact after the run when it declares a
+`delivery` block:
+
+```yaml
+delivery:
+  channel: email        # email | webhook | im | local_file
+  approval: required_if_published
+```
+
+- **Email** uses `KIT_SMTP_*` plus `KIT_DELIVERY_EMAIL_TO`. QQ Mail requires the
+  SMTP authorization code, not the account password.
+- **Webhook** posts the artifact to `KIT_DELIVERY_WEBHOOK_URL` with an optional
+  HMAC signature; `im` is the same mechanism for chat robots.
+- **local_file** writes to `~/.agent-team-kit/outbox`.
+- `DRY_RUN` never sends. Every attempt is recorded as a `delivery` artifact.
+
+Publish a run as a static site and push it to GitHub Pages:
+
+```bash
+bun run kit publish <runId> --push --yes
+```
+
+See [docs/delivery.md](./docs/delivery.md) for SMTP, Pages and safer alternatives.
+
 ### Task-centric team and tools
 
 Agents carry `role: builder | seller | manager | specialist`; a Pack decides
@@ -568,6 +594,7 @@ packages/store  Postgres repositories + fs/S3 blob adapters
 packages/queue  NATS JetStream adapter
 packages/workflow Temporal adapter
 packages/coder  external coding-agent adapters + sandbox/diff evidence
+packages/delivery email, webhook and local-outbox delivery
 packages/workshop GitHub workshop manifest/search/preview/install
 packages/model  model gateway (DeepSeek)
 packages/manager Manager briefs, decisions, approval lookup

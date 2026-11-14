@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { type CoderResult, coderSandboxRoot, runCoderTask } from "@kit/coder";
 import { newId } from "@kit/core";
+import { deliverArtifact } from "@kit/delivery";
 import {
   type ModelMessage,
   StubModelGateway,
@@ -283,6 +284,69 @@ export async function failPackRun(input: {
     "failed",
     new Date().toISOString(),
   );
+}
+
+export async function deliverPackRun(input: {
+  runId: string;
+  workspaceId: string;
+  artifactId: string;
+  channel: "im" | "email" | "local_file" | "webhook";
+  runMode: "DRY_RUN" | "LIVE";
+}): Promise<void> {
+  const store = await getStore();
+  let result: Awaited<ReturnType<typeof deliverArtifact>>;
+
+  try {
+    const artifact = await store.artifactStore.findById(input.artifactId);
+    if (!artifact) {
+      throw new Error(`artifact not found: ${input.artifactId}`);
+    }
+    const manifest = await store.manifests.get(artifact.manifestId);
+    const blob = await store.blobs.findById(artifact.blobId);
+    if (!blob) {
+      throw new Error(`blob not found for artifact ${input.artifactId}`);
+    }
+    const bytes = await store.blobClient.get(blob.storageKey);
+    const markdown = new TextDecoder().decode(bytes);
+
+    result = await deliverArtifact({
+      channel: input.channel,
+      runId: input.runId,
+      artifactId: input.artifactId,
+      title: manifest
+        ? `${input.runId} · ${manifest.stageId}`
+        : input.artifactId,
+      markdown,
+      runMode: input.runMode,
+    });
+  } catch (error) {
+    result = {
+      ok: false,
+      channel: input.channel,
+      skipped: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  await store.artifactService.publish({
+    workspaceId: input.workspaceId,
+    content: new TextEncoder().encode(JSON.stringify(result, null, 2)),
+    producer: {
+      agentId: "delivery",
+      agentVersion: "1.0.0",
+      promptHash: createHash("sha256")
+        .update(`delivery:${input.channel}`)
+        .digest("hex"),
+      modelId: "delivery",
+    },
+    inputs: [{ artifactId: input.artifactId, version: 1 }],
+    runId: input.runId,
+    stageId: `${input.artifactId}:delivery`,
+    runMode: input.runMode,
+    cost: { currency: "CNY", amount: 0, tokens: 0 },
+    sensitivity: "internal",
+    retentionClass: "artifact_365d",
+  });
 }
 
 async function runCoderStage(

@@ -85,7 +85,7 @@ export const workflowStageSchema = z
   });
 
 export const deliverySchema = z.object({
-  channel: z.enum(["im", "email", "local_file"]),
+  channel: z.enum(["im", "email", "local_file", "webhook"]),
   approval: z.enum(["never", "required_if_published"]).optional(),
 });
 

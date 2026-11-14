@@ -193,6 +193,7 @@ export async function buildPackRun(
       initialInput,
       stages,
       stub: options.stub ?? false,
+      ...(workflow.delivery ? { delivery: workflow.delivery } : {}),
     },
   };
 }

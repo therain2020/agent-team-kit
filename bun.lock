@@ -52,6 +52,7 @@
         "@kit/autopilot": "workspace:*",
         "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
+        "@kit/delivery": "workspace:*",
         "@kit/model": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/queue": "workspace:*",
@@ -142,6 +143,13 @@
       "dependencies": {
         "ulid": "^2.3.0",
         "zod": "^3.24.1",
+      },
+    },
+    "packages/delivery": {
+      "name": "@kit/delivery",
+      "version": "0.9.0",
+      "dependencies": {
+        "nodemailer": "^10.5.0",
       },
     },
     "packages/evolution": {
@@ -524,6 +532,8 @@
     "@kit/coder": ["@kit/coder@workspace:packages/coder"],
 
     "@kit/core": ["@kit/core@workspace:packages/core"],
+
+    "@kit/delivery": ["@kit/delivery@workspace:packages/delivery"],
 
     "@kit/evolution": ["@kit/evolution@workspace:packages/evolution"],
 
@@ -1384,6 +1394,8 @@
     "node-addon-api": ["node-addon-api@7.1.1", "", {}, "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ=="],
 
     "node-releases": ["node-releases@2.0.64", "https://registry.npmmirror.com/node-releases/-/node-releases-2.0.64.tgz", {}, "sha512-zAPCKqMcnqs2nGy6nlkm7JduFseiBJy3EXHGLh+8pFR+TxGCBxxiEN21+UROU5CKwX/f4TlUcYjiM+vs/tsyxw=="],
+
+    "nodemailer": ["nodemailer@10.5.0", "", {}, "sha512-L/w/HH5MqpzMDuZD7fQdt/+KqymuvrpaApaIjAH2XA3ILePwlcvXCVVvP75xVrXCEt2ggK2marrrHHFB5Qu0kA=="],
 
     "pako": ["pako@1.0.11", "https://registry.npmmirror.com/pako/-/pako-1.0.11.tgz", {}, "sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw=="],
 

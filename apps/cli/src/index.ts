@@ -13,6 +13,7 @@ import { registerManager } from "./commands/manager";
 import { registerModel } from "./commands/model";
 import { registerPack } from "./commands/pack";
 import { registerPatch } from "./commands/patch";
+import { registerPublish } from "./commands/publish";
 import { registerRun } from "./commands/run";
 import { registerSignals } from "./commands/signals";
 import { registerSource } from "./commands/source";
@@ -39,6 +40,7 @@ program
         `  ${command} demo           create a demo team and a static plan (no Docker)`,
         `  ${command} init my-team   create a team from a template (--list)`,
         `  ${command} up --web       start the stack and the console`,
+        `  ${command} publish <run>   render a run as a static site (GitHub Pages)`,
         "",
         "Docs: README.md · docs/install.md",
         "Community: CONTRIBUTING.md · SUPPORT.md",
@@ -50,6 +52,7 @@ registerInit(program);
 registerBootstrap(program);
 registerDoctor(program);
 registerDemo(program);
+registerPublish(program);
 registerPack(program);
 registerPatch(program);
 registerRun(program);

@@ -34,6 +34,7 @@ const {
   failPackRun,
   setPackRunStatus,
   requestApproval,
+  deliverPackRun,
 } = proxyActivities<typeof packActivities>({
   startToCloseTimeout: "40 minutes",
   heartbeatTimeout: "2 minutes",
@@ -406,6 +407,17 @@ export async function packWorkflow(
     }
 
     await finishPackRun({ runId: input.runId });
+
+    const finalArtifactId = artifactIds[artifactIds.length - 1];
+    if (input.delivery && finalArtifactId) {
+      await deliverPackRun({
+        runId: input.runId,
+        workspaceId: input.workspaceId,
+        artifactId: finalArtifactId,
+        channel: input.delivery.channel,
+        runMode: input.runMode,
+      });
+    }
 
     return { runId: input.runId, artifactIds };
   } catch (error) {
