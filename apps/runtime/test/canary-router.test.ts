@@ -62,6 +62,7 @@ function routerFor(
   const store = {
     runs: { list: async () => [] },
     degradation: { listActive: async () => [] },
+    killSwitches: { listActive: async () => [] },
   };
   const temporal = {
     client: {
