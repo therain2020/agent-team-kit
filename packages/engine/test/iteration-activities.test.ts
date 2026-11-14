@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  classifyRisk,
-  parseTaskPlan,
-} from "../src/temporal/iteration-activities";
+import { classifyRisk, parseTaskPlan } from "../src/iteration-activities";
 
 describe("parseTaskPlan", () => {
   it("parses a fenced JSON plan", () => {

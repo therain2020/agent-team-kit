@@ -462,6 +462,7 @@ export class SqliteRunRequestStore implements RunRequestStore {
         runId: record.runId,
         workspaceId: record.workspaceId,
         workflowId: record.workflowId,
+        kind: record.kind,
         payload: record.payload,
         status: "queued",
         claimedBy: null,
@@ -531,7 +532,7 @@ export class SqliteRunRequestStore implements RunRequestStore {
 
   async finish(
     requestId: string,
-    status: "done" | "failed",
+    status: "done" | "failed" | "cancelled",
     error?: string,
   ): Promise<void> {
     await this.db
@@ -562,6 +563,7 @@ function fromSqliteRunRequestRow(
     runId: row.runId,
     workspaceId: row.workspaceId,
     workflowId: row.workflowId,
+    kind: row.kind as RunRequestRecord["kind"],
     payload: row.payload,
     status: row.status as RunRequestRecord["status"],
     claimedBy: row.claimedBy ?? null,

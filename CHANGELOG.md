@@ -5,6 +5,13 @@
 
 ## Unreleased
 
+- Local mode runs iterations without Docker or Temporal: iteration orchestration
+  is now an engine-agnostic pipeline (`@kit/engine/iteration-pipeline`) shared by
+  the Temporal workflow and the local runner, and iteration activities live in
+  `@kit/engine`. `run_requests` gains a `kind` column so one local queue serves
+  pack runs and iterations; `kit iterate` and `/api/jobs` enqueue, execute and
+  report locally, low-risk changes auto-apply while high-risk ones stay pending,
+  and aborts are cooperative at checkpoint boundaries.
 - Pack DAG execution is now genuinely parallel: stages whose `inputFrom` /
   `inputsFrom` dependencies are satisfied run concurrently (default 4, override
   `KIT_PACK_CONCURRENCY`, clamped to 1–16). Join stages wait for every upstream,

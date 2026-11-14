@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./iteration-pipeline": "./src/iteration-pipeline.ts",
     "./pack-pipeline": "./src/pack-pipeline.ts"
   },
   "dependencies": {
@@ -12,9 +13,11 @@
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",
     "@kit/delivery": "workspace:*",
+    "@kit/iteration": "workspace:*",
     "@kit/manager": "workspace:*",
     "@kit/model": "workspace:*",
     "@kit/ops": "workspace:*",
+    "@kit/pack": "workspace:*",
     "@kit/store": "workspace:*",
     "@kit/tools": "workspace:*",
     "@kit/workflow": "workspace:*",

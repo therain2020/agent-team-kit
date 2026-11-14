@@ -108,13 +108,17 @@ export interface AutopilotStateRecord {
   version: number;
 }
 
+/** Discriminates which pipeline a queued local request belongs to. */
+export type RunRequestKind = "pack_run" | "iteration";
+
 export interface RunRequestRecord {
   requestId: string;
   runId: string;
   workspaceId: string;
   workflowId: string;
+  kind: RunRequestKind;
   payload: string;
-  status: "queued" | "claimed" | "done" | "failed";
+  status: "queued" | "claimed" | "done" | "failed" | "cancelled";
   claimedBy: string | null;
   claimedAt: string | null;
   heartbeatAt: string | null;
@@ -149,6 +153,7 @@ export interface RunRequestStore {
       | "runId"
       | "workspaceId"
       | "workflowId"
+      | "kind"
       | "payload"
       | "createdAt"
       | "updatedAt"
@@ -162,7 +167,7 @@ export interface RunRequestStore {
   heartbeat(requestId: string, owner: string, now: Date): Promise<void>;
   finish(
     requestId: string,
-    status: "done" | "failed",
+    status: "done" | "failed" | "cancelled",
     error?: string,
   ): Promise<void>;
   find(runId: string): Promise<RunRequestRecord | null>;
@@ -941,6 +946,7 @@ export function fromRunRequestRow(
     runId: row.runId,
     workspaceId: row.workspaceId,
     workflowId: row.workflowId,
+    kind: row.kind as RunRequestRecord["kind"],
     payload: row.payload,
     status: row.status as RunRequestRecord["status"],
     claimedBy: row.claimedBy ?? null,
@@ -965,6 +971,7 @@ export class PostgresRunRequestStore implements RunRequestStore {
         runId: record.runId,
         workspaceId: record.workspaceId,
         workflowId: record.workflowId,
+        kind: record.kind,
         payload: record.payload,
         status: "queued",
         claimedBy: null,
@@ -1034,7 +1041,7 @@ export class PostgresRunRequestStore implements RunRequestStore {
 
   async finish(
     requestId: string,
-    status: "done" | "failed",
+    status: "done" | "failed" | "cancelled",
     error?: string,
   ): Promise<void> {
     await this.db

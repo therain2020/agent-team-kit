@@ -1,5 +1,7 @@
 export * from "./degradation-guard";
 export * from "./heartbeat";
+export * from "./iteration-activities";
+export * from "./iteration-pipeline";
 export * from "./kill-switch";
 export * from "./local-runner";
 export * from "./pack-activities";

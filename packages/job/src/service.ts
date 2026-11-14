@@ -8,7 +8,11 @@ import {
   missionAssignmentSchema,
   newId,
 } from "@kit/core";
-import { assertKillSwitchClear, enqueueLocalRun } from "@kit/engine";
+import {
+  assertKillSwitchClear,
+  enqueueLocalIteration,
+  enqueueLocalRun,
+} from "@kit/engine";
 import {
   buildPackRun,
   loadPack,
@@ -217,11 +221,7 @@ export async function abortJob(
 
   if (store.driver === "sqlite") {
     if (kind === "iteration") {
-      throw new JobError(
-        "unsupported_mode",
-        "iteration requires Temporal (Scale Mode)",
-        409,
-      );
+      return await abortLocalIteration(store, jobId);
     }
     // A queued local run has no runs row yet; the request is the source of truth.
     const request = await store.runRequests.find(jobId);
@@ -425,13 +425,6 @@ async function startIterationJob(
       404,
     );
   }
-  if (store.driver === "sqlite") {
-    throw new JobError(
-      "unsupported_mode",
-      "iteration requires Temporal (Scale Mode); set KIT_RUNTIME_MODE=scale",
-      409,
-    );
-  }
   if (!input.goal?.trim()) {
     throw new JobError("goal_required", "goal is required for an iteration");
   }
@@ -455,7 +448,7 @@ async function startIterationJob(
         jobId: found,
         kind: "iteration",
         workflowId,
-        engine: "temporal",
+        engine: store.driver === "sqlite" ? "local" : "temporal",
         runMode,
         applyMode,
         pack: loaded.pack.metadata.name,
@@ -506,6 +499,30 @@ async function startIterationJob(
     ON CONFLICT (iteration_id) DO NOTHING
   `;
 
+  if (store.driver === "sqlite") {
+    try {
+      const queued = await enqueueLocalIteration(iterationInput, store);
+      return {
+        jobId: iterationId,
+        kind: "iteration",
+        workflowId,
+        engine: "local",
+        runMode,
+        applyMode,
+        pack: loaded.pack.metadata.name,
+        project: projectRef(project),
+        requestId: queued.requestId,
+      };
+    } catch (error) {
+      await markIterationStartFailed(store, iterationId, error);
+      throw new JobError(
+        "start_failed",
+        error instanceof Error ? error.message : "failed to enqueue job",
+        502,
+      );
+    }
+  }
+
   const { client, connection } = await createTemporalClient();
   try {
     const handle = await client.workflow.start("iterationWorkflow", {
@@ -527,13 +544,7 @@ async function startIterationJob(
       project: projectRef(project),
     };
   } catch (error) {
-    await store.sql`
-      UPDATE iteration_runs SET status = 'failed', phase = 'failed',
-        error = ${error instanceof Error ? error.message : String(error)},
-        finished_at = ${new Date().toISOString()},
-        updated_at = ${new Date().toISOString()}
-      WHERE iteration_id = ${iterationId}
-    `;
+    await markIterationStartFailed(store, iterationId, error);
     throw new JobError(
       "start_failed",
       error instanceof Error ? error.message : "failed to start workflow",
@@ -542,6 +553,66 @@ async function startIterationJob(
   } finally {
     await connection.close();
   }
+}
+
+async function markIterationStartFailed(
+  store: Store,
+  iterationId: string,
+  error: unknown,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await store.sql`
+    UPDATE iteration_runs SET status = 'failed', phase = 'failed',
+      error = ${error instanceof Error ? error.message : String(error)},
+      finished_at = ${now}, updated_at = ${now}
+    WHERE iteration_id = ${iterationId}
+  `;
+}
+
+/**
+ * Local abort is cooperative: a queued request is cancelled outright, while a
+ * claimed run is marked `cancelling` so the runner stops at its next checkpoint.
+ */
+async function abortLocalIteration(
+  store: Store,
+  jobId: string,
+): Promise<{ jobId: string; kind: JobKind; cancelled: boolean }> {
+  const request = await store.runRequests.find(jobId);
+  if (!request) {
+    throw new JobError("not_found", `iteration ${jobId} not found`, 404);
+  }
+  const now = new Date().toISOString();
+
+  if (request.status === "queued") {
+    await store.sql`
+      UPDATE run_requests SET status = 'cancelled', error = 'aborted by operator',
+        updated_at = ${now}
+      WHERE run_id = ${jobId} AND status = 'queued'
+    `;
+    await store.sql`
+      UPDATE iteration_runs SET status = 'cancelled', phase = 'cancelled',
+        error = COALESCE(error, 'aborted by operator'),
+        finished_at = ${now}, updated_at = ${now}
+      WHERE iteration_id = ${jobId}
+    `;
+    return { jobId, kind: "iteration", cancelled: true };
+  }
+
+  if (request.status === "claimed") {
+    await store.sql`
+      UPDATE iteration_runs SET status = 'cancelling', phase = 'cancelling',
+        error = COALESCE(error, 'aborted by operator'), updated_at = ${now}
+      WHERE iteration_id = ${jobId}
+        AND status NOT IN ('succeeded', 'partial', 'failed', 'cancelled')
+    `;
+    return { jobId, kind: "iteration", cancelled: true };
+  }
+
+  throw new JobError(
+    "already_finished",
+    `${jobId} is already ${request.status}`,
+    409,
+  );
 }
 
 async function resolveMission(

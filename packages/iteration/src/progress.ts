@@ -62,8 +62,16 @@ export async function startIteration(
       acceptance = EXCLUDED.acceptance,
       run_mode = EXCLUDED.run_mode,
       apply_mode = EXCLUDED.apply_mode,
-      status = 'running',
-      phase = 'planned',
+      -- An operator may abort between claim and planning; never resurrect a
+      -- cancelled run by overwriting the cooperative cancel flag.
+      status = CASE
+        WHEN iteration_runs.status = 'cancelling' THEN 'cancelling'
+        ELSE 'running'
+      END,
+      phase = CASE
+        WHEN iteration_runs.status = 'cancelling' THEN 'cancelling'
+        ELSE 'planned'
+      END,
       plan_artifact_id = EXCLUDED.plan_artifact_id,
       error = NULL,
       started_at = EXCLUDED.started_at,

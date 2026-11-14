@@ -106,21 +106,58 @@ describe("job control", () => {
     ).rejects.toMatchObject({ code: "pack_outside_root" });
   });
 
-  it("requires Scale Mode for iterations", async () => {
+  it("starts a DRY_RUN iteration through the local queue", async () => {
     const store = await sqliteStore();
-    await expect(
-      startJob(
-        store,
-        {
-          kind: "iteration",
-          packDir: "self-improve",
-          goal: "find a weakness",
-          origin: "cli",
-        },
-        { repoRoot: process.cwd() },
-      ),
-    ).rejects.toMatchObject({ code: "unsupported_mode" });
-  });
+    const result = await startJob(
+      store,
+      {
+        kind: "iteration",
+        packDir: "self-improve",
+        goal: "find a weakness",
+        origin: "cli",
+        runMode: "DRY_RUN",
+      },
+      { repoRoot: process.cwd() },
+    );
+
+    expect(result.kind).toBe("iteration");
+    expect(result.engine).toBe("local");
+    expect(result.requestId).toBeTruthy();
+
+    const request = await store.runRequests.find(result.jobId);
+    expect(request?.kind).toBe("iteration");
+    expect(request?.status).toBe("queued");
+
+    const job = await getJob(store, "iteration", result.jobId);
+    expect(job?.status).toBe("running");
+    expect(job?.phase).toBe("queued");
+  }, 30_000);
+
+  it("cancels a queued local iteration and its run", async () => {
+    const store = await sqliteStore();
+    const result = await startJob(
+      store,
+      {
+        kind: "iteration",
+        packDir: "self-improve",
+        goal: "find a weakness",
+        origin: "cli",
+        runMode: "DRY_RUN",
+      },
+      { repoRoot: process.cwd() },
+    );
+
+    const aborted = await abortJob(store, "iteration", result.jobId, {
+      repoRoot: process.cwd(),
+    });
+    expect(aborted.cancelled).toBe(true);
+    expect((await store.runRequests.find(result.jobId))?.status).toBe(
+      "cancelled",
+    );
+    expect((await getJob(store, "iteration", result.jobId))?.status).toBe(
+      "cancelled",
+    );
+  }, 30_000);
 
   it("lists and reads iterations, and refuses to abort finished jobs", async () => {
     const store = await sqliteStore();
