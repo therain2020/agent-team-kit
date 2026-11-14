@@ -36,6 +36,7 @@ import type {
   ApplyTaskActivityInput,
   ClassifyTaskActivityInput,
   CleanupInput,
+  FailIterationInput,
   IterationApplyResult,
   IterationCoderResult,
   IterationInput,
@@ -49,7 +50,15 @@ import type {
   VerifyTaskActivityInput,
 } from "@kit/workflow";
 import { Context } from "@temporalio/activity";
-import { startIteration, updateRun, updateTask } from "./iteration-progress";
+import {
+  appendCoderEvent,
+  appendEvent,
+  failIteration,
+  startIteration,
+  touchHeartbeat,
+  updateRun,
+  updateTask,
+} from "./iteration-progress";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -179,6 +188,14 @@ export async function runIterationCoder(
     coder,
     startedAt: new Date().toISOString(),
   });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "coder.started",
+    status: "running",
+    summary: input.task.goal,
+    payload: { coder, attempt: input.attempt },
+  });
   const sandboxDir = coderSandboxRoot(
     "iterations",
     safe(input.iterationId),
@@ -205,8 +222,12 @@ export async function runIterationCoder(
     } catch {
       // not inside an activity context
     }
+    void touchHeartbeat(store, input.iterationId, input.task.id).catch(
+      () => undefined,
+    );
   }, 30_000);
 
+  let eventChain = Promise.resolve();
   let result: CoderResult;
   try {
     result = await runCoderTask({
@@ -222,7 +243,21 @@ export async function runIterationCoder(
       timeoutMs: Number(process.env.KIT_CODER_TIMEOUT_MS ?? 25 * 60 * 1000),
       installDeps: process.env.KIT_CODER_INSTALL !== "0",
       keepSandbox: true,
+      onEvent: (event) => {
+        eventChain = eventChain
+          .then(() =>
+            appendCoderEvent(store, input.iterationId, input.task.id, event),
+          )
+          .then(() => undefined)
+          .catch((error: unknown) => {
+            console.error(
+              `[iteration] failed to persist coder event: ${String(error)}`,
+            );
+          });
+        return eventChain;
+      },
     });
+    await eventChain;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     result = {
@@ -294,6 +329,20 @@ export async function runIterationCoder(
     resultArtifactId,
     ...(result.error ? { error: result.error } : {}),
   });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "coder.finished",
+    status: result.ok ? "completed" : "failed",
+    summary: result.summary,
+    payload: {
+      tokens: result.tokens ?? 0,
+      changedFiles: result.changedFiles,
+      durationMs: result.durationMs,
+      sandboxMode: result.sandbox.mode,
+      error: result.error ?? null,
+    },
+  });
 
   return {
     taskId: input.task.id,
@@ -345,6 +394,13 @@ export async function verifyIterationTask(
   await updateTask(store, input.iterationId, input.task.id, {
     status: "running",
     phase: "verifying",
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "verification.started",
+    status: "running",
+    summary: `checks: ${domain.verification.join(", ")}`,
   });
   if (input.changedFiles.length === 0) {
     return await failVerification(
@@ -448,6 +504,21 @@ export async function verifyIterationTask(
     verificationArtifactId: artifactId,
     ...(pass ? {} : { error: feedback.slice(0, 2000) }),
   });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "verification.finished",
+    status: pass ? "completed" : "failed",
+    summary: pass ? "all checks passed" : feedback.slice(0, 500),
+    payload: {
+      pass,
+      checks: checks.map((check) => ({
+        name: check.name,
+        exitCode: check.exitCode,
+        timedOut: check.timedOut,
+      })),
+    },
+  });
   return { taskId: input.task.id, pass, feedback, checks, artifactId };
 }
 
@@ -479,6 +550,14 @@ export async function classifyIterationTask(
   await updateTask(store, input.iterationId, input.task.id, {
     risk: classified.risk,
     phase: "risk",
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "risk.classified",
+    status: classified.forbidden ? "blocked" : "completed",
+    summary: `risk ${classified.risk}`,
+    payload: { reasons: classified.reasons, forbidden: classified.forbidden },
   });
   return {
     taskId: input.task.id,
@@ -571,6 +650,19 @@ export async function applyIterationTask(
         ? { error: reason.slice(0, 2000) }
         : {}),
     });
+    await appendEvent(store, {
+      iterationId: input.iterationId,
+      taskId: input.task.id,
+      kind: "apply.finished",
+      status,
+      summary: reason,
+      payload: {
+        risk: input.risk,
+        applyMode: input.applyMode,
+        commit: extra.commit ?? null,
+        artifactId,
+      },
+    });
     return {
       taskId: input.task.id,
       applied: status === "applied",
@@ -608,6 +700,17 @@ export async function applyIterationTask(
       status: "running",
       phase: "applying",
     });
+    await appendEvent(store, {
+      iterationId: input.iterationId,
+      taskId: input.task.id,
+      kind: "apply.started",
+      status: "running",
+      summary: `risk ${input.risk}, mode ${input.applyMode}`,
+      payload: {
+        baselineSha: input.baselineSha,
+        changedFiles: input.changedFiles,
+      },
+    });
 
     const diff = await readArtifactText(store, input.diffArtifactId);
     if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
@@ -640,6 +743,13 @@ export async function applyIterationTask(
   } finally {
     clearInterval(heartbeat);
   }
+}
+
+export async function failIterationActivity(
+  input: FailIterationInput,
+): Promise<void> {
+  const store = await getStore();
+  await failIteration(store, input.iterationId, input.error);
 }
 
 export async function cleanupIterationTask(input: CleanupInput): Promise<void> {
@@ -859,6 +969,13 @@ export async function reportIteration(
     reportArtifactId,
     finishedAt: new Date().toISOString(),
     ...(status === "failed" ? { error: "iteration failed" } : {}),
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    kind: "run.finished",
+    status,
+    summary: `iteration ${status}`,
+    payload: { reportArtifactId, fitnessArtifactId },
   });
 
   return { reportArtifactId, fitnessArtifactId, status };
@@ -1121,6 +1238,14 @@ async function failVerification(
     phase: "verification_failed",
     verificationArtifactId: artifactId,
     error: `${reason}: ${detail}`.slice(0, 2000),
+  });
+  await appendEvent(store, {
+    iterationId: input.iterationId,
+    taskId: input.task.id,
+    kind: "verification.finished",
+    status: "failed",
+    summary: `${reason}: ${detail}`.slice(0, 500),
+    payload: { pass: false, reason, detail: detail.slice(0, 2000) },
   });
   return {
     taskId: input.task.id,

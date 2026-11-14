@@ -202,6 +202,10 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   plan_artifact_id TEXT,
   report_artifact_id TEXT,
   error TEXT,
+  last_heartbeat_at TIMESTAMPTZ,
+  last_event_id BIGINT,
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  tool_calls INTEGER NOT NULL DEFAULT 0,
   started_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   finished_at TIMESTAMPTZ
@@ -229,11 +233,52 @@ CREATE TABLE IF NOT EXISTS iteration_tasks (
   result_artifact_id TEXT,
   verification_artifact_id TEXT,
   apply_artifact_id TEXT,
+  last_heartbeat_at TIMESTAMPTZ,
+  turn_count INTEGER NOT NULL DEFAULT 0,
+  tool_calls INTEGER NOT NULL DEFAULT 0,
   started_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   finished_at TIMESTAMPTZ,
   PRIMARY KEY (iteration_id, task_id)
 );
+
+CREATE TABLE IF NOT EXISTS iteration_events (
+  event_id BIGSERIAL PRIMARY KEY,
+  iteration_id TEXT NOT NULL REFERENCES iteration_runs(iteration_id) ON DELETE CASCADE,
+  task_id TEXT,
+  turn INTEGER,
+  step INTEGER,
+  kind TEXT NOT NULL,
+  status TEXT,
+  tool TEXT,
+  summary TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS iteration_turns (
+  iteration_id TEXT NOT NULL REFERENCES iteration_runs(iteration_id) ON DELETE CASCADE,
+  task_id TEXT NOT NULL,
+  turn INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ,
+  steps INTEGER NOT NULL DEFAULT 0,
+  tool_calls INTEGER NOT NULL DEFAULT 0,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  summary TEXT,
+  error TEXT,
+  last_event_id BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (iteration_id, task_id, turn)
+);
+
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS last_event_id BIGINT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS turn_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS tool_calls INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE iteration_tasks ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
+ALTER TABLE iteration_tasks ADD COLUMN IF NOT EXISTS turn_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE iteration_tasks ADD COLUMN IF NOT EXISTS tool_calls INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_evolution_scores_variant ON evolution_scores(variant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_evolution_variants_pack ON evolution_variants(pack_dir, created_at DESC);
@@ -241,3 +286,6 @@ CREATE INDEX IF NOT EXISTS idx_evolution_cycles_created ON evolution_cycles(work
 CREATE INDEX IF NOT EXISTS idx_merge_tickets_status ON merge_tickets(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_runs_updated ON iteration_runs(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_iteration_events_run ON iteration_events(iteration_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_iteration_events_turn ON iteration_events(iteration_id, task_id, turn, step);
+CREATE INDEX IF NOT EXISTS idx_iteration_turns_run ON iteration_turns(iteration_id, task_id, turn);

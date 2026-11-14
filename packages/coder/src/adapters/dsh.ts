@@ -1,15 +1,9 @@
+import { DshStreamParser } from "../dsh-stream";
 import { commandOnPath, runProcess, scrubbedEnv } from "../process";
 import { buildCoderPrompt } from "../prompt";
 import type { CoderAdapter, CoderProcessResult, CoderTask } from "../types";
 
-interface DshEvent {
-  type?: string;
-  text?: string;
-  sessionId?: string;
-  reason?: { kind?: string };
-  usage?: { totalTokens?: number };
-  error?: unknown;
-}
+export { parseDshOutput } from "../dsh-stream";
 
 export class DshCoderAdapter implements CoderAdapter {
   readonly id = "dsh" as const;
@@ -26,6 +20,7 @@ export class DshCoderAdapter implements CoderAdapter {
 
     const prompt = buildCoderPrompt(task);
     const startedAt = Date.now();
+    const parser = new DshStreamParser({ onEvent: task.onEvent });
     const result = await runProcess(
       command,
       [
@@ -43,9 +38,10 @@ export class DshCoderAdapter implements CoderAdapter {
         env: scrubbedEnv(task.envAllowlist),
         input: prompt,
         timeoutMs: task.timeoutMs ?? 25 * 60 * 1000,
+        onStdout: (chunk) => parser.push(chunk),
       },
     );
-    const parsed = parseDshOutput(result.stdout);
+    const parsed = await parser.finish();
     const durationMs = Date.now() - startedAt;
     const ok =
       !result.timedOut &&
@@ -71,6 +67,7 @@ export class DshCoderAdapter implements CoderAdapter {
       durationMs,
       ...(parsed.tokens ? { tokens: parsed.tokens } : {}),
       ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {}),
+      turns: parsed.turns,
       ...(parsed.error
         ? { error: parsed.error }
         : result.error
@@ -85,72 +82,6 @@ export class DshCoderAdapter implements CoderAdapter {
   }
 }
 
-export function parseDshOutput(stdout: string): {
-  finalText: string;
-  lastText: string;
-  sessionId?: string;
-  tokens?: number;
-  error?: string;
-  completed: boolean;
-  toolCalls: number;
-} {
-  let finalText = "";
-  let lastText = "";
-  let sessionId: string | undefined;
-  let tokens = 0;
-  let error: string | undefined;
-  let completed = false;
-  let toolCalls = 0;
-
-  for (const line of stdout.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("{")) {
-      continue;
-    }
-    let event: DshEvent;
-    try {
-      event = JSON.parse(trimmed) as DshEvent;
-    } catch {
-      continue;
-    }
-    if (event.type === "session" && event.sessionId) {
-      sessionId = event.sessionId;
-    }
-    if (event.type === "text" && typeof event.text === "string") {
-      lastText = event.text;
-    }
-    if (event.type === "tool_call") {
-      toolCalls += 1;
-    }
-    if (event.type === "final") {
-      finalText = typeof event.text === "string" ? event.text : finalText;
-      if (event.sessionId) {
-        sessionId = event.sessionId;
-      }
-      completed = event.reason?.kind === "completed";
-    }
-    if (event.type === "error") {
-      error =
-        typeof event.error === "string"
-          ? event.error
-          : JSON.stringify(event.error ?? event);
-    }
-    if (event.usage?.totalTokens) {
-      tokens = Math.max(tokens, event.usage.totalTokens);
-    }
-  }
-
-  return {
-    finalText,
-    lastText,
-    ...(sessionId ? { sessionId } : {}),
-    ...(tokens ? { tokens } : {}),
-    ...(error ? { error } : {}),
-    completed,
-    toolCalls,
-  };
-}
-
 function failure(message: string): CoderProcessResult {
   return {
     coder: "dsh",
@@ -160,5 +91,6 @@ function failure(message: string): CoderProcessResult {
     transcript: "",
     durationMs: 0,
     error: message,
+    turns: [],
   };
 }

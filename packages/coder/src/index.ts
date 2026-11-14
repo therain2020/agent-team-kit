@@ -3,6 +3,7 @@ import { createSandbox } from "./sandbox";
 import type { CoderId, CoderResult, CoderTask, SandboxMode } from "./types";
 
 export * from "./types";
+export * from "./dsh-stream";
 export { buildCoderPrompt } from "./prompt";
 export { createSandbox } from "./sandbox";
 export {

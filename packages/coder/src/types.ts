@@ -2,6 +2,43 @@ export type CoderId = "dsh" | "codex" | "opencode" | "command";
 
 export type SandboxMode = "copy" | "worktree" | "snapshot";
 
+export type CoderStreamKind =
+  | "session"
+  | "turn_start"
+  | "step_start"
+  | "thinking"
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "step_end"
+  | "turn_end"
+  | "final"
+  | "error";
+
+export interface CoderStreamEvent {
+  kind: CoderStreamKind;
+  at: string;
+  turn?: number;
+  step?: number;
+  tool?: string;
+  callId?: string;
+  status?: string;
+  summary?: string;
+  tokens?: number;
+  payload?: Record<string, unknown>;
+}
+
+export interface CoderTurn {
+  turn: number;
+  startedAt: string;
+  finishedAt?: string;
+  steps: number;
+  toolCalls: number;
+  tokens: number;
+  summary: string;
+  events: CoderStreamEvent[];
+}
+
 export interface CoderTask {
   runId: string;
   taskId: string;
@@ -13,6 +50,7 @@ export interface CoderTask {
   sandboxRoot: string;
   timeoutMs?: number;
   envAllowlist?: string[];
+  onEvent?: (event: CoderStreamEvent) => void | Promise<void>;
 }
 
 export interface CoderProcessResult {
@@ -26,6 +64,7 @@ export interface CoderProcessResult {
   sessionId?: string;
   error?: string;
   timedOut?: boolean;
+  turns?: CoderTurn[];
 }
 
 export interface CoderResult extends CoderProcessResult {

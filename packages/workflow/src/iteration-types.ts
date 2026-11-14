@@ -122,6 +122,12 @@ export interface CleanupInput {
   sandboxDir: string;
 }
 
+export interface FailIterationInput {
+  iterationId: string;
+  workspaceId: string;
+  error: string;
+}
+
 export interface IterationTaskResult {
   taskId: string;
   domain: string;

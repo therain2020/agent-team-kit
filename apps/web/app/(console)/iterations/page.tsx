@@ -3,6 +3,7 @@
 import { EmptyState } from "@/components/kit/empty-state";
 import { PageHeader } from "@/components/kit/page-header";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type {
   IterationData,
@@ -10,19 +11,39 @@ import type {
   IterationTaskView,
 } from "@/lib/iteration-types";
 import { cn } from "@/lib/utils";
-import { Activity, ExternalLink } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Activity, ChevronRight, Search } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+
+const STATUSES = ["all", "running", "succeeded", "failed", "paused"];
 
 export default function IterationsPage() {
   const [data, setData] = useState<IterationData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState("all");
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [connection, setConnection] = useState<"live" | "reconnecting">("live");
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
       try {
-        const response = await fetch("/api/iterations", {
+        const params = new URLSearchParams({
+          limit: "20",
+          offset: String(offset),
+        });
+        if (status !== "all") {
+          params.set("status", status);
+        }
+        if (query) {
+          params.set("q", query);
+        }
+        const response = await fetch(`/api/iterations?${params}`, {
           cache: "no-store",
         });
         if (!response.ok) {
@@ -38,36 +59,89 @@ export default function IterationsPage() {
           setError(cause instanceof Error ? cause.message : String(cause));
         }
       }
-      if (!stopped) {
-        timer = setTimeout(load, 2_000);
-      }
     };
+
     void load();
+    const source = new EventSource(
+      "/api/iterations/stream?iterationId=*&live=1",
+    );
+    source.addEventListener("iteration", () => {
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
+      }
+      refreshTimer.current = setTimeout(() => {
+        void load();
+      }, 400);
+    });
+    source.onopen = () => setConnection("live");
+    source.onerror = () => setConnection("reconnecting");
+
     return () => {
       stopped = true;
-      if (timer) {
-        clearTimeout(timer);
+      source.close();
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
       }
     };
-  }, []);
+  }, [status, query, offset]);
 
   const runs = data?.runs ?? [];
-  const active = runs.filter((item) => item.run.status === "running");
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Iterations"
         description={
-          <span className="flex items-center gap-2">
-            Live coder, verification and apply progress.
-            <Badge variant="info">auto-refresh 2s</Badge>
-            {active.length > 0 ? (
-              <Badge variant="warning">{active.length} running</Badge>
-            ) : null}
+          <span className="flex flex-wrap items-center gap-2">
+            Live coder turns, verification and apply progress.
+            <Badge variant={connection === "live" ? "success" : "warning"}>
+              {connection === "live" ? "live" : "reconnecting"}
+            </Badge>
           </span>
         }
       />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1">
+          {STATUSES.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => {
+                setStatus(item);
+                setOffset(0);
+              }}
+              className={cn(
+                "rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-zinc-200",
+                status === item && "bg-accent text-zinc-100",
+              )}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+        <form
+          className="ml-auto flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setQuery(search.trim());
+            setOffset(0);
+          }}
+        >
+          <div className="flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1">
+            <Search className="size-3 text-zinc-500" />
+            <input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="goal or iteration id"
+              className="w-52 bg-transparent text-xs text-zinc-200 outline-none placeholder:text-zinc-600"
+            />
+          </div>
+          <Button type="submit" size="sm" variant="outline">
+            Search
+          </Button>
+        </form>
+      </div>
 
       {error ? (
         <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs text-red-300">
@@ -79,7 +153,7 @@ export default function IterationsPage() {
         <EmptyState
           icon={Activity}
           title="No iterations yet"
-          description="Run `kit iterate` and its phases, tokens, changed files and artifacts will appear here."
+          description="Run `kit iterate` in a pack domain. Turns, tools and diffs will appear here in real time."
         />
       ) : (
         <div className="space-y-4">
@@ -88,22 +162,57 @@ export default function IterationsPage() {
           ))}
         </div>
       )}
+
+      <div className="flex items-center justify-between text-[11px] text-zinc-500">
+        <span>offset {offset}</span>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - 20))}
+          >
+            Previous
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!data?.hasMore}
+            onClick={() => setOffset(offset + 20)}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
 
 function RunCard({ item }: { item: IterationRunWithTasks }) {
-  const { run, tasks } = item;
+  const { run, tasks, turns } = item;
   return (
     <Card>
       <CardHeader className="space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <CardTitle className="min-w-0 text-sm leading-relaxed text-zinc-200">
-            {run.goal}
+            <Link
+              href={`/iterations/${encodeURIComponent(run.iterationId)}`}
+              className="hover:text-zinc-50"
+            >
+              {run.goal}
+            </Link>
           </CardTitle>
           <div className="flex shrink-0 items-center gap-1.5">
             <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
             <Badge variant="outline">{run.phase}</Badge>
+            {run.stalled ? <Badge variant="warning">stalled</Badge> : null}
+            <Link
+              href={`/iterations/${encodeURIComponent(run.iterationId)}`}
+              className="rounded p-1 text-zinc-500 hover:bg-accent hover:text-zinc-200"
+              aria-label="Open iteration"
+            >
+              <ChevronRight className="size-4" />
+            </Link>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-500">
@@ -112,16 +221,27 @@ function RunCard({ item }: { item: IterationRunWithTasks }) {
             {run.runMode} / apply {run.applyMode}
           </span>
           <span>{run.tokens.toLocaleString()} tokens</span>
+          <span>{run.turnCount} turns</span>
+          <span>{run.toolCalls} tools</span>
           <span>
             elapsed {elapsed(run.startedAt, run.finishedAt ?? run.updatedAt)}
           </span>
           <span>updated {timeAgo(run.updatedAt)}</span>
+          <span>
+            heartbeat{" "}
+            {run.lastHeartbeatAt ? timeAgo(run.lastHeartbeatAt) : "none"}
+          </span>
           {run.error ? <span className="text-red-400">{run.error}</span> : null}
         </div>
       </CardHeader>
       <CardContent className="space-y-2">
         {tasks.map((task) => (
-          <TaskRow key={task.taskId} run={run} task={task} />
+          <TaskRow
+            key={task.taskId}
+            runId={run.iterationId}
+            task={task}
+            turns={turns.filter((turn) => turn.taskId === task.taskId).length}
+          />
         ))}
       </CardContent>
     </Card>
@@ -129,18 +249,20 @@ function RunCard({ item }: { item: IterationRunWithTasks }) {
 }
 
 function TaskRow({
-  run,
+  runId,
   task,
+  turns,
 }: {
-  run: IterationRunWithTasks["run"];
+  runId: string;
   task: IterationTaskView;
+  turns: number;
 }) {
-  const active = task.status === "running";
   return (
-    <div
+    <Link
+      href={`/iterations/${encodeURIComponent(runId)}?task=${encodeURIComponent(task.taskId)}`}
       className={cn(
-        "rounded-md border border-border bg-background/40 px-3 py-2.5",
-        active && "border-sky-500/40 bg-sky-500/5",
+        "block rounded-md border border-border bg-background/40 px-3 py-2.5 transition-colors hover:border-zinc-600 hover:bg-accent/40",
+        task.status === "running" && "border-sky-500/40 bg-sky-500/5",
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -158,17 +280,16 @@ function TaskRow({
             apply {task.applyStatus}
           </Badge>
         ) : null}
+        {task.stalled ? <Badge variant="warning">stalled</Badge> : null}
         <span className="ml-auto text-[10px] text-zinc-500">
           {task.coder ?? "coder"} · {task.tokens.toLocaleString()} tokens ·{" "}
-          {elapsed(task.startedAt, task.finishedAt ?? task.updatedAt)}
+          {turns} turns · {task.toolCalls} tools
         </span>
       </div>
-
-      <p className="mt-2 text-xs leading-relaxed text-zinc-300">{task.goal}</p>
-
+      <p className="mt-1.5 line-clamp-2 text-xs text-zinc-400">{task.goal}</p>
       {task.changedFiles.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {task.changedFiles.slice(0, 12).map((file) => (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {task.changedFiles.slice(0, 8).map((file) => (
             <span
               key={file}
               className="rounded bg-zinc-800/70 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400"
@@ -176,86 +297,14 @@ function TaskRow({
               {file}
             </span>
           ))}
-          {task.changedFiles.length > 12 ? (
+          {task.changedFiles.length > 8 ? (
             <span className="text-[10px] text-zinc-500">
-              +{task.changedFiles.length - 12} more
+              +{task.changedFiles.length - 8} more
             </span>
           ) : null}
         </div>
       ) : null}
-
-      {task.coderSummary ? (
-        <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-[11px] text-zinc-500">
-          {task.coderSummary}
-        </p>
-      ) : null}
-
-      {task.error ? (
-        <p className="mt-2 line-clamp-2 whitespace-pre-wrap text-[11px] text-red-400">
-          {task.error}
-        </p>
-      ) : null}
-
-      <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px]">
-        <ArtifactLink
-          run={run}
-          task={task}
-          id={task.diffArtifactId}
-          label="diff"
-        />
-        <ArtifactLink
-          run={run}
-          task={task}
-          id={task.transcriptArtifactId}
-          label="transcript"
-        />
-        <ArtifactLink
-          run={run}
-          task={task}
-          id={task.verificationArtifactId}
-          label="verification"
-        />
-        <ArtifactLink
-          run={run}
-          task={task}
-          id={task.applyArtifactId}
-          label="apply"
-        />
-        {task.commit ? (
-          <span className="font-mono text-zinc-500">
-            commit {task.commit.slice(0, 10)}
-          </span>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function ArtifactLink({
-  run,
-  task,
-  id,
-  label,
-}: {
-  run: IterationRunWithTasks["run"];
-  task: IterationTaskView;
-  id: string | null;
-  label: string;
-}) {
-  if (!id) {
-    return null;
-  }
-  return (
-    <a
-      href={`/api/iterations/${encodeURIComponent(run.iterationId)}/artifact?artifactId=${encodeURIComponent(id)}`}
-      target="_blank"
-      rel="noreferrer"
-      className="flex items-center gap-1 text-sky-300 hover:text-sky-200"
-      title={`${label} for ${task.taskId}`}
-    >
-      {label}
-      <ExternalLink className="size-2.5" />
-    </a>
+    </Link>
   );
 }
 
@@ -264,7 +313,8 @@ function statusVariant(status: string) {
     status === "applied" ||
     status === "succeeded" ||
     status === "passed" ||
-    status === "done"
+    status === "done" ||
+    status === "completed"
   ) {
     return "success" as const;
   }

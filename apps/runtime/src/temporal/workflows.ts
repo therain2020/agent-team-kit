@@ -82,7 +82,7 @@ export async function demoWorkflow(input: DemoInput): Promise<DemoResult> {
   };
 }
 
-export async function iterationWorkflow(
+async function runIterationWorkflow(
   input: IterationInput,
 ): Promise<IterationResult> {
   const planned = await iteration.planIteration(input);
@@ -228,6 +228,21 @@ export async function iterationWorkflow(
     tasks: results,
     ...report,
   };
+}
+
+export async function iterationWorkflow(
+  input: IterationInput,
+): Promise<IterationResult> {
+  try {
+    return await runIterationWorkflow(input);
+  } catch (error) {
+    await iteration.failIterationActivity({
+      iterationId: input.iterationId,
+      workspaceId: input.workspaceId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export async function packWorkflow(
