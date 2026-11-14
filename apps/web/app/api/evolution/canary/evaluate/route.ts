@@ -1,5 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getEvolutionRepo } from "@/lib/evolution-repo";
 import { sameOriginError } from "@/lib/http";
 import { getRepoRoot } from "@/lib/paths";
 import { newId } from "@kit/core";
@@ -63,6 +64,7 @@ export async function POST(request: Request) {
       stub: body.stub !== false,
       archive: archivePath,
       statePath,
+      repo: await getEvolutionRepo(),
     });
     return NextResponse.json({
       ok: true,

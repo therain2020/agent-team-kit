@@ -23,7 +23,10 @@ import {
   type IterationConfig,
   type IterationTask,
   type TaskPlan,
+  applyPatchToRepo,
+  newId,
   taskPlanSchema,
+  writeApplyPatch,
 } from "@kit/core";
 import { createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
@@ -278,6 +281,8 @@ export async function runIterationCoder(
     resultArtifactId,
     transcriptArtifactId,
     sandboxDir,
+    baselineSha: result.sandbox.baselineSha,
+    sandboxMode: result.sandbox.mode,
     tokens: result.tokens ?? 0,
     ...(result.error ? { error: result.error } : {}),
   };
@@ -449,138 +454,130 @@ export async function applyIterationTask(
 ): Promise<IterationApplyResult> {
   const store = await getStore();
   const repoRoot = resolveRepoRoot();
+  const ticketId = newId("tkt");
+  let headBefore = "";
+  let baseDrifted = false;
+
+  const heartbeat = setInterval(() => {
+    try {
+      Context.current().heartbeat({ ticketId, phase: "apply" });
+    } catch {
+      // not inside an activity context
+    }
+  }, 30_000);
+  heartbeat.unref?.();
+
   const publishApply = async (
-    applied: boolean,
+    status: IterationApplyResult["status"],
     reason: string,
-    commit?: string,
+    extra: { commit?: string; details?: Record<string, unknown> } = {},
   ): Promise<IterationApplyResult> => {
+    const now = new Date().toISOString();
+    await store.sql`
+      INSERT INTO merge_tickets (
+        ticket_id, iteration_id, task_id, base_sha, patch_artifact_id,
+        changed_files, risk, status, head_before, commit_sha, error,
+        created_at, updated_at
+      ) VALUES (
+        ${ticketId}, ${input.iterationId}, ${input.task.id}, ${input.baselineSha},
+        ${input.diffArtifactId}, ${JSON.stringify(input.changedFiles)}::jsonb,
+        ${input.risk}, ${status}, ${headBefore || null},
+        ${extra.commit ?? null},
+        ${status === "blocked" || status === "reverted" ? reason : null},
+        ${now}, ${now}
+      )
+      ON CONFLICT (ticket_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        head_before = EXCLUDED.head_before,
+        commit_sha = EXCLUDED.commit_sha,
+        error = EXCLUDED.error,
+        updated_at = EXCLUDED.updated_at
+    `;
     const artifactId = await publishArtifact(store, {
       iterationId: input.iterationId,
       workspaceId: input.workspaceId,
       stageId: `${input.iterationId}:${input.task.id}:apply`,
-      content: JSON.stringify({ applied, reason, commit }, null, 2),
+      content: JSON.stringify(
+        {
+          ticketId,
+          status,
+          reason,
+          baseSha: input.baselineSha,
+          headBefore,
+          baseDrifted,
+          commit: extra.commit,
+          changedFiles: input.changedFiles,
+          ...extra.details,
+        },
+        null,
+        2,
+      ),
       agentId: "policy:autonomy",
       modelId: "none",
       runMode: input.runMode,
     });
     return {
       taskId: input.task.id,
-      applied,
+      applied: status === "applied",
+      status,
       reason,
-      ...(commit ? { commit } : {}),
+      ticketId,
+      baseSha: input.baselineSha,
+      ...(extra.commit ? { commit: extra.commit } : {}),
       artifactId,
     };
   };
 
-  if (input.runMode !== "LIVE") {
-    return await publishApply(false, "dry run: apply disabled");
-  }
-  if (input.forbidden) {
-    return await publishApply(false, "forbidden path detected");
-  }
-  if (!input.verificationPass) {
-    return await publishApply(false, "verification did not pass");
-  }
-  if (!input.diffArtifactId) {
-    return await publishApply(false, "missing diff artifact");
-  }
-  if (!allowedByApplyMode(input.risk, input.applyMode)) {
-    return await publishApply(
-      false,
-      `risk ${input.risk} is not auto-applied by mode ${input.applyMode}`,
+  try {
+    if (input.runMode !== "LIVE") {
+      return await publishApply("skipped", "dry run: apply disabled");
+    }
+    if (input.forbidden) {
+      return await publishApply("blocked", "forbidden path detected");
+    }
+    if (!input.verificationPass) {
+      return await publishApply("blocked", "verification did not pass");
+    }
+    if (!input.diffArtifactId) {
+      return await publishApply("blocked", "missing diff artifact");
+    }
+    if (!allowedByApplyMode(input.risk, input.applyMode)) {
+      return await publishApply(
+        "skipped",
+        `risk ${input.risk} is not auto-applied by mode ${input.applyMode}`,
+      );
+    }
+
+    const diff = await readArtifactText(store, input.diffArtifactId);
+    if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
+      return await publishApply("blocked", "diff is empty or truncated");
+    }
+
+    const { patchFile, backupDir } = await writeApplyPatch(
+      repoRoot,
+      safe(input.iterationId),
+      safe(input.task.id),
+      diff,
     );
+    const applied = await applyPatchToRepo({
+      repoRoot,
+      patchFile,
+      baseSha: input.baselineSha,
+      changedFiles: input.changedFiles,
+      ticketId,
+      commitMessage: `autonomy: ${input.task.id} (${input.task.domain})`,
+      format: (root) => formatAppliedFiles(root),
+      postCheck: (root) => runPostApplyChecks(root, input.risk),
+    });
+    headBefore = applied.headBefore;
+    baseDrifted = applied.baseDrifted;
+    return await publishApply(applied.status, applied.reason, {
+      ...(applied.commitSha ? { commit: applied.commitSha } : {}),
+      details: { backupDir },
+    });
+  } finally {
+    clearInterval(heartbeat);
   }
-
-  const status = await runGit(repoRoot, ["status", "--porcelain"]);
-  if (status.stdout.trim()) {
-    return await publishApply(
-      false,
-      "working tree is not clean; patch left in artifacts for review",
-    );
-  }
-
-  const diff = await readArtifactText(store, input.diffArtifactId);
-  if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
-    return await publishApply(false, "diff is empty or truncated");
-  }
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const taskDir = path.join(
-    repoRoot,
-    ".tmp",
-    "iterations",
-    safe(input.iterationId),
-    safe(input.task.id),
-  );
-  await mkdir(taskDir, { recursive: true });
-  const patchPath = path.join(taskDir, "patch.diff");
-  const backupDir = path.join(
-    repoRoot,
-    ".backup",
-    "iterations",
-    safe(input.iterationId),
-    stamp,
-  );
-  await mkdir(backupDir, { recursive: true });
-  await writeFile(patchPath, diff, "utf8");
-  await writeFile(path.join(backupDir, `${input.task.id}.diff`), diff, "utf8");
-
-  const check = await runGit(repoRoot, [
-    "apply",
-    "--check",
-    "--3way",
-    patchPath,
-  ]);
-  if (check.exitCode !== 0) {
-    return await publishApply(
-      false,
-      `patch does not apply cleanly: ${check.stderr.trim().slice(0, 1000)}`,
-    );
-  }
-
-  const applied = await runGit(repoRoot, ["apply", "--3way", patchPath]);
-  if (applied.exitCode !== 0) {
-    return await publishApply(
-      false,
-      `git apply failed: ${applied.stderr.trim().slice(0, 1000)}`,
-    );
-  }
-
-  await formatAppliedFiles(repoRoot);
-  await runGit(repoRoot, ["add", "-A"]);
-  const commit = await runGit(repoRoot, [
-    "-c",
-    "user.name=kit",
-    "-c",
-    "user.email=kit@localhost",
-    "commit",
-    "-m",
-    `autonomy: ${input.task.id} (${input.task.domain})`,
-  ]);
-  if (commit.exitCode !== 0) {
-    await runGit(repoRoot, ["apply", "-R", "--3way", patchPath]);
-    return await publishApply(
-      false,
-      `commit failed: ${commit.stderr.trim().slice(0, 1000)}`,
-    );
-  }
-  const head = await runGit(repoRoot, ["rev-parse", "HEAD"]);
-  const commitSha = head.stdout.trim();
-
-  const postChecks = await runPostApplyChecks(repoRoot, input.risk);
-  if (!postChecks.ok) {
-    const revert = await runGit(repoRoot, ["revert", "--no-edit", "HEAD"]);
-    return await publishApply(
-      false,
-      `post-apply checks failed${revert.exitCode === 0 ? "; reverted" : "; automatic revert failed"}: ${postChecks.feedback.slice(0, 1500)}`,
-    );
-  }
-
-  return await publishApply(
-    true,
-    "low-risk change verified and committed",
-    commitSha,
-  );
 }
 
 export async function cleanupIterationTask(input: CleanupInput): Promise<void> {

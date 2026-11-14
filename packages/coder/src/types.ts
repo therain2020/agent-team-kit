@@ -1,5 +1,7 @@
 export type CoderId = "dsh" | "codex" | "opencode" | "command";
 
+export type SandboxMode = "copy" | "worktree" | "snapshot";
+
 export interface CoderTask {
   runId: string;
   taskId: string;
@@ -30,7 +32,7 @@ export interface CoderResult extends CoderProcessResult {
   changedFiles: string[];
   diff: string;
   sandbox: {
-    mode: "copy" | "worktree";
+    mode: SandboxMode;
     baselineSha: string;
     setupLog: string;
   };
@@ -56,7 +58,7 @@ export interface SandboxChanges {
 
 export interface Sandbox {
   dir: string;
-  mode: "copy" | "worktree";
+  mode: SandboxMode;
   baselineSha: string;
   setupLog: string;
   collect(): Promise<SandboxChanges>;

@@ -45,6 +45,16 @@ const iteration = proxyActivities<typeof iterationActivities>({
   retry: { maximumAttempts: 1 },
 });
 
+const applyTaskQueue = "kit-apply";
+const apply = proxyActivities<
+  Pick<typeof iterationActivities, "applyIterationTask">
+>({
+  taskQueue: applyTaskQueue,
+  startToCloseTimeout: "60 minutes",
+  heartbeatTimeout: "2 minutes",
+  retry: { maximumAttempts: 1 },
+});
+
 export async function demoWorkflow(input: DemoInput): Promise<DemoResult> {
   const prepared = await prepareRun(input);
 
@@ -142,11 +152,12 @@ export async function iterationWorkflow(
     }
 
     let applied = false;
+    let applyStatus: IterationTaskResult["applyStatus"];
     let applyReason: string | undefined;
     let commit: string | undefined;
     if (coderResult && verification?.pass) {
       try {
-        const apply = await iteration.applyIterationTask({
+        const result = await apply.applyIterationTask({
           iterationId: input.iterationId,
           workspaceId: input.workspaceId,
           task,
@@ -156,10 +167,13 @@ export async function iterationWorkflow(
           applyMode: input.applyMode,
           runMode: input.runMode,
           diffArtifactId: coderResult.diffArtifactId,
+          baselineSha: coderResult.baselineSha,
+          changedFiles: coderResult.changedFiles,
         });
-        applied = apply.applied;
-        applyReason = apply.reason;
-        commit = apply.commit;
+        applied = result.applied;
+        applyStatus = result.status;
+        applyReason = result.reason;
+        commit = result.commit;
       } catch {
         error = error ?? "apply failed";
       }
@@ -189,7 +203,11 @@ export async function iterationWorkflow(
       ...(error ? { error } : {}),
       changedFiles: coderResult?.changedFiles ?? [],
       tokens: coderResult?.tokens ?? 0,
+      ...(coderResult?.baselineSha
+        ? { baselineSha: coderResult.baselineSha }
+        : {}),
       ...(coderResult?.summary ? { coderSummary: coderResult.summary } : {}),
+      ...(applyStatus ? { applyStatus } : {}),
       ...(applyReason ? { applyReason } : {}),
       ...(commit ? { commit } : {}),
     });

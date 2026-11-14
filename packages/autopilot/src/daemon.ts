@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
@@ -7,7 +8,7 @@ import {
   eventEnvelopeSchema,
   newId,
 } from "@kit/core";
-import { runEvolutionCycle } from "@kit/evolution";
+import { PostgresEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
 import {
   findApprovalRequest,
   findDecisionForRequest,
@@ -19,7 +20,7 @@ import {
   loadPack,
   simulatePack,
 } from "@kit/pack";
-import { initStore, loadStoreConfig } from "@kit/store";
+import { initStore, loadStoreConfig, withAdvisoryLock } from "@kit/store";
 import { createTemporalClient, taskQueue } from "@kit/workflow";
 import { nextCronOccurrence } from "./cron";
 import { type AutopilotState, ensureState, saveState } from "./state";
@@ -82,75 +83,94 @@ export async function runAutopilotTick(
   let temporal: Awaited<ReturnType<typeof createTemporalClient>> | undefined;
 
   try {
-    for (const pack of packs) {
-      try {
-        const state = await ensureState(
-          store.sql,
-          WORKSPACE_ID,
-          pack.dirName,
-          pack.config.enabled,
-          now,
-        );
-        if (!state.enabled) {
-          state.lastTickAt = now.toISOString();
-          await saveState(store.sql, state);
-          continue;
+    const acquired = await withAdvisoryLock(
+      store.sql,
+      `kit:autopilot:${WORKSPACE_ID}`,
+      async () => {
+        for (const pack of packs) {
+          try {
+            const state = await ensureState(
+              store.sql,
+              WORKSPACE_ID,
+              pack.dirName,
+              pack.config.enabled,
+              now,
+            );
+            if (!state.enabled) {
+              state.lastTickAt = now.toISOString();
+              if (!(await saveState(store.sql, state))) {
+                result.errors.push(
+                  `${pack.dirName}: state version conflict (disabled tick)`,
+                );
+              }
+              continue;
+            }
+            result.enabled += 1;
+
+            await processSchedules({
+              pack,
+              state,
+              now,
+              runningWorkflows,
+              dryRun: options.dryRun ?? false,
+              store,
+              result,
+              getTemporal: async () => {
+                temporal ??= await createTemporalClient();
+                return temporal;
+              },
+            });
+
+            await processIterations({
+              pack,
+              state,
+              now,
+              dryRun: options.dryRun ?? false,
+              result,
+              getTemporal: async () => {
+                temporal ??= await createTemporalClient();
+                return temporal;
+              },
+            });
+
+            await processAutoApprovals({
+              pack,
+              state,
+              now,
+              store,
+              result,
+              getTemporal: async () => {
+                temporal ??= await createTemporalClient();
+                return temporal;
+              },
+            });
+
+            await processEvolution({
+              pack,
+              state,
+              now,
+              dryRun: options.dryRun ?? false,
+              store,
+              result,
+            });
+
+            state.lastTickAt = now.toISOString();
+            if (!(await saveState(store.sql, state))) {
+              result.errors.push(
+                `${pack.dirName}: state version conflict (tick)`,
+              );
+            }
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            result.errors.push(`${pack.dirName}: ${message}`);
+          }
         }
-        result.enabled += 1;
-
-        await processSchedules({
-          pack,
-          state,
-          now,
-          runningWorkflows,
-          dryRun: options.dryRun ?? false,
-          store,
-          result,
-          getTemporal: async () => {
-            temporal ??= await createTemporalClient();
-            return temporal;
-          },
-        });
-
-        await processIterations({
-          pack,
-          state,
-          now,
-          dryRun: options.dryRun ?? false,
-          result,
-          getTemporal: async () => {
-            temporal ??= await createTemporalClient();
-            return temporal;
-          },
-        });
-
-        await processAutoApprovals({
-          pack,
-          state,
-          now,
-          store,
-          result,
-          getTemporal: async () => {
-            temporal ??= await createTemporalClient();
-            return temporal;
-          },
-        });
-
-        await processEvolution({
-          pack,
-          state,
-          now,
-          dryRun: options.dryRun ?? false,
-          store,
-          result,
-        });
-
-        state.lastTickAt = now.toISOString();
-        await saveState(store.sql, state);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        result.errors.push(`${pack.dirName}: ${message}`);
-      }
+        return true;
+      },
+    );
+    if (acquired === null) {
+      result.errors.push("autopilot tick skipped: another tick holds the lock");
     }
   } finally {
     if (temporal) {
@@ -396,6 +416,7 @@ async function processIterations(input: {
     if (Number.isNaN(nextAt.getTime()) || nextAt.getTime() > now.getTime()) {
       continue;
     }
+    const slot = nextValue;
 
     try {
       state.nextRuns[key] = nextCronOccurrence(
@@ -430,12 +451,25 @@ async function processIterations(input: {
       continue;
     }
 
+    const dedupeKey = `autopilot:${pack.dirName}:${iteration.id}:${slot}`;
+    const workflowId = `iteration-${WORKSPACE_ID}-${hash(dedupeKey)}`;
     const iterationId = newId("it");
     try {
       const { client } = await input.getTemporal();
+      const handle = client.workflow.getHandle(workflowId);
+      try {
+        await handle.describe();
+        result.errors.push(
+          `${pack.dirName}/${iteration.id}: skipped, already launched for slot ${slot}`,
+        );
+        continue;
+      } catch {
+        // no existing workflow for this slot
+      }
       await client.workflow.start("iterationWorkflow", {
         taskQueue,
-        workflowId: `iteration-${iterationId}`,
+        workflowId,
+        workflowIdConflictPolicy: "USE_EXISTING",
         args: [
           {
             iterationId,
@@ -451,6 +485,7 @@ async function processIterations(input: {
             applyMode: iteration.mode === "LIVE" ? iteration.applyMode : "none",
             ...(iteration.coder ? { coder: iteration.coder } : {}),
             stub: false,
+            dedupeKey,
           },
         ],
       });
@@ -613,6 +648,15 @@ async function processEvolution(input: {
       ? config.evidenceFile
       : path.resolve(input.pack.dir, config.evidenceFile);
     const variantsRoot = path.resolve(input.pack.dir, "..", "variants");
+    const archivePath = path.join(variantsRoot, "archive.jsonl");
+    const cyclesPath = path.join(variantsRoot, "cycles.jsonl");
+    const statePath = path.join(variantsRoot, "state.json");
+    const repo = new PostgresEvolutionRepository(input.store, {
+      variantsRoot,
+      archivePath,
+      cyclesPath,
+      statePath,
+    });
     const record = await runEvolutionCycle({
       packDir: input.pack.dir,
       agentId: config.agent,
@@ -620,9 +664,10 @@ async function processEvolution(input: {
       autoApply: config.autoApply,
       budgetCny: config.budgetCny,
       variantsRoot,
-      archivePath: path.join(variantsRoot, "archive.jsonl"),
-      cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
-      statePath: path.join(variantsRoot, "state.json"),
+      archivePath,
+      cyclesPath,
+      statePath,
+      repo,
     });
     console.log(
       `[autopilot] evolution cycle ${record.cycleId} decision=${record.decision} candidatePass=${record.candidatePass}`,
@@ -674,4 +719,8 @@ async function runCost(
 function addCadence(now: Date, cadence: "daily" | "weekly"): string {
   const days = cadence === "weekly" ? 7 : 1;
   return new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }

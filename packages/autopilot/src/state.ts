@@ -11,6 +11,7 @@ export interface AutopilotState {
   spentToday: number;
   lastError: string | null;
   updatedAt: string;
+  version: number;
 }
 
 export async function ensureState(
@@ -59,6 +60,7 @@ export async function getState(
       spent_today: string | number;
       last_error: string | null;
       updated_at: Date | string;
+      version?: number;
     }>
   >`
     SELECT * FROM autopilot_state
@@ -88,6 +90,7 @@ export async function listStates(
       spent_today: string | number;
       last_error: string | null;
       updated_at: Date | string;
+      version?: number;
     }>
   >`
     SELECT * FROM autopilot_state WHERE workspace_id = ${workspaceId}
@@ -99,8 +102,8 @@ export async function listStates(
 export async function saveState(
   sql: SqlClient,
   state: AutopilotState,
-): Promise<void> {
-  await sql`
+): Promise<boolean> {
+  const rows = await sql<Array<{ version: number }>>`
     UPDATE autopilot_state SET
       enabled = ${state.enabled},
       last_tick_at = ${state.lastTickAt},
@@ -109,9 +112,19 @@ export async function saveState(
       runs_today = ${state.runsToday},
       spent_today = ${state.spentToday},
       last_error = ${state.lastError},
-      updated_at = ${state.updatedAt}
-    WHERE workspace_id = ${state.workspaceId} AND pack_dir = ${state.packDir}
+      updated_at = ${state.updatedAt},
+      version = version + 1
+    WHERE workspace_id = ${state.workspaceId}
+      AND pack_dir = ${state.packDir}
+      AND version = ${state.version}
+    RETURNING version
   `;
+  const row = rows[0];
+  if (!row) {
+    return false;
+  }
+  state.version = row.version;
+  return true;
 }
 
 export function resetDaily(
@@ -141,6 +154,7 @@ function fromRow(row: {
   spent_today: string | number;
   last_error: string | null;
   updated_at: Date | string;
+  version?: number;
 }): AutopilotState {
   return {
     workspaceId: row.workspace_id,
@@ -153,6 +167,7 @@ function fromRow(row: {
     spentToday: Number(row.spent_today ?? 0),
     lastError: row.last_error,
     updatedAt: toIso(row.updated_at) ?? new Date().toISOString(),
+    version: Number(row.version ?? 0),
   };
 }
 

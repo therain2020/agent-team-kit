@@ -4,15 +4,20 @@ import {
   appendFile,
   cp,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
+  rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { newId } from "@kit/core";
 import { createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
 import { parse, stringify } from "yaml";
+import type { EvolutionRepository } from "./repository";
 
 export const DEFAULT_ARCHIVE = "variants/archive.jsonl";
 
@@ -147,6 +152,7 @@ export async function scoreVariant(
     stub?: boolean;
     rubricRef?: string;
     archive?: string;
+    repo?: EvolutionRepository;
   } = {},
 ): Promise<EvolutionRecord> {
   const meta = await readVariantMeta(variantDir);
@@ -256,13 +262,21 @@ export async function scoreVariant(
     draftChars: draft.length,
   };
 
-  await appendArchive(options.archive ?? DEFAULT_ARCHIVE, record);
+  if (options.repo) {
+    await options.repo.appendScore(record);
+  } else {
+    await appendArchive(options.archive ?? DEFAULT_ARCHIVE, record);
+  }
   return record;
 }
 
 export async function compareVariants(
   archivePath = DEFAULT_ARCHIVE,
+  repo?: EvolutionRepository,
 ): Promise<EvolutionRecord[]> {
+  if (repo) {
+    return await repo.latestScores();
+  }
   if (!existsSync(archivePath)) {
     return [];
   }
@@ -286,40 +300,109 @@ export async function promoteVariant(
   variantDir: string,
   targetDir: string,
   apply: boolean,
+  repo?: EvolutionRepository,
 ): Promise<{
   apply: boolean;
   files: string[];
   backupDir?: string;
 }> {
-  const meta = await readVariantMeta(variantDir);
-  await verifyLockedFiles(variantDir, meta.baselineHashes);
+  const diskMeta = await readVariantMeta(variantDir);
+  let meta = diskMeta;
+  let sourceDir = variantDir;
+  let materialized: string | undefined;
 
-  const variant = await loadPack(variantDir);
-  if (!variant.ok) {
-    throw new Error(variant.errors.join("\n"));
-  }
-  const target = await loadPack(targetDir);
-  if (!target.ok) {
-    throw new Error(target.errors.join("\n"));
-  }
-
-  if (!apply) {
-    return { apply: false, files: meta.changedFiles };
-  }
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupDir = path.join(targetDir, ".backup", stamp);
-
-  for (const relative of meta.changedFiles) {
-    const source = path.join(variant.dir, relative);
-    const destination = path.join(target.dir, relative);
-    const backup = path.join(backupDir, relative);
-    await mkdir(path.dirname(backup), { recursive: true });
-    await writeFile(backup, await readFile(destination));
-    await writeFile(destination, await readFile(source));
+  if (repo) {
+    let stored = await repo.getVariant(diskMeta.id);
+    if (!stored) {
+      await repo.saveVariant({
+        meta: diskMeta,
+        dir: variantDir,
+        packDir: path.resolve(targetDir),
+      });
+      stored = await repo.getVariant(diskMeta.id);
+    }
+    if (!stored) {
+      throw new Error(`variant not registered in repository: ${diskMeta.id}`);
+    }
+    meta = stored.meta;
+    materialized = await mkdtemp(
+      path.join(os.tmpdir(), "kit-evolution-promote-"),
+    );
+    await repo.materializeVariant(meta.id, materialized);
+    sourceDir = materialized;
   }
 
-  return { apply: true, files: meta.changedFiles, backupDir };
+  try {
+    await verifyLockedFiles(sourceDir, meta.baselineHashes);
+
+    const variant = await loadPack(sourceDir);
+    if (!variant.ok) {
+      throw new Error(variant.errors.join("\n"));
+    }
+    const target = await loadPack(targetDir);
+    if (!target.ok) {
+      throw new Error(target.errors.join("\n"));
+    }
+
+    if (!apply) {
+      return { apply: false, files: meta.changedFiles };
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupDir = path.join(target.dir, ".backup", "evolution", stamp);
+
+    const run = async () => {
+      const restore: Array<{ destination: string; backup?: string }> = [];
+      try {
+        for (const relative of meta.changedFiles) {
+          const source = path.join(sourceDir, relative);
+          const destination = path.join(target.dir, relative);
+          const existed = existsSync(destination);
+          const backup = path.join(backupDir, relative);
+          if (existed) {
+            await mkdir(path.dirname(backup), { recursive: true });
+            await writeFile(backup, await readFile(destination));
+          }
+          const content = await readFile(source);
+          await mkdir(path.dirname(destination), { recursive: true });
+          const temp = `${destination}.${process.pid}.tmp`;
+          await writeFile(temp, content);
+          await rename(temp, destination);
+          restore.push({ destination, ...(existed ? { backup } : {}) });
+        }
+      } catch (error) {
+        for (const item of restore.reverse()) {
+          try {
+            if (item.backup) {
+              await writeFile(item.destination, await readFile(item.backup));
+            } else {
+              await rm(item.destination, { force: true });
+            }
+          } catch {
+            // best-effort restore; the backup directory remains for manual recovery
+          }
+        }
+        throw error;
+      }
+      return { apply: true, files: meta.changedFiles, backupDir };
+    };
+
+    if (repo) {
+      const result = await repo.withLock(
+        `kit:evolution:promote:${path.resolve(target.dir)}`,
+        run,
+      );
+      if (result === null) {
+        throw new Error("timed out waiting for the evolution promotion lock");
+      }
+      return result;
+    }
+    return await run();
+  } finally {
+    if (materialized) {
+      await rm(materialized, { recursive: true, force: true });
+    }
+  }
 }
 
 async function readVariantMeta(dir: string): Promise<VariantMeta> {

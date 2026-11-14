@@ -7,6 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { FileLockTimeoutError, acquireFileLock } from "@kit/core";
 
 interface ChildSpec {
   name: string;
@@ -31,6 +32,27 @@ mkdirSync(stateDir, { recursive: true });
 
 const statePath = path.join(stateDir, "state.json");
 const startedAt = new Date().toISOString();
+
+let supervisorLock: Awaited<ReturnType<typeof acquireFileLock>> | null = null;
+try {
+  supervisorLock = await acquireFileLock(
+    path.join(stateDir, "supervisor.lock"),
+    {
+      owner: `supervisor:${process.pid}`,
+      timeoutMs: 1000,
+      staleMs: 2 * 60 * 1000,
+      heartbeatMs: 10_000,
+    },
+  );
+} catch (error) {
+  if (error instanceof FileLockTimeoutError) {
+    console.error(
+      `[supervisor] another supervisor is running (${error.lockPath})`,
+    );
+    process.exit(0);
+  }
+  throw error;
+}
 const withWeb = process.env.KIT_SUPERVISOR_WEB === "1";
 const children = new Map<string, ChildRecord>();
 const processes = new Map<string, ChildProcess>();
@@ -261,6 +283,8 @@ function shutdown(): void {
     killChild(child);
   }
   writeState();
+  supervisorLock?.release();
+  supervisorLock = null;
   setTimeout(() => process.exit(0), 500);
 }
 

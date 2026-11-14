@@ -122,6 +122,7 @@ describe("createSandbox", () => {
     const sandbox = await createSandbox({
       repoRoot: root,
       sandboxRoot,
+      mode: "copy",
       installDeps: false,
     });
 
@@ -145,6 +146,61 @@ describe("createSandbox", () => {
     );
     expect(changes.diff).toContain("+updated");
     expect(changes.diff).toContain("export const b = 2");
+
+    await sandbox.cleanup();
+    expect(existsSync(sandboxRoot)).toBe(false);
+  });
+
+  it("snapshots HEAD without uncommitted or secret files", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kit-coder-snapshot-"));
+    cleanupDirs.push(root);
+    await mkdir(path.join(root, "src"), { recursive: true });
+    await writeFile(path.join(root, "README.md"), "# demo\n", "utf8");
+    await writeFile(path.join(root, "src", "a.ts"), "export const a = 1;\n");
+
+    const git = (...args: string[]) =>
+      execFileSync("git", args, {
+        cwd: root,
+        encoding: "utf8",
+        stdio: "pipe",
+      });
+    git("-c", "init.defaultBranch=main", "init", "-q");
+    git("-c", "user.name=kit", "-c", "user.email=kit@local", "add", "-A");
+    git(
+      "-c",
+      "user.name=kit",
+      "-c",
+      "user.email=kit@local",
+      "commit",
+      "-q",
+      "-m",
+      "baseline",
+    );
+    const committedSha = git("rev-parse", "HEAD").trim();
+
+    await writeFile(path.join(root, "src", "a.ts"), "export const a = 2;\n");
+    await writeFile(path.join(root, ".env"), "SECRET=untracked\n");
+
+    const sandboxRoot = path.join(root, ".tmp", "ws", "snapshot");
+    const sandbox = await createSandbox({
+      repoRoot: root,
+      sandboxRoot,
+      mode: "snapshot",
+      installDeps: false,
+    });
+
+    expect(sandbox.mode).toBe("snapshot");
+    expect(sandbox.baselineSha).toBe(committedSha);
+    expect(await readFile(path.join(sandboxRoot, "src", "a.ts"), "utf8")).toBe(
+      "export const a = 1;\n",
+    );
+    expect(existsSync(path.join(sandboxRoot, ".env"))).toBe(false);
+    expect(existsSync(path.join(sandboxRoot, ".git"))).toBe(true);
+
+    await writeFile(path.join(sandboxRoot, "README.md"), "# demo\nupdated\n");
+    const changes = await sandbox.collect();
+    expect(changes.changedFiles).toContain("README.md");
+    expect(changes.diff).toContain("+updated");
 
     await sandbox.cleanup();
     expect(existsSync(sandboxRoot)).toBe(false);

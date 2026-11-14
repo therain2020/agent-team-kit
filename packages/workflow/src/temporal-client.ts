@@ -5,6 +5,7 @@ export const temporalAddress =
 export const temporalNamespace =
   process.env.KIT_TEMPORAL_NAMESPACE ?? "default";
 export const taskQueue = process.env.KIT_TASK_QUEUE ?? "kit-demo";
+export const applyTaskQueue = "kit-apply";
 
 export async function createTemporalClient(): Promise<{
   client: Client;

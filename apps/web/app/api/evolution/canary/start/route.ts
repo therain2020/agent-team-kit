@@ -1,4 +1,5 @@
 import path from "node:path";
+import { getEvolutionRepo } from "@/lib/evolution-repo";
 import { sameOriginError } from "@/lib/http";
 import { getRepoRoot, resolveVariantDir } from "@/lib/paths";
 import { startCanary } from "@kit/evolution";
@@ -45,7 +46,13 @@ export async function POST(request: Request) {
   const statePath = path.join(getRepoRoot(), "variants", "state.json");
 
   try {
-    const state = await startCanary(baseline, variant, percent, statePath);
+    const state = await startCanary(
+      baseline,
+      variant,
+      percent,
+      statePath,
+      await getEvolutionRepo(),
+    );
     return NextResponse.json({ ok: true, state });
   } catch (error) {
     return NextResponse.json(

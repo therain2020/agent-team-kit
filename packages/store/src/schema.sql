@@ -82,9 +82,114 @@ CREATE TABLE IF NOT EXISTS autopilot_state (
   spent_today NUMERIC NOT NULL DEFAULT 0,
   last_error TEXT,
   updated_at TIMESTAMPTZ NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (workspace_id, pack_dir)
 );
+
+ALTER TABLE autopilot_state
+  ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS evolution_variants (
+  variant_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  parent_id TEXT,
+  agent_id TEXT NOT NULL,
+  pack_dir TEXT NOT NULL DEFAULT '',
+  dir_path TEXT NOT NULL DEFAULT '',
+  meta JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS evolution_variant_files (
+  variant_id TEXT NOT NULL REFERENCES evolution_variants(variant_id) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  blob_id TEXT NOT NULL REFERENCES blobs(blob_id),
+  sha256 TEXT NOT NULL,
+  size BIGINT NOT NULL,
+  PRIMARY KEY (variant_id, path)
+);
+
+CREATE TABLE IF NOT EXISTS evolution_scores (
+  score_id TEXT PRIMARY KEY,
+  variant_id TEXT NOT NULL,
+  pass BOOLEAN NOT NULL,
+  scores JSONB NOT NULL,
+  rationale TEXT NOT NULL,
+  cost_cny NUMERIC NOT NULL DEFAULT 0,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  draft_chars INTEGER NOT NULL DEFAULT 0,
+  stub BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS evolution_cycles (
+  cycle_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  pack_dir TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  hypothesis TEXT NOT NULL,
+  signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+  baseline_variant_id TEXT,
+  candidate_variant_id TEXT,
+  baseline_name TEXT NOT NULL DEFAULT '',
+  candidate_name TEXT NOT NULL DEFAULT '',
+  baseline_pass BOOLEAN,
+  candidate_pass BOOLEAN,
+  baseline_score DOUBLE PRECISION,
+  candidate_score DOUBLE PRECISION,
+  cost_cny NUMERIC NOT NULL DEFAULT 0,
+  decision TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  auto_applied BOOLEAN NOT NULL DEFAULT false,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS evolution_state (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  pack_dir TEXT NOT NULL DEFAULT '',
+  champion_variant_id TEXT NOT NULL,
+  canary_variant_id TEXT,
+  canary_status TEXT,
+  canary_percent INTEGER,
+  canary_since TIMESTAMPTZ,
+  canary_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, pack_dir)
+);
+
+CREATE TABLE IF NOT EXISTS evolution_meta (
+  workspace_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS merge_tickets (
+  ticket_id TEXT PRIMARY KEY,
+  iteration_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  base_sha TEXT NOT NULL,
+  patch_artifact_id TEXT,
+  changed_files JSONB NOT NULL DEFAULT '[]'::jsonb,
+  risk TEXT NOT NULL,
+  status TEXT NOT NULL,
+  head_before TEXT,
+  commit_sha TEXT,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_evolution_scores_variant ON evolution_scores(variant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evolution_variants_pack ON evolution_variants(pack_dir, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_evolution_cycles_created ON evolution_cycles(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_merge_tickets_status ON merge_tickets(status, updated_at DESC);

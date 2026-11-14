@@ -1,6 +1,6 @@
 import { createCoderAdapter, detectCoders } from "./adapters/cli";
 import { createSandbox } from "./sandbox";
-import type { CoderId, CoderResult, CoderTask } from "./types";
+import type { CoderId, CoderResult, CoderTask, SandboxMode } from "./types";
 
 export * from "./types";
 export { buildCoderPrompt } from "./prompt";
@@ -20,7 +20,7 @@ export {
 
 export interface RunCoderTaskInput extends CoderTask {
   coder: CoderId;
-  sandboxMode?: "copy" | "worktree";
+  sandboxMode?: SandboxMode;
   installDeps?: boolean;
   keepSandbox?: boolean;
 }
@@ -36,7 +36,7 @@ export async function runCoderTask(
   const sandbox = await createSandbox({
     repoRoot: input.repoRoot,
     sandboxRoot: input.sandboxRoot,
-    mode: input.sandboxMode ?? "copy",
+    mode: input.sandboxMode ?? "snapshot",
     installDeps: input.installDeps,
     keep: input.keepSandbox,
   });

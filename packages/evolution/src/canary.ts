@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type EvolutionRecord, type VariantMeta, scoreVariant } from "./evolve";
+import type { EvolutionRepository } from "./repository";
 
 export const DEFAULT_STATE = "variants/state.json";
 
@@ -28,6 +29,7 @@ export async function startCanary(
   variantDir: string,
   percent: number,
   statePath = DEFAULT_STATE,
+  repo?: EvolutionRepository,
 ): Promise<CanaryState> {
   if (!Number.isFinite(percent) || percent <= 0 || percent >= 100) {
     throw new Error("percent must be between 1 and 99");
@@ -48,13 +50,26 @@ export async function startCanary(
     },
   };
 
-  await writeState(statePath, state);
+  if (repo) {
+    const stored = await repo.getState();
+    const ok = await repo.setState(state, stored?.version);
+    if (!ok) {
+      throw new Error("canary state changed concurrently");
+    }
+  } else {
+    await writeState(statePath, state);
+  }
   return state;
 }
 
 export async function evaluateCanary(
   inputs: string[],
-  options: { stub?: boolean; archive?: string; statePath?: string } = {},
+  options: {
+    stub?: boolean;
+    archive?: string;
+    statePath?: string;
+    repo?: EvolutionRepository;
+  } = {},
 ): Promise<{
   state: CanaryState;
   champion: EvolutionRecord[];
@@ -62,7 +77,8 @@ export async function evaluateCanary(
   decision: CanaryDecision;
 }> {
   const statePath = options.statePath ?? DEFAULT_STATE;
-  const state = await readState(statePath);
+  const stored = options.repo ? await options.repo.getState() : null;
+  const state = options.repo ? stored?.state : await readState(statePath);
   if (!state?.canary || state.canary.status !== "active") {
     throw new Error("no active canary");
   }
@@ -80,7 +96,11 @@ export async function evaluateCanary(
         state.champion.path,
         input,
         state.canary.agentId,
-        { stub: options.stub, archive: options.archive },
+        {
+          stub: options.stub,
+          archive: options.archive,
+          ...(options.repo ? { repo: options.repo } : {}),
+        },
       ),
     );
     variant.push(
@@ -89,7 +109,11 @@ export async function evaluateCanary(
         state.champion.path,
         input,
         state.canary.agentId,
-        { stub: options.stub, archive: options.archive },
+        {
+          stub: options.stub,
+          archive: options.archive,
+          ...(options.repo ? { repo: options.repo } : {}),
+        },
       ),
     );
   }
@@ -97,7 +121,14 @@ export async function evaluateCanary(
   const decision = decideRollback(champion, variant);
   state.canary.status = decision.rollback ? "rolled_back" : "active";
   state.canary.reason = decision.reason;
-  await writeState(statePath, state);
+  if (options.repo) {
+    const ok = await options.repo.setState(state, stored?.version);
+    if (!ok) {
+      throw new Error("canary state changed concurrently");
+    }
+  } else {
+    await writeState(statePath, state);
+  }
 
   return { state, champion, variant, decision };
 }
@@ -137,35 +168,57 @@ export function decideRollback(
 
 export async function canaryStatus(
   statePath = DEFAULT_STATE,
+  repo?: EvolutionRepository,
 ): Promise<CanaryState | null> {
+  if (repo) {
+    return (await repo.getState())?.state ?? null;
+  }
   return readState(statePath);
 }
 
 export async function rollbackCanary(
   reason = "manual rollback",
   statePath = DEFAULT_STATE,
+  repo?: EvolutionRepository,
 ): Promise<CanaryState> {
-  const state = await readState(statePath);
+  const stored = repo ? await repo.getState() : null;
+  const state = repo ? stored?.state : await readState(statePath);
   if (!state?.canary) {
     throw new Error("no canary configured");
   }
   state.canary.status = "rolled_back";
   state.canary.reason = reason;
-  await writeState(statePath, state);
+  if (repo) {
+    const ok = await repo.setState(state, stored?.version);
+    if (!ok) {
+      throw new Error("canary state changed concurrently");
+    }
+  } else {
+    await writeState(statePath, state);
+  }
   return state;
 }
 
 export async function markCanaryPromoted(
   reason = "promoted by evolution cycle",
   statePath = DEFAULT_STATE,
+  repo?: EvolutionRepository,
 ): Promise<CanaryState> {
-  const state = await readState(statePath);
+  const stored = repo ? await repo.getState() : null;
+  const state = repo ? stored?.state : await readState(statePath);
   if (!state?.canary) {
     throw new Error("no canary configured");
   }
   state.canary.status = "promoted";
   state.canary.reason = reason;
-  await writeState(statePath, state);
+  if (repo) {
+    const ok = await repo.setState(state, stored?.version);
+    if (!ok) {
+      throw new Error("canary state changed concurrently");
+    }
+  } else {
+    await writeState(statePath, state);
+  }
   return state;
 }
 
