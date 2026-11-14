@@ -1,10 +1,16 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveEvolutionEvidence } from "@/lib/evolution-evidence";
 import { getEvolutionRepo } from "@/lib/evolution-repo";
 import { sameOriginError } from "@/lib/http";
 import { getRepoRoot } from "@/lib/paths";
 import { newId } from "@kit/core";
-import { evaluateCanary } from "@kit/evolution";
+import {
+  canaryStatus,
+  createEvalSnapshot,
+  defaultCyclesRoot,
+  evaluateCanary,
+} from "@kit/evolution";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -16,38 +22,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: originError }, { status: 403 });
   }
 
-  let body: { evidenceText?: unknown; stub?: unknown; incident?: unknown };
+  let body: { evidenceText?: unknown; incident?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
   }
 
-  if (
-    typeof body.evidenceText !== "string" ||
-    body.evidenceText.length === 0 ||
-    body.evidenceText.length > 200_000
-  ) {
+  let evidence: Awaited<ReturnType<typeof resolveEvolutionEvidence>>;
+  try {
+    evidence = await resolveEvolutionEvidence(body.evidenceText);
+  } catch (error) {
     return NextResponse.json(
-      {
-        error: "evidenceText must be a non-empty string under 200k characters",
-      },
+      { error: error instanceof Error ? error.message : "invalid evidence" },
       { status: 400 },
     );
   }
-  try {
-    const parsed = JSON.parse(body.evidenceText) as { sources?: unknown };
-    if (!Array.isArray(parsed.sources)) {
-      return NextResponse.json(
-        { error: "evidence must contain a sources[] array" },
-        { status: 400 },
-      );
-    }
-  } catch {
-    return NextResponse.json(
-      { error: "evidenceText must be valid JSON" },
-      { status: 400 },
-    );
+
+  const repo = await getEvolutionRepo();
+  const state = await canaryStatus({ repo });
+  if (
+    !state?.canary ||
+    (state.canary.status !== "shadow" && state.canary.status !== "canary")
+  ) {
+    return NextResponse.json({ error: "no active canary" }, { status: 409 });
   }
 
   const repoRoot = getRepoRoot();
@@ -57,23 +55,35 @@ export async function POST(request: Request) {
   const statePath = path.join(repoRoot, "variants", "state.json");
 
   await mkdir(tmpDir, { recursive: true });
-  await writeFile(evidencePath, body.evidenceText, "utf8");
+  await writeFile(evidencePath, evidence.text, "utf8");
 
   try {
+    const evalDir =
+      state.canary.evalSnapshotPath ??
+      (
+        await createEvalSnapshot({
+          cycleId: newId("evl"),
+          packDir: state.champion.path,
+          cyclesRoot: defaultCyclesRoot(),
+        })
+      ).dir;
+
     const result = await evaluateCanary([evidencePath], {
-      stub: body.stub !== false,
       archive: archivePath,
       statePath,
-      repo: await getEvolutionRepo(),
+      repo,
+      evalDir,
+      actor: "console",
       ...(typeof body.incident === "string" && body.incident.trim()
-        ? { incident: body.incident.slice(0, 500) }
+        ? { incident: body.incident.trim().slice(0, 500) }
         : {}),
     });
     return NextResponse.json({
       ok: true,
+      evidence: { generated: evidence.generated, sources: evidence.sources },
+      evaluation: result.summary,
       decision: result.decision,
-      champion: result.champion,
-      variant: result.variant,
+      evalSnapshotPath: result.state.canary?.evalSnapshotPath ?? evalDir,
       state: result.state,
     });
   } catch (error) {

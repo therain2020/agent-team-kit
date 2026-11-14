@@ -1,5 +1,10 @@
 import { BootstrapForm } from "@/components/welcome/bootstrap-form";
-import { hasApiKey, readBootstrapProfileSync } from "@kit/bootstrap";
+import { PreflightPanel } from "@/components/welcome/preflight-panel";
+import {
+  collectPreflight,
+  hasApiKey,
+  readBootstrapProfileSync,
+} from "@kit/bootstrap";
 import { getTranslations } from "next-intl/server";
 
 export const dynamic = "force-dynamic";
@@ -8,6 +13,11 @@ export default async function WelcomePage() {
   const t = await getTranslations("welcome");
   const profile = readBootstrapProfileSync();
   const configured = hasApiKey();
+  const report = await collectPreflight({
+    probe: configured,
+    probeTimeoutMs: 5000,
+    includeToolchain: false,
+  });
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-xl flex-col justify-center gap-6 px-6 py-16">
@@ -29,6 +39,8 @@ export default async function WelcomePage() {
           pro: profile?.models.pro ?? "deepseek-v4-pro",
         }}
       />
+
+      <PreflightPanel report={report} />
 
       <p className="text-center text-[10px] text-zinc-600">
         {t("securityNote")}

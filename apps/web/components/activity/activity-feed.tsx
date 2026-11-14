@@ -31,6 +31,7 @@ const KIND_GROUPS = [
   "approval",
   "manager",
   "run",
+  "iteration",
 ];
 
 export function ActivityFeed({
@@ -299,6 +300,9 @@ export function ActivityFeed({
 }
 
 function kindVariant(kind: string) {
+  if (kind.startsWith("iteration")) {
+    return "violet" as const;
+  }
   if (kind.startsWith("gate")) {
     return "warning" as const;
   }

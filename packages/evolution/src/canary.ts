@@ -19,6 +19,7 @@ export type CanaryTrigger =
 export type EvolutionDecisionKind =
   | "canary_start"
   | "traffic_change"
+  | "evaluate"
   | "rollback"
   | "promote";
 
@@ -59,6 +60,34 @@ export interface EvolutionDecisionRecord {
   createdAt: string;
 }
 
+export interface CanaryThresholds {
+  /** Maximum allowed regression in pass rate versus the champion. */
+  passRate: number;
+  /** Maximum allowed regression in average score versus the champion. */
+  score: number;
+  /** Maximum allowed cost ratio versus the champion. */
+  costMultiplier: number;
+}
+
+export const DEFAULT_CANARY_THRESHOLDS: CanaryThresholds = {
+  passRate: 0.1,
+  score: 0.1,
+  costMultiplier: 1.5,
+};
+
+export interface EvaluationMetrics {
+  passRate: number;
+  averageScore: number;
+  averageCostCny: number;
+}
+
+export interface CanaryEvaluationSummary {
+  champion: EvaluationMetrics;
+  candidate: EvaluationMetrics;
+  delta: { passRate: number; score: number; costRatio: number };
+  thresholds: CanaryThresholds;
+}
+
 export interface CanaryRoute {
   role: "canary";
   path: string;
@@ -86,6 +115,7 @@ export interface EvaluateCanaryOptions extends CanaryOptions {
   incident?: string;
   actor?: string;
   evalDir?: string;
+  thresholds?: CanaryThresholds;
 }
 
 export interface RollbackCanaryOptions extends CanaryOptions {
@@ -202,6 +232,7 @@ export async function evaluateCanary(
   champion: EvolutionRecord[];
   variant: EvolutionRecord[];
   decision: CanaryDecision;
+  summary: CanaryEvaluationSummary;
 }> {
   const stored = await loadStoredState(options);
   const state = stored.state;
@@ -218,6 +249,9 @@ export async function evaluateCanary(
   const champion: EvolutionRecord[] = [];
   const variant: EvolutionRecord[] = [];
   const evalDir = options.evalDir ?? state.canary.evalSnapshotPath;
+  if (evalDir) {
+    state.canary.evalSnapshotPath = path.resolve(evalDir);
+  }
 
   for (const input of inputs) {
     champion.push(
@@ -250,12 +284,15 @@ export async function evaluateCanary(
     );
   }
 
+  const thresholds = options.thresholds ?? DEFAULT_CANARY_THRESHOLDS;
   const decision = decideRollback(champion, variant, {
     incident: options.incident,
+    thresholds,
   });
+  const summary = summarizeEvaluation(champion, variant, thresholds);
   const fromStatus = state.canary.status;
   const fromTrafficPercent = state.canary.trafficPercent;
-  let audit: EvolutionDecisionRecord | undefined;
+  let audit: EvolutionDecisionRecord;
 
   if (decision.rollback) {
     const reason = decision.reason ?? "canary regression";
@@ -278,17 +315,30 @@ export async function evaluateCanary(
     });
   } else {
     state.canary.reason = undefined;
+    audit = decisionRecord({
+      workspaceId: state.workspaceId,
+      kind: "evaluate",
+      variantId: state.canary.variantId,
+      agentId: state.canary.agentId,
+      fromStatus,
+      toStatus: fromStatus,
+      fromTrafficPercent,
+      toTrafficPercent: fromTrafficPercent,
+      trigger: "manual",
+      reason: evaluationReason(summary),
+      actor: options.actor ?? "operator",
+    });
   }
 
   await persistState(state, stored.version, options, audit);
 
-  return { state, champion, variant, decision };
+  return { state, champion, variant, decision, summary };
 }
 
 export function decideRollback(
   champion: EvolutionRecord[],
   variant: EvolutionRecord[],
-  options: { incident?: string } = {},
+  options: { incident?: string; thresholds?: CanaryThresholds } = {},
 ): CanaryDecision {
   if (options.incident) {
     return {
@@ -298,6 +348,7 @@ export function decideRollback(
     };
   }
 
+  const thresholds = options.thresholds ?? DEFAULT_CANARY_THRESHOLDS;
   const championPass = passRate(champion);
   const variantPass = passRate(variant);
   const championScore = averageScore(champion);
@@ -305,25 +356,28 @@ export function decideRollback(
   const championCost = averageCost(champion);
   const variantCost = averageCost(variant);
 
-  if (variantPass < championPass - 0.1) {
+  if (variantPass < championPass - thresholds.passRate) {
     return {
       rollback: true,
       trigger: "pass_rate",
-      reason: `pass rate ${variantPass.toFixed(2)} below champion ${championPass.toFixed(2)}`,
+      reason: `pass rate ${variantPass.toFixed(2)} below champion ${championPass.toFixed(2)} (threshold ${thresholds.passRate.toFixed(2)})`,
     };
   }
-  if (variantScore < championScore - 0.1) {
+  if (variantScore < championScore - thresholds.score) {
     return {
       rollback: true,
       trigger: "score",
-      reason: `average score ${variantScore.toFixed(2)} below champion ${championScore.toFixed(2)}`,
+      reason: `average score ${variantScore.toFixed(2)} below champion ${championScore.toFixed(2)} (threshold ${thresholds.score.toFixed(2)})`,
     };
   }
-  if (championCost > 0 && variantCost > championCost * 1.5) {
+  if (
+    championCost > 0 &&
+    variantCost > championCost * thresholds.costMultiplier
+  ) {
     return {
       rollback: true,
       trigger: "cost",
-      reason: `cost ${variantCost.toFixed(4)} exceeds 1.5x champion ${championCost.toFixed(4)}`,
+      reason: `cost ${variantCost.toFixed(4)} exceeds ${thresholds.costMultiplier}x champion ${championCost.toFixed(4)}`,
     };
   }
 
@@ -617,4 +671,49 @@ function averageCost(records: EvolutionRecord[]): number {
   return (
     records.reduce((sum, record) => sum + record.costCny, 0) / records.length
   );
+}
+
+function summarizeEvaluation(
+  champion: EvolutionRecord[],
+  variant: EvolutionRecord[],
+  thresholds: CanaryThresholds,
+): CanaryEvaluationSummary {
+  const championCost = averageCost(champion);
+  const candidateCost = averageCost(variant);
+  return {
+    champion: {
+      passRate: passRate(champion),
+      averageScore: averageScore(champion),
+      averageCostCny: roundCost(championCost),
+    },
+    candidate: {
+      passRate: passRate(variant),
+      averageScore: averageScore(variant),
+      averageCostCny: roundCost(candidateCost),
+    },
+    delta: {
+      passRate: roundCost(passRate(variant) - passRate(champion)),
+      score: roundCost(averageScore(variant) - averageScore(champion)),
+      costRatio: championCost > 0 ? roundCost(candidateCost / championCost) : 0,
+    },
+    thresholds,
+  };
+}
+
+function evaluationReason(summary: CanaryEvaluationSummary): string {
+  const { champion, candidate, delta, thresholds } = summary;
+  return [
+    `evaluation passed: score ${candidate.averageScore.toFixed(2)} vs champion ${champion.averageScore.toFixed(2)} (delta ${formatDelta(delta.score)})`,
+    `pass rate ${candidate.passRate.toFixed(2)} vs ${champion.passRate.toFixed(2)}`,
+    `cost ${delta.costRatio.toFixed(2)}x`,
+    `thresholds score delta >= ${formatDelta(-thresholds.score)}, pass rate delta >= ${formatDelta(-thresholds.passRate)}, cost <= ${thresholds.costMultiplier}x`,
+  ].join("; ");
+}
+
+function roundCost(value: number): number {
+  return Math.round(value * 10000) / 10000;
+}
+
+function formatDelta(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
 }

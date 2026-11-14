@@ -20,7 +20,7 @@ agents:
   - id: researcher
     file: agents/researcher.md
     model: deepseek-flash
-    tools: [web_search, fetch, rss]
+    tools: [http_fetch, browser_inspect]
     skills: [citation-check]
   - id: writer
     file: agents/writer.md

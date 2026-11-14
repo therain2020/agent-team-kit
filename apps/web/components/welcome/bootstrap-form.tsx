@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { CheckCircle2, KeyRound, Loader2, XCircle } from "lucide-react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
 
 interface BootstrapFormProps {
@@ -33,6 +34,7 @@ interface SavedState {
 
 export function BootstrapForm({ initial }: BootstrapFormProps) {
   const t = useTranslations("welcome");
+  const router = useRouter();
   const id = useId();
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
@@ -80,6 +82,7 @@ export function BootstrapForm({ initial }: BootstrapFormProps) {
         latencyMs: payload.probe?.latencyMs ?? 0,
         ...(payload.probe?.models ? { models: payload.probe.models } : {}),
       });
+      router.refresh();
     } catch (problem) {
       setError({
         kind: "network",

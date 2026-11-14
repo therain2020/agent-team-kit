@@ -1,5 +1,12 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import {
   type AgentRole,
@@ -9,9 +16,11 @@ import {
   stageApprovalSchema,
   workflowDefinitionSchema,
 } from "@kit/core";
+import { KNOWN_TOOL_DEFINITIONS } from "@kit/tools";
 import { parse, stringify } from "yaml";
-import { type LoadResult, loadPack } from "./load-pack";
+import { type LoadResult, type LoadedPack, loadPack } from "./load-pack";
 import { inferAgentRole } from "./role-plan";
+import { scanSecrets } from "./security";
 import { loadTemplate } from "./templates";
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -19,7 +28,7 @@ const AGENT_ID = /^[a-z][a-z0-9-]*$/;
 const WORKFLOW_ID = /^[a-z][a-z0-9-]*$/;
 const WORKFLOW_FILE = /^workflows\/[a-z][a-z0-9-]*\.yaml$/;
 const ALLOWED_FILES =
-  /^(team\.yaml|autopilot\.yaml|README\.md|agents\/[^/]+\.md|workflows\/[^/]+\.yaml|policies\/[^/]+\.yaml|evals\/[^/]+\.yaml|skills\/[^/]+\/SKILL\.md)$/;
+  /^(team\.yaml|iteration\.yaml|autopilot\.yaml|README\.md|agents\/[^/]+\.md|workflows\/[^/]+\.yaml|policies\/[^/]+\.yaml|evals\/[^/]+\.yaml|skills\/[^/]+\/SKILL\.md)$/;
 
 export type PackTemplate = string;
 
@@ -433,6 +442,252 @@ export async function createAgent(
   }
 }
 
+export async function deleteAgent(
+  packDir: string,
+  agentId: string,
+): Promise<void> {
+  if (!AGENT_ID.test(agentId) || agentId === "manager") {
+    throw new Error("agent id must match ^[a-z][a-z0-9-]*$ and not be manager");
+  }
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  const target = loaded.agents.get(agentId);
+  if (!target) {
+    throw new Error(`unknown agent: ${agentId}`);
+  }
+  assertAgentUnreferenced(loaded, agentId);
+
+  const absolute = resolvePackRelative(packDir, target.spec.file);
+  if (!absolute || !existsSync(absolute)) {
+    throw new Error(`agent file not found: ${target.spec.file}`);
+  }
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const originalAgent = await readFile(absolute, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  teamDoc.agents = teamDoc.agents.filter((entry) => entry.id !== agentId);
+  removeFromWorkspaces(teamDoc, agentId);
+
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+  await rm(absolute, { force: true });
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    await writeFile(teamPath, originalTeam, "utf8");
+    await writeFile(absolute, originalAgent, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+}
+
+export interface CreateManagerInput {
+  description?: string;
+  model?: string;
+  instructions?: string;
+}
+
+export async function createManager(
+  packDir: string,
+  input: CreateManagerInput = {},
+): Promise<void> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  if (loaded.pack.manager || loaded.agents.has("manager")) {
+    throw new Error("manager already exists");
+  }
+
+  const relative = "agents/manager.md";
+  const absolute = resolvePackRelative(packDir, relative);
+  if (!absolute) {
+    throw new Error("invalid manager file");
+  }
+  if (existsSync(absolute)) {
+    throw new Error(`manager file already exists: ${relative}`);
+  }
+
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  const model = input.model?.trim() || "deepseek-pro";
+  const description =
+    input.description?.trim() || "Coordinates the team and handles exceptions";
+  teamDoc.manager = {
+    agent: relative,
+    model,
+    budget: { tokens: 16000, costCny: 3, wallClockSeconds: 180 },
+  };
+  teamDoc.agents.push({
+    id: "manager",
+    file: relative,
+    model,
+    role: "manager",
+    tools: [],
+    skills: [],
+  });
+
+  await writePackFile(
+    packDir,
+    relative,
+    agentMarkdown({
+      id: "manager",
+      description,
+      model,
+      role: "manager",
+      instructions:
+        input.instructions?.trim() ||
+        "You are the Manager of this team. Review exceptions, explain trade-offs, and ask the operator only when a decision cannot be made from the evidence. Never invent evidence.",
+    }),
+  );
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    await rm(absolute, { force: true }).catch(() => undefined);
+    await writeFile(teamPath, originalTeam, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+}
+
+export async function deleteManager(packDir: string): Promise<void> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  const managerFile = loaded.pack.manager?.agent;
+  if (!managerFile) {
+    throw new Error("manager is not configured");
+  }
+  const managerAgent = [...loaded.agents.values()].find(
+    (entry) => entry.spec.file === managerFile,
+  );
+  const managerId = managerAgent?.spec.id ?? "manager";
+  assertAgentUnreferenced(loaded, managerId);
+
+  const absolute = resolvePackRelative(packDir, managerFile);
+  if (!absolute || !existsSync(absolute)) {
+    throw new Error(`manager file not found: ${managerFile}`);
+  }
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const originalAgent = await readFile(absolute, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  Reflect.deleteProperty(teamDoc, "manager");
+  teamDoc.agents = teamDoc.agents.filter(
+    (entry) => entry.file !== managerFile && entry.id !== managerId,
+  );
+  removeFromWorkspaces(teamDoc, managerId);
+
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+  await rm(absolute, { force: true });
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    await writeFile(teamPath, originalTeam, "utf8");
+    await writeFile(absolute, originalAgent, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+}
+
+export async function writeValidatedPackFile(
+  packDir: string,
+  relative: string,
+  content: string,
+): Promise<void> {
+  const file = resolvePackRelative(packDir, relative);
+  if (!file) {
+    throw new Error(`file is not editable: ${relative}`);
+  }
+  const findings: string[] = [];
+  scanSecrets(content, relative, findings);
+  if (findings.length > 0) {
+    throw new Error(findings.join("\n"));
+  }
+  const hadFile = existsSync(file);
+  const original = hadFile ? await readFile(file, "utf8") : "";
+  await writePackFile(packDir, relative, content);
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    if (hadFile) {
+      await writeFile(file, original, "utf8");
+    } else {
+      await rm(file, { force: true });
+    }
+    throw new Error(validation.errors.join("\n"));
+  }
+}
+
+export async function listEditablePackFiles(
+  packDir: string,
+): Promise<string[]> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  const files = new Set<string>(["team.yaml", ...loaded.pack.policies]);
+  if (existsSync(path.join(loaded.dir, "iteration.yaml"))) {
+    files.add("iteration.yaml");
+  }
+  const skillsDir = path.join(loaded.dir, "skills");
+  const entries = await readdir(skillsDir, { withFileTypes: true }).catch(
+    () => [],
+  );
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const relative = `skills/${entry.name}/SKILL.md`;
+    if (existsSync(path.join(loaded.dir, relative))) {
+      files.add(relative);
+    }
+  }
+  return [...files];
+}
+
+export interface PackToolCatalogEntry {
+  name: string;
+  description: string;
+  source: "builtin" | "toolpack";
+}
+
+export interface PackCatalog {
+  tools: PackToolCatalogEntry[];
+  skills: string[];
+}
+
+export async function packCatalog(packDir: string): Promise<PackCatalog> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  const tools: PackToolCatalogEntry[] = KNOWN_TOOL_DEFINITIONS.map((tool) => ({
+    ...tool,
+    source: "builtin",
+  }));
+  for (const toolPack of loaded.toolPacks) {
+    for (const tool of toolPack.tools) {
+      tools.push({
+        name: tool.name,
+        description: tool.description,
+        source: "toolpack",
+      });
+    }
+  }
+  const skills = new Set<string>(loaded.skills.keys());
+  const entries = await readdir(path.join(loaded.dir, "skills"), {
+    withFileTypes: true,
+  }).catch(() => []);
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      skills.add(entry.name);
+    }
+  }
+  return { tools, skills: [...skills].sort() };
+}
+
 export async function writeWorkflowFile(
   packDir: string,
   relative: string,
@@ -831,6 +1086,91 @@ export async function setStageApproval(
   await writeWorkflowFile(packDir, relative, stringify(doc));
 }
 
+export interface StageFieldsUpdate {
+  type?: "workflow" | "agent" | "coder";
+  agent?: string | null;
+  coder?: "dsh" | "codex" | "opencode" | "command" | null;
+  goal?: string | null;
+  acceptance?: string | null;
+  inputs?: string[];
+  outputs?: string[];
+  timeout?: string | null;
+  retry?: { max: number; backoff: "fixed" | "exp" } | null;
+  gate?: string | null;
+  inputFrom?: string | null;
+  inputsFrom?: string[] | null;
+  includeInitialInput?: boolean | null;
+  revisionAgent?: string | null;
+  failureMode?: "fail_open" | "fail_closed" | null;
+}
+
+export async function updateStageFields(
+  packDir: string,
+  relative: string,
+  stageId: string,
+  update: StageFieldsUpdate,
+): Promise<void> {
+  const raw = await readPackFile(packDir, relative);
+  const doc = parse(raw) as {
+    stages?: Array<Record<string, unknown>>;
+  };
+  const stages = doc.stages;
+  if (!Array.isArray(stages)) {
+    throw new Error("workflow stages missing");
+  }
+  const stage = stages.find((item) => item.id === stageId);
+  if (!stage) {
+    throw new Error(`unknown stage: ${stageId}`);
+  }
+
+  const assign = (key: string, value: unknown) => {
+    if (value === undefined) {
+      return;
+    }
+    if (value === null || value === "") {
+      Reflect.deleteProperty(stage, key);
+      return;
+    }
+    stage[key] = value;
+  };
+
+  assign("type", update.type);
+  assign("agent", update.agent);
+  assign("coder", update.coder);
+  assign("goal", update.goal);
+  assign("acceptance", update.acceptance);
+  assign("inputs", update.inputs);
+  assign("outputs", update.outputs);
+  assign("timeout", update.timeout);
+  assign("retry", update.retry);
+  assign("gate", update.gate);
+  assign("includeInitialInput", update.includeInitialInput);
+  assign("revisionAgent", update.revisionAgent);
+  assign("failureMode", update.failureMode);
+  if (update.inputsFrom !== undefined) {
+    assign("inputsFrom", update.inputsFrom);
+    if (update.inputsFrom !== null) {
+      Reflect.deleteProperty(stage, "inputFrom");
+    }
+  }
+  if (update.inputFrom !== undefined) {
+    assign("inputFrom", update.inputFrom);
+    if (update.inputFrom !== null) {
+      Reflect.deleteProperty(stage, "inputsFrom");
+    }
+  }
+
+  const parsed = workflowDefinitionSchema.safeParse(doc);
+  if (!parsed.success) {
+    throw new Error(
+      parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("\n"),
+    );
+  }
+  await writeWorkflowFile(packDir, relative, stringify(doc));
+}
+
 export async function writeAutopilotFile(
   packDir: string,
   content: string,
@@ -871,7 +1211,11 @@ export async function validatePack(
 }
 
 export interface TeamDoc {
-  manager?: { model?: string };
+  manager?: {
+    agent: string;
+    model?: string;
+    budget?: { tokens?: number; costCny?: number; wallClockSeconds?: number };
+  };
   workflows?: string[];
   agents: Array<{
     id: string;
@@ -891,6 +1235,40 @@ function parseTeamDoc(text: string): TeamDoc {
     throw new Error("team.yaml agents must be an array");
   }
   return parsed as TeamDoc;
+}
+
+function removeFromWorkspaces(teamDoc: TeamDoc, agentId: string): void {
+  for (const workspace of Object.values(teamDoc.workspaces ?? {})) {
+    if (!workspace?.agents) {
+      continue;
+    }
+    workspace.agents = workspace.agents.filter((id) => id !== agentId);
+  }
+}
+
+function assertAgentUnreferenced(loaded: LoadedPack, agentId: string): void {
+  for (const workflow of loaded.workflows) {
+    for (const stage of workflow.stages) {
+      if (
+        stage.agent === agentId ||
+        stage.revisionAgent === agentId ||
+        stage.coder === agentId
+      ) {
+        throw new Error(
+          `agent ${agentId} is referenced by workflow ${workflow.id} stage ${stage.id}; reassign the stage first`,
+        );
+      }
+    }
+  }
+  for (const [name, domain] of Object.entries(
+    loaded.iteration?.domains ?? {},
+  )) {
+    if (domain.agent === agentId) {
+      throw new Error(
+        `agent ${agentId} is referenced by iteration domain ${name}; remove the reference first`,
+      );
+    }
+  }
 }
 
 function nextWorkflowId(loaded: {

@@ -12,8 +12,20 @@ describe("template registry", () => {
     const templates = await listTemplates();
     const ids = templates.map((template) => template.id);
     expect(ids).toEqual(
-      expect.arrayContaining(["minimal", "research", "content", "product"]),
+      expect.arrayContaining([
+        "blank",
+        "minimal",
+        "research",
+        "content",
+        "product",
+      ]),
     );
+  });
+
+  it("loads the blank template without workers", async () => {
+    const template = await loadTemplate("blank");
+    expect(template.agents).toEqual([]);
+    expect(template.workflow.stages[0]?.agent).toBe("manager");
   });
 
   it("loads the product template with role rules", async () => {

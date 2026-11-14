@@ -1,39 +1,57 @@
 "use client";
 
+import { setLocale } from "@/app/actions/locale";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
+import type { Locale } from "@/i18n/config";
+import { NAV_ITEMS, type NavItem, matchNavItem } from "@/lib/nav";
 import { Command } from "cmdk";
 import {
-  Activity,
-  FlaskConical,
+  GitBranch,
   Inbox,
-  LayoutDashboard,
-  MessageSquare,
-  Package,
+  Languages,
+  type LucideIcon,
   Play,
+  Power,
   Search,
-  Siren,
 } from "lucide-react";
-import { useTranslations } from "next-intl";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState, useTransition } from "react";
 
-const ITEMS = [
-  { href: "/", labelKey: "commandCenter", icon: LayoutDashboard },
-  { href: "/manager", labelKey: "manager", icon: MessageSquare },
-  { href: "/inbox", labelKey: "inbox", icon: Inbox },
-  { href: "/ops", labelKey: "ops", icon: Siren },
-  { href: "/runs", labelKey: "runs", icon: Play },
-  { href: "/packs", labelKey: "packs", icon: Package },
-  { href: "/evolution", labelKey: "evolution", icon: FlaskConical },
-  { href: "/traces", labelKey: "traces", icon: Activity },
-];
+const RECENT_KEY = "kit.command-palette.recent";
+const RECENT_LIMIT = 5;
+
+const itemClass =
+  "flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-xs text-zinc-400 data-[selected=true]:bg-accent data-[selected=true]:text-zinc-100";
+
+function PaletteItem({
+  value,
+  icon: Icon,
+  label,
+  onSelect,
+}: {
+  value: string;
+  icon: LucideIcon;
+  label: string;
+  onSelect: () => void;
+}) {
+  return (
+    <Command.Item value={value} onSelect={onSelect} className={itemClass}>
+      <Icon className="size-3.5" />
+      {label}
+    </Command.Item>
+  );
+}
 
 export function CommandPalette() {
   const router = useRouter();
+  const pathname = usePathname();
+  const locale = useLocale() as Locale;
   const t = useTranslations("commandPalette");
   const nav = useTranslations("nav");
+  const [, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
+  const [recent, setRecent] = useState<string[]>([]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -46,10 +64,94 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(RECENT_KEY);
+      const parsed: unknown = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) {
+        setRecent(
+          parsed
+            .filter(
+              (href): href is string =>
+                typeof href === "string" &&
+                NAV_ITEMS.some((item) => item.href === href),
+            )
+            .slice(0, RECENT_LIMIT),
+        );
+      }
+    } catch {
+      // A corrupt or unavailable store just means no recents.
+    }
+  }, []);
+
+  useEffect(() => {
+    const current = matchNavItem(pathname);
+    if (!current) {
+      return;
+    }
+    setRecent((previous) => {
+      const next = [
+        current.href,
+        ...previous.filter((href) => href !== current.href),
+      ].slice(0, RECENT_LIMIT);
+      try {
+        window.localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+      } catch {
+        // Persistence is best-effort.
+      }
+      return next;
+    });
+  }, [pathname]);
+
   function go(href: string) {
     setOpen(false);
     router.push(href);
   }
+
+  function switchLanguage() {
+    setOpen(false);
+    startTransition(async () => {
+      await setLocale(locale === "zh" ? "en" : "zh");
+      router.refresh();
+    });
+  }
+
+  const recentItems = recent
+    .map((href) => NAV_ITEMS.find((item) => item.href === href))
+    .filter((item): item is NavItem => Boolean(item));
+
+  const actions = [
+    {
+      id: "newIteration",
+      label: t("newIteration"),
+      icon: GitBranch,
+      perform: () => go("/iterations?new=1"),
+    },
+    {
+      id: "startRun",
+      label: t("startRun"),
+      icon: Play,
+      perform: () => go("/packs"),
+    },
+    {
+      id: "reviewApprovals",
+      label: t("reviewApprovals"),
+      icon: Inbox,
+      perform: () => go("/inbox"),
+    },
+    {
+      id: "openKillSwitch",
+      label: t("openKillSwitch"),
+      icon: Power,
+      perform: () => go("/kill-switch"),
+    },
+    {
+      id: "switchLanguage",
+      label: t("switchLanguage"),
+      icon: Languages,
+      perform: switchLanguage,
+    },
+  ];
 
   return (
     <>
@@ -84,42 +186,46 @@ export function CommandPalette() {
               <Command.Empty className="px-2 py-6 text-center text-xs text-zinc-500">
                 {t("noMatches")}
               </Command.Empty>
+              {recentItems.length > 0 ? (
+                <Command.Group heading={t("recent")}>
+                  {recentItems.map((item) => {
+                    const label = nav(item.labelKey);
+                    return (
+                      <PaletteItem
+                        key={`recent-${item.href}`}
+                        value={label}
+                        icon={item.icon}
+                        label={label}
+                        onSelect={() => go(item.href)}
+                      />
+                    );
+                  })}
+                </Command.Group>
+              ) : null}
               <Command.Group heading={t("navigate")}>
-                {ITEMS.map((item) => {
-                  const Icon = item.icon;
+                {NAV_ITEMS.map((item) => {
                   const label = nav(item.labelKey);
                   return (
-                    <Command.Item
+                    <PaletteItem
                       key={item.href}
                       value={label}
+                      icon={item.icon}
+                      label={label}
                       onSelect={() => go(item.href)}
-                      className={cn(
-                        "flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-xs text-zinc-400 data-[selected=true]:bg-accent data-[selected=true]:text-zinc-100",
-                      )}
-                    >
-                      <Icon className="size-3.5" />
-                      {label}
-                    </Command.Item>
+                    />
                   );
                 })}
               </Command.Group>
               <Command.Group heading={t("actions")}>
-                <Command.Item
-                  value={t("startRun")}
-                  onSelect={() => go("/packs")}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-xs text-zinc-400 data-[selected=true]:bg-accent data-[selected=true]:text-zinc-100"
-                >
-                  <Play className="size-3.5" />
-                  {t("startRun")}
-                </Command.Item>
-                <Command.Item
-                  value={t("reviewApprovals")}
-                  onSelect={() => go("/inbox")}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-xs text-zinc-400 data-[selected=true]:bg-accent data-[selected=true]:text-zinc-100"
-                >
-                  <Inbox className="size-3.5" />
-                  {t("reviewApprovals")}
-                </Command.Item>
+                {actions.map((action) => (
+                  <PaletteItem
+                    key={action.id}
+                    value={action.label}
+                    icon={action.icon}
+                    label={action.label}
+                    onSelect={action.perform}
+                  />
+                ))}
               </Command.Group>
             </Command.List>
           </Command>

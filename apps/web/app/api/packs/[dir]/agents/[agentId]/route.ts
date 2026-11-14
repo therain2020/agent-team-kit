@@ -1,7 +1,7 @@
 import { sameOriginError } from "@/lib/http";
 import { resolvePackDir } from "@/lib/paths";
 import { parseRole } from "@/lib/roles";
-import { updateAgent } from "@kit/pack";
+import { deleteAgent, updateAgent } from "@kit/pack";
 import { NextResponse } from "next/server";
 
 export async function PUT(
@@ -57,6 +57,30 @@ export async function PUT(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "save failed" },
+      { status: 400 },
+    );
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ dir: string; agentId: string }> },
+) {
+  const originError = sameOriginError(request);
+  if (originError) {
+    return NextResponse.json({ error: originError }, { status: 403 });
+  }
+  const { dir, agentId } = await params;
+  const packDir = resolvePackDir(decodeURIComponent(dir));
+  if (!packDir) {
+    return NextResponse.json({ error: "invalid pack" }, { status: 400 });
+  }
+  try {
+    await deleteAgent(packDir, decodeURIComponent(agentId));
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "delete failed" },
       { status: 400 },
     );
   }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type CanaryState,
+  DEFAULT_CANARY_THRESHOLDS,
   bucketForRun,
   decideRollback,
   selectRunVariant,
@@ -143,5 +144,24 @@ describe("canary rollback triggers", () => {
       decideRollback([record(true, 0.9, 0.01)], [record(true, 0.9, 0.01)])
         .rollback,
     ).toBe(false);
+  });
+
+  it("uses the published default thresholds", () => {
+    expect(DEFAULT_CANARY_THRESHOLDS).toEqual({
+      passRate: 0.1,
+      score: 0.1,
+      costMultiplier: 1.5,
+    });
+  });
+
+  it("honours custom thresholds", () => {
+    const champion = [record(true, 0.8, 0.01)];
+    const variant = [record(true, 0.72, 0.01)];
+    expect(decideRollback(champion, variant).rollback).toBe(false);
+    expect(
+      decideRollback(champion, variant, {
+        thresholds: { passRate: 0.1, score: 0.05, costMultiplier: 1.5 },
+      }),
+    ).toMatchObject({ rollback: true, trigger: "score" });
   });
 });
