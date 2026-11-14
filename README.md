@@ -99,7 +99,8 @@ bun run kit iterate \
 ```
 
 Flow: Planner → task plan artifact → external coder (DSH by default) in an
-isolated repository copy → independent `typecheck`/`lint`/`test` → repair with
+isolated repository copy under `%TEMP%/agent-team-kit` (override with
+`KIT_CODER_SANDBOX_ROOT`) → independent `typecheck`/`lint`/`test` → repair with
 feedback → risk classifier → low-risk apply with commit + backup → report.
 
 - `--stub` uses a deterministic two-task plan (security + UX) without a

@@ -4,7 +4,9 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type CoderResult,
+  coderSandboxRoot,
   commandOnPath,
+  isCoderSandboxPath,
   runCoderTask,
   runProcess,
 } from "@kit/coder";
@@ -153,10 +155,7 @@ export async function runIterationCoder(
 
   const coder = (input.coderOverride ?? domain.coder) as CoderId;
   const instructions = await loadInstructions(loaded, domain.agent);
-  const sandboxDir = path.join(
-    repoRoot,
-    ".tmp",
-    "workspaces",
+  const sandboxDir = coderSandboxRoot(
     "iterations",
     safe(input.iterationId),
     safe(input.task.id),
@@ -580,8 +579,7 @@ export async function cleanupIterationTask(input: CleanupInput): Promise<void> {
     return;
   }
   const resolved = path.resolve(input.sandboxDir);
-  const marker = `${path.sep}.tmp${path.sep}workspaces${path.sep}iterations${path.sep}`;
-  if (!resolved.includes(marker)) {
+  if (!isCoderSandboxPath(resolved)) {
     return;
   }
   if (process.env.KIT_CODER_KEEP === "1") {

@@ -40,12 +40,14 @@ classify → low-risk apply with commit + backup → report.
 Agents can **read/search the repository**, run fixed checks
 (`typecheck`, `lint`, `test`, `build`), run static security scans, fetch
 HTTP(S), inspect a local page through the browser adapter, and write a
-**sandbox patch** under `.tmp/workspaces/`.
+**sandbox patch** under `.tmp/workspaces/` (model tool loop).
 
-External coders work on a repository copy and return a transcript, changed
-files and a diff. They never write the real repository directly. Low-risk
-verified changes can be applied by the iteration workflow with a commit and a
-backup; everything else is reviewed or approved.
+External coders work on a repository copy under a managed temp root
+(`%TEMP%/agent-team-kit` by default; override with
+`KIT_CODER_SANDBOX_ROOT`) and return a transcript, changed files and a diff.
+They never write the real repository directly. Low-risk verified changes can
+be applied by the iteration workflow with a commit and a backup; everything
+else is reviewed or approved.
 
 The recovery kernel (LKG, rollback, audit sink, kill switch) lives outside the
 repository. The system may modify all repository code, but it cannot modify the

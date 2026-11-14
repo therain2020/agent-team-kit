@@ -12,6 +12,11 @@ export {
 } from "./adapters/cli";
 export { DshCoderAdapter, parseDshOutput } from "./adapters/dsh";
 export { commandOnPath, runProcess } from "./process";
+export {
+  coderSandboxBase,
+  coderSandboxRoot,
+  isCoderSandboxPath,
+} from "./paths";
 
 export interface RunCoderTaskInput extends CoderTask {
   coder: CoderId;

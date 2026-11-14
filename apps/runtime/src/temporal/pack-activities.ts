@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { type CoderResult, runCoderTask } from "@kit/coder";
+import { type CoderResult, coderSandboxRoot, runCoderTask } from "@kit/coder";
 import { newId } from "@kit/core";
 import {
   type ModelMessage,
@@ -296,13 +296,7 @@ async function runCoderStage(
   const coder = input.coder ?? "dsh";
   const repoRoot = resolveRepoRoot();
   const slug = input.stageId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const sandboxRoot = path.join(
-    repoRoot,
-    ".tmp",
-    "workspaces",
-    input.runId,
-    slug,
-  );
+  const sandboxRoot = coderSandboxRoot("stages", input.runId, slug);
   await mkdir(path.dirname(sandboxRoot), { recursive: true });
 
   const goal =

@@ -4,7 +4,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildCoderPrompt, createSandbox, parseDshOutput } from "../src";
+import {
+  buildCoderPrompt,
+  coderSandboxRoot,
+  createSandbox,
+  isCoderSandboxPath,
+  parseDshOutput,
+} from "../src";
 
 const cleanupDirs: string[] = [];
 
@@ -45,6 +51,15 @@ describe("parseDshOutput", () => {
       JSON.stringify({ type: "error", error: "model failed" }),
     );
     expect(parsed.error).toBe("model failed");
+  });
+});
+
+describe("sandbox paths", () => {
+  it("keeps managed sandboxes outside the repository", () => {
+    const root = coderSandboxRoot("iterations", "it_1", "task");
+    expect(root).toContain("iterations");
+    expect(isCoderSandboxPath(root)).toBe(true);
+    expect(isCoderSandboxPath(process.cwd())).toBe(false);
   });
 });
 

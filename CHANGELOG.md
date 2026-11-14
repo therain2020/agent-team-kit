@@ -31,10 +31,11 @@
   produced a verified Inbox hierarchy fix
   (`apps/web/app/(console)/inbox/page.tsx`) classified as medium risk; it
   remains pending rather than auto-applied.
-- Known issue: DSH's `pwsh` tool hits `SetNamedSecurityInfoW ... grantWrite
-  (Win32 5)` inside the copied sandbox, so the coder cannot run shell checks
-  itself; the external Verifier still runs `typecheck`/`lint`/`test`. Fix the
-  sandbox ACL or move to container isolation in the next slice.
+- External coder sandboxes now live outside the repository
+  (`%TEMP%/agent-team-kit`, override `KIT_CODER_SANDBOX_ROOT`). This fixed the
+  Windows ACL failure that blocked DSH's `pwsh` tool; a live smoke ran
+  `node -e "console.log(6*7)"` and returned `42` with no file changes. The
+  external Verifier still runs `typecheck`/`lint`/`test` independently.
 - Tests: 74 passing (coder sandbox/diff, coder stage, gateway signatures and
   normalization, router matching, iteration plan/risk, autopilot iterations,
   plus the existing suite).
