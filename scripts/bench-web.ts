@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -32,6 +33,17 @@ const env = {
 
 let server: ChildProcess | undefined;
 let serverLogs = "";
+const generatedFiles = ["next-env.d.ts", "tsconfig.json"].map((name) =>
+  path.join(webRoot, name),
+);
+const originals = new Map<string, string>();
+for (const file of generatedFiles) {
+  try {
+    originals.set(file, await readFile(file, "utf8"));
+  } catch {
+    // file may not exist yet
+  }
+}
 
 try {
   const build = await runCommand(bunBin(), ["run", "web:build"], {
@@ -140,6 +152,13 @@ try {
 } finally {
   if (server) {
     await killTree(server);
+  }
+  for (const [file, content] of originals) {
+    try {
+      await writeFile(file, content, "utf8");
+    } catch {
+      // best-effort restore; the build already succeeded or failed
+    }
   }
 }
 

@@ -16,6 +16,9 @@ const nextConfig: NextConfig = {
     "@kit/source",
   ],
   serverExternalPackages: ["postgres", "@aws-sdk/client-s3"],
+  experimental: {
+    staleTimes: { dynamic: 10, static: 300 },
+  },
 };
 
 export default withNextIntl(nextConfig);

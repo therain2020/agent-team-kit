@@ -1,4 +1,5 @@
 import type { ArtifactVersion, Blob, Manifest, Run, Stage } from "@kit/core";
+import { cache } from "react";
 import { getStore } from "./store";
 
 type Store = Awaited<ReturnType<typeof getStore>>;
@@ -93,7 +94,7 @@ export function classifyArtifact(manifest: Manifest | null): ArtifactKind {
   return "artifact";
 }
 
-export async function loadRunDetail(
+export const loadRunDetail = cache(async function loadRunDetail(
   runId: string,
   store?: Store,
 ): Promise<RunDetail | null> {
@@ -254,9 +255,9 @@ export async function loadRunDetail(
     tokens,
     report,
   };
-}
+});
 
-export async function loadRunSummaries(
+export const loadRunSummaries = cache(async function loadRunSummaries(
   limit = 20,
   store?: Store,
 ): Promise<RunSummary[]> {
@@ -266,11 +267,12 @@ export async function loadRunSummaries(
   return Promise.all(
     runs.map(async (run) => {
       const artifacts = await client.artifactStore.listByRun(run.runId);
+      const manifests = await Promise.all(
+        artifacts.map((artifact) => client.manifests.get(artifact.manifestId)),
+      );
       let costCny = 0;
       let tokens = 0;
-
-      for (const artifact of artifacts) {
-        const manifest = await client.manifests.get(artifact.manifestId);
+      for (const manifest of manifests) {
         if (!manifest) {
           continue;
         }
@@ -286,7 +288,7 @@ export async function loadRunSummaries(
       };
     }),
   );
-}
+});
 
 export async function loadArtifactContent(
   artifact: ArtifactVersion,
@@ -329,7 +331,9 @@ export async function loadApprovalForRun(
   return detail?.approval ?? null;
 }
 
-export async function loadPausedRuns(store?: Store): Promise<
+export const loadPausedRuns = cache(async function loadPausedRuns(
+  store?: Store,
+): Promise<
   Array<{
     run: Run;
     approval: ApprovalView | null;
@@ -348,7 +352,15 @@ export async function loadPausedRuns(store?: Store): Promise<
       };
     }),
   );
-}
+});
+
+export const loadPausedCount = cache(async function loadPausedCount(
+  store?: Store,
+): Promise<number> {
+  const client = store ?? (await getStore());
+  const paused = await client.runs.list({ status: "paused", limit: 100 });
+  return paused.length;
+});
 
 export function orderStages(stages: Stage[]): Stage[] {
   return [...stages].sort((a, b) => {

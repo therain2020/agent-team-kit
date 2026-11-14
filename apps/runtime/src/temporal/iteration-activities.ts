@@ -49,6 +49,7 @@ import type {
   VerifyTaskActivityInput,
 } from "@kit/workflow";
 import { Context } from "@temporalio/activity";
+import { startIteration, updateRun, updateTask } from "./iteration-progress";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -146,6 +147,7 @@ ${context}`,
     runMode: input.runMode,
   });
 
+  await startIteration(store, input, plan, artifactId);
   return { plan, artifactId, tokens, costCny };
 }
 
@@ -166,6 +168,17 @@ export async function runIterationCoder(
 
   const coder = (input.coderOverride ?? domain.coder) as CoderId;
   const instructions = await loadInstructions(loaded, domain.agent);
+  await updateRun(store, input.iterationId, {
+    status: "running",
+    phase: "coder",
+  });
+  await updateTask(store, input.iterationId, input.task.id, {
+    status: "running",
+    phase: "coder",
+    attempt: input.attempt,
+    coder,
+    startedAt: new Date().toISOString(),
+  });
   const sandboxDir = coderSandboxRoot(
     "iterations",
     safe(input.iterationId),
@@ -271,6 +284,17 @@ export async function runIterationCoder(
     runMode: input.runMode,
   });
 
+  await updateTask(store, input.iterationId, input.task.id, {
+    phase: result.ok ? "coder_done" : "coder_failed",
+    changedFiles: result.changedFiles,
+    tokens: result.tokens ?? 0,
+    coderSummary: result.summary,
+    diffArtifactId,
+    transcriptArtifactId,
+    resultArtifactId,
+    ...(result.error ? { error: result.error } : {}),
+  });
+
   return {
     taskId: input.task.id,
     coder,
@@ -317,6 +341,11 @@ export async function verifyIterationTask(
       "the coder sandbox no longer exists",
     );
   }
+
+  await updateTask(store, input.iterationId, input.task.id, {
+    status: "running",
+    phase: "verifying",
+  });
   if (input.changedFiles.length === 0) {
     return await failVerification(
       store,
@@ -413,6 +442,12 @@ export async function verifyIterationTask(
     modelId: "none",
     runMode: "LIVE",
   });
+  await updateTask(store, input.iterationId, input.task.id, {
+    status: pass ? "passed" : "failed",
+    phase: pass ? "verified" : "verification_failed",
+    verificationArtifactId: artifactId,
+    ...(pass ? {} : { error: feedback.slice(0, 2000) }),
+  });
   return { taskId: input.task.id, pass, feedback, checks, artifactId };
 }
 
@@ -440,6 +475,10 @@ export async function classifyIterationTask(
     agentId: "risk-classifier",
     modelId: "none",
     runMode: "LIVE",
+  });
+  await updateTask(store, input.iterationId, input.task.id, {
+    risk: classified.risk,
+    phase: "risk",
   });
   return {
     taskId: input.task.id,
@@ -516,6 +555,22 @@ export async function applyIterationTask(
       modelId: "none",
       runMode: input.runMode,
     });
+    await updateTask(store, input.iterationId, input.task.id, {
+      applyStatus: status,
+      applyArtifactId: artifactId,
+      phase: status,
+      status,
+      ...(extra.commit ? { commit: extra.commit } : {}),
+      ...(status === "blocked" || status === "reverted"
+        ? { error: reason.slice(0, 2000) }
+        : {}),
+    });
+    await updateRun(store, input.iterationId, {
+      phase: status,
+      ...(status === "blocked" || status === "reverted"
+        ? { error: reason.slice(0, 2000) }
+        : {}),
+    });
     return {
       taskId: input.task.id,
       applied: status === "applied",
@@ -548,6 +603,12 @@ export async function applyIterationTask(
       );
     }
 
+    await updateRun(store, input.iterationId, { phase: "applying" });
+    await updateTask(store, input.iterationId, input.task.id, {
+      status: "running",
+      phase: "applying",
+    });
+
     const diff = await readArtifactText(store, input.diffArtifactId);
     if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
       return await publishApply("blocked", "diff is empty or truncated");
@@ -567,7 +628,8 @@ export async function applyIterationTask(
       ticketId,
       commitMessage: `autonomy: ${input.task.id} (${input.task.domain})`,
       format: (root) => formatAppliedFiles(root),
-      postCheck: (root) => runPostApplyChecks(root, input.risk),
+      postCheck: (root) =>
+        runPostApplyChecks(root, input.risk, input.changedFiles),
     });
     headBefore = applied.headBefore;
     baseDrifted = applied.baseDrifted;
@@ -790,6 +852,14 @@ export async function reportIteration(
   );
   await mkdir(path.dirname(reportPath), { recursive: true });
   await writeFile(reportPath, report, "utf8");
+
+  await updateRun(store, input.iterationId, {
+    status,
+    phase: status === "failed" ? "failed" : "done",
+    reportArtifactId,
+    finishedAt: new Date().toISOString(),
+    ...(status === "failed" ? { error: "iteration failed" } : {}),
+  });
 
   return { reportArtifactId, fitnessArtifactId, status };
 }
@@ -1046,6 +1116,12 @@ async function failVerification(
     modelId: "none",
     runMode: "LIVE",
   });
+  await updateTask(store, input.iterationId, input.task.id, {
+    status: "failed",
+    phase: "verification_failed",
+    verificationArtifactId: artifactId,
+    error: `${reason}: ${detail}`.slice(0, 2000),
+  });
   return {
     taskId: input.task.id,
     pass: false,
@@ -1078,16 +1154,38 @@ async function formatAppliedFiles(repoRoot: string): Promise<void> {
 async function runPostApplyChecks(
   repoRoot: string,
   risk: "low" | "medium" | "high",
+  changedFiles: string[] = [],
 ): Promise<{
   ok: boolean;
   feedback: string;
 }> {
   const bun = commandOnPath("bun") ?? "bun";
-  const checks = ["typecheck", "lint", "test"];
+  const failures: string[] = [];
+
+  const lintFiles = changedFiles.filter((file) =>
+    /\.(ts|tsx|js|jsx|json|jsonc|css|md|yaml|yml)$/.test(file),
+  );
+  if (lintFiles.length > 0) {
+    const result = await runProcess(
+      bun,
+      ["x", "biome", "check", ...lintFiles],
+      {
+        cwd: repoRoot,
+        timeoutMs: 5 * 60 * 1000,
+        maxOutputBytes: 100_000,
+      },
+    );
+    if (result.exitCode !== 0 || result.timedOut) {
+      failures.push(
+        `[lint:changed] exit=${result.exitCode} timeout=${result.timedOut}\n${[result.stdout, result.stderr].join("\n").slice(-3000)}`,
+      );
+    }
+  }
+
+  const checks = ["typecheck", "test"];
   if (risk === "medium") {
     checks.push("web:build");
   }
-  const failures: string[] = [];
   for (const check of checks) {
     const result = await runProcess(bun, ["run", check], {
       cwd: repoRoot,

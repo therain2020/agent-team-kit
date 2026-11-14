@@ -18,7 +18,9 @@ bun run kit up status
 `kit up` starts Docker Compose, the event runtime, Temporal worker, Autopilot
 and the event gateway under a supervisor (logs in `.tmp/supervisor/`). Use
 `--web` to also start the Manager Console; `--no-infra` if the stack is already
-running. Manual fallback:
+running. The console is served with `next start` in production mode by
+default; the supervisor builds it when `.next/BUILD_ID` is missing. Set
+`KIT_WEB_MODE=dev` (or pass `--web-mode dev`) to use the dev server. Manual fallback:
 
 ```bash
 docker compose -f deploy/docker-compose.yml up -d
@@ -152,6 +154,7 @@ bun run kit manager brief <runId>
 | `KIT_SIGNALS_ROOT` | `%USERPROFILE%/.agent-team-kit/signals` | iteration fitness JSONL root |
 | `KIT_PROPOSALS_ROOT` | `%USERPROFILE%/.agent-team-kit/proposals` | improvement proposal output |
 | `KIT_SUPERVISOR_WEB` | `0` | Set by `kit up --web` |
+| `KIT_WEB_MODE` | `production` | `production` serves the built console (`next start`); `dev` uses `next dev` |
 
 ## Ports
 
