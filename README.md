@@ -57,7 +57,7 @@ approval and release confirmation. The acceptance gate is public in
 - Node 24 (the Temporal worker runs on Node/tsx)
 - Docker Desktop (for the local stack; `kit demo` runs without it)
 - Windows / macOS / Linux
-- Optional: DSH, Codex or OpenCode CLI for external coder tasks
+- Optional: DSH, Codex, OpenCode or Pi CLI for external coder tasks
 
 Run `bun run kit doctor` to check all of the above.
 
@@ -65,7 +65,7 @@ Run `bun run kit doctor` to check all of the above.
 
 ```bash
 bun install
-bun run kit doctor          # Bun, Node, Docker, ports and model key
+bun run kit doctor          # toolchain, services, model key and coder CLIs
 bun run kit demo            # demo team + static plan (no Docker required)
 bun run kit init packs/my-team --template research
 bun run kit up --web        # infra + runtime + worker + autopilot + gateway + console
@@ -75,7 +75,11 @@ bun run kit down            # stop the supervisor (and compose unless --keep-inf
 ```
 
 For the zero-config path, run `kit bootstrap` (or open `/welcome` after
-`kit up --web`) and paste a model API key.
+`kit up --web`) and paste a model API key. `kit bootstrap` then self-checks
+Docker, service ports, the model, and the external coder CLIs, printing a
+copyable command for every missing item; `--install-coders` installs the
+missing coder CLIs (nothing is installed without it). `/welcome` shows the
+same report.
 
 `kit up` starts a detached supervisor with restart-on-exit, health checks and
 logs under `.tmp/supervisor/`. It starts Postgres, MinIO, NATS, Temporal,
