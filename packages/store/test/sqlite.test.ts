@@ -225,6 +225,7 @@ describe("sqlite embedded store", () => {
       runId: "run_queue_1",
       workspaceId: "default",
       workflowId: "demo",
+      kind: "iteration",
       payload: JSON.stringify({ runId: "run_queue_1" }),
       createdAt: now,
       updatedAt: now,
@@ -237,6 +238,7 @@ describe("sqlite embedded store", () => {
     );
     expect(first?.status).toBe("claimed");
     expect(first?.claimedBy).toBe("worker-a");
+    expect(first?.kind).toBe("iteration");
 
     const second = await store.runRequests.claimNext(
       "worker-b",
@@ -255,6 +257,11 @@ describe("sqlite embedded store", () => {
 
     await store.runRequests.finish("rrq_1", "done");
     expect((await store.runRequests.find("run_queue_1"))?.status).toBe("done");
+
+    await store.runRequests.finish("rrq_1", "cancelled", "aborted by operator");
+    const cancelled = await store.runRequests.find("run_queue_1");
+    expect(cancelled?.status).toBe("cancelled");
+    expect(cancelled?.error).toBe("aborted by operator");
   }, 60_000);
 
   it("keeps data across close and reopen", async () => {

@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS run_requests (
   run_id TEXT NOT NULL UNIQUE,
   workspace_id TEXT NOT NULL,
   workflow_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'pack_run',
   payload TEXT NOT NULL,
   status TEXT NOT NULL,
   claimed_by TEXT,
@@ -101,6 +102,9 @@ CREATE TABLE IF NOT EXISTS run_requests (
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE run_requests
+  ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'pack_run';
 
 ALTER TABLE autopilot_state
   ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
@@ -602,6 +606,7 @@ CREATE TABLE IF NOT EXISTS run_requests (
   run_id TEXT NOT NULL UNIQUE,
   workspace_id TEXT NOT NULL,
   workflow_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'pack_run',
   payload TEXT NOT NULL,
   status TEXT NOT NULL,
   claimed_by TEXT,
@@ -927,6 +932,8 @@ CREATE TABLE IF NOT EXISTS manager_sessions (
 );
 
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE run_requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'pack_run';
 
 ALTER TABLE iteration_runs ADD COLUMN repo_root TEXT;
 

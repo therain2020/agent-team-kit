@@ -15,6 +15,7 @@ export async function submitLocalRun(
     runId: input.runId,
     workspaceId: input.workspaceId,
     workflowId: input.workflowId,
+    kind: "pack_run",
     payload: JSON.stringify(input),
     createdAt: now,
     updatedAt: now,

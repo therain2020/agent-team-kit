@@ -1,4 +1,5 @@
 import path from "node:path";
+import { closeIterationStore, startLocalRunner } from "@kit/engine";
 import {
   JobError,
   type JobKind,
@@ -119,14 +120,22 @@ export function registerJob(program: Command): void {
               ...(result.workflow ? { workflow: result.workflow } : {}),
               engine: result.engine,
               ...(result.requestId ? { requestId: result.requestId } : {}),
-              temporalUi: "http://localhost:8080",
+              ...(result.engine === "temporal"
+                ? { temporalUi: "http://localhost:8080" }
+                : {}),
             },
             null,
             2,
           ),
         );
 
-        if (options.wait === false || result.engine === "local") {
+        if (options.wait === false) {
+          return;
+        }
+        if (result.engine === "local") {
+          if (result.kind === "iteration") {
+            await waitForLocalJob(store, "iteration", result.jobId);
+          }
           return;
         }
         await waitForJob(result.kind, result.jobId, result.workflowId);
@@ -312,7 +321,11 @@ export async function startIterationFromCli(
           runMode: result.runMode,
           applyMode: result.applyMode,
           pack: result.pack,
-          temporalUi: "http://localhost:8080",
+          engine: result.engine,
+          ...(result.requestId ? { requestId: result.requestId } : {}),
+          ...(result.engine === "temporal"
+            ? { temporalUi: "http://localhost:8080" }
+            : {}),
         },
         null,
         2,
@@ -321,11 +334,75 @@ export async function startIterationFromCli(
     if (options.wait === false) {
       return;
     }
+    if (result.engine === "local") {
+      await waitForLocalJob(store, "iteration", result.jobId);
+      return;
+    }
     await waitForJob("iteration", result.jobId, result.workflowId);
   } catch (error) {
     printJobError(error);
   } finally {
     await store.close();
+  }
+}
+
+const TERMINAL_STATUSES = new Set([
+  "succeeded",
+  "partial",
+  "failed",
+  "cancelled",
+  "completed",
+]);
+
+/**
+ * Local mode has no workflow handle to await. Run the queue in this process
+ * (another runner may exist; the claim makes that safe) and poll SQLite.
+ */
+async function waitForLocalJob(
+  store: Awaited<ReturnType<typeof initStore>>,
+  kind: JobKind,
+  jobId: string,
+): Promise<void> {
+  const stop = startLocalRunner({ store, tickMs: 250 });
+  try {
+    for (;;) {
+      const job = await getJob(store, kind, jobId);
+      if (job && TERMINAL_STATUSES.has(job.status)) {
+        console.log(JSON.stringify(job, null, 2));
+        if (job.status === "failed" || job.status === "cancelled") {
+          process.exitCode = 1;
+        }
+        return;
+      }
+      // A request can fail before the run row is finalized (bad payload, queue
+      // error); surface that instead of polling forever.
+      const request = await store.runRequests.find(jobId);
+      if (
+        request &&
+        (request.status === "failed" || request.status === "cancelled")
+      ) {
+        console.log(
+          JSON.stringify(
+            {
+              jobId,
+              kind,
+              status: job?.status ?? "unknown",
+              phase: job?.phase ?? null,
+              requestStatus: request.status,
+              error: request.error,
+            },
+            null,
+            2,
+          ),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  } finally {
+    stop();
+    await closeIterationStore();
   }
 }
 

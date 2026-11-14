@@ -118,6 +118,7 @@ export const runRequests = pgTable("run_requests", {
   runId: text("run_id").notNull().unique(),
   workspaceId: text("workspace_id").notNull(),
   workflowId: text("workflow_id").notNull(),
+  kind: text("kind").notNull().default("pack_run"),
   payload: text("payload").notNull(),
   status: text("status").notNull(),
   claimedBy: text("claimed_by"),
