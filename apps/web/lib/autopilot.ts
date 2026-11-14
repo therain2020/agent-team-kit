@@ -210,6 +210,7 @@ function normalizeState(row: {
   runs_today: number;
   spent_today: string | number;
   last_error: string | null;
+  version?: number;
 }): AutopilotState {
   return {
     workspaceId: "default",
@@ -222,6 +223,7 @@ function normalizeState(row: {
     spentToday: Number(row.spent_today ?? 0),
     lastError: row.last_error,
     updatedAt: new Date().toISOString(),
+    version: Number(row.version ?? 0),
   };
 }
 

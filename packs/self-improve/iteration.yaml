@@ -27,6 +27,19 @@ domains:
       clarity problem in the Manager Console task flow, make the smallest
       improvement, and keep the existing visual language.
 
+  perf:
+    workflow: ux-improvement
+    coder: dsh
+    agent: frontend-builder
+    riskCeiling: medium
+    verification: [typecheck, lint, test, bench]
+    instructions: |
+      You are the builder for a performance task in the Manager Console.
+      Work from measured evidence, not guesses. Prefer production runtime,
+      route-level loading boundaries and request-scoped data deduplication
+      over micro-optimizations. Keep the change small, preserve the existing
+      visual language, and do not weaken tests or security checks.
+
   docs:
     workflow: ux-improvement
     coder: dsh

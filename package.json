@@ -15,7 +15,10 @@
     "autopilot": "tsx apps/runtime/src/autopilot.ts",
     "smoke:recovery": "tsx apps/runtime/src/temporal/recovery-smoke.ts",
     "web:dev": "bun run --cwd apps/web dev",
-    "web:build": "bun run --cwd apps/web build"
+    "web:build": "bun run --cwd apps/web build",
+    "web:start": "bun run --cwd apps/web start",
+    "web:prod": "bun run web:build && bun run web:start",
+    "bench:web": "bun run scripts/bench-web.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

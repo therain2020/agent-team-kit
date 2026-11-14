@@ -1116,6 +1116,8 @@ function scriptFor(check: string): string | null {
       return "lint";
     case "build":
       return "web:build";
+    case "bench":
+      return "bench:web";
     default:
       return null;
   }

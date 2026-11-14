@@ -193,5 +193,5 @@ export function scrubbedEnv(extra: string[] = []): NodeJS.ProcessEnv {
   const keep = new Set([...BASE_ENV_KEYS, ...extra]);
   return Object.fromEntries(
     Object.entries(process.env).filter(([key]) => keep.has(key)),
-  );
+  ) as NodeJS.ProcessEnv;
 }

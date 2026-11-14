@@ -7,6 +7,7 @@ export const verificationCheckSchema = z.enum([
   "test",
   "lint",
   "build",
+  "bench",
   "security",
 ]);
 
