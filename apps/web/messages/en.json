@@ -257,7 +257,8 @@
     "allRuns": "all runs",
     "backendDownTitle": "Backend offline",
     "backendDownDescription": "The console cannot reach Postgres. Start it with bun run kit up, then reload. Packs and Studio still work.",
-    "openPacks": "Open Packs"
+    "openPacks": "Open Packs",
+    "expiresIn": "expires in {time}"
   },
   "runs": {
     "title": "Runs",
