@@ -1,4 +1,4 @@
-import type { EventEnvelope } from "@kit/core";
+﻿import type { EventEnvelope } from "@kit/core";
 import { NatsEventQueue } from "@kit/queue";
 import { initStore } from "@kit/store";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -58,7 +58,7 @@ describe.skipIf(!enabled)("ingest integration", () => {
   afterAll(async () => {
     await stop?.();
     await queue.destroy();
-    await store.sql.end();
+    await store.close();
   });
 
   it("ingests once and reports the duplicate", async () => {

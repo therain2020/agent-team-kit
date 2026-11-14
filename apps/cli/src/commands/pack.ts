@@ -1,4 +1,6 @@
+﻿import path from "node:path";
 import { eventEnvelopeSchema, newId } from "@kit/core";
+import { runPackWorkflowLocal } from "@kit/engine";
 import { buildPackRun, loadPack, simulatePack } from "@kit/pack";
 import { initStore } from "@kit/store";
 import { createTemporalClient, taskQueue } from "@kit/workflow";
@@ -15,9 +17,16 @@ export function registerPack(program: Command): void {
       const result = await loadPack(dir);
 
       if (!result.ok) {
-        console.error("✖ validate failed");
+        console.error(`✖ validate failed: ${path.resolve(dir)}`);
         for (const error of result.errors) {
           console.error(`  - ${error}`);
+        }
+        if (
+          result.errors.some((error) => error.includes("team.yaml not found"))
+        ) {
+          console.error(
+            "  use the directory that contains team.yaml (try `kit init <dir>` first)",
+          );
         }
         process.exitCode = 1;
         return;
@@ -42,9 +51,16 @@ export function registerPack(program: Command): void {
       const result = await loadPack(dir);
 
       if (!result.ok) {
-        console.error("✖ simulate failed");
+        console.error(`✖ simulate failed: ${path.resolve(dir)}`);
         for (const error of result.errors) {
           console.error(`  - ${error}`);
+        }
+        if (
+          result.errors.some((error) => error.includes("team.yaml not found"))
+        ) {
+          console.error(
+            "  use the directory that contains team.yaml (try `kit init <dir>` first)",
+          );
         }
         process.exitCode = 1;
         return;
@@ -100,7 +116,6 @@ export function registerPack(program: Command): void {
         }
 
         const store = await initStore();
-        const { client, connection } = await createTemporalClient();
 
         try {
           const now = new Date().toISOString();
@@ -117,29 +132,52 @@ export function registerPack(program: Command): void {
           });
           await store.events.insert(event);
 
-          const handle = await client.workflow.start("packWorkflow", {
-            taskQueue,
-            workflowId: `pack-${built.input.runId}`,
-            args: [built.input],
-          });
-          const result = await handle.result();
+          if (store.driver === "sqlite") {
+            const result = await runPackWorkflowLocal(built.input, { store });
+            console.log(
+              JSON.stringify(
+                {
+                  pack: loaded.pack.metadata.name,
+                  workflow: built.workflow.id,
+                  runId: built.input.runId,
+                  engine: "local",
+                  result,
+                },
+                null,
+                2,
+              ),
+            );
+            return;
+          }
 
-          console.log(
-            JSON.stringify(
-              {
-                pack: loaded.pack.metadata.name,
-                workflow: built.workflow.id,
-                runId: built.input.runId,
-                workflowId: handle.workflowId,
-                result,
-              },
-              null,
-              2,
-            ),
-          );
+          const { client, connection } = await createTemporalClient();
+          try {
+            const handle = await client.workflow.start("packWorkflow", {
+              taskQueue,
+              workflowId: `pack-${built.input.runId}`,
+              args: [built.input],
+            });
+            const result = await handle.result();
+
+            console.log(
+              JSON.stringify(
+                {
+                  pack: loaded.pack.metadata.name,
+                  workflow: built.workflow.id,
+                  runId: built.input.runId,
+                  engine: "temporal",
+                  workflowId: handle.workflowId,
+                  result,
+                },
+                null,
+                2,
+              ),
+            );
+          } finally {
+            await connection.close();
+          }
         } finally {
-          await connection.close();
-          await store.sql.end();
+          await store.close();
         }
       },
     );

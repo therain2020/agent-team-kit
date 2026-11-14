@@ -8,7 +8,7 @@ import {
   eventEnvelopeSchema,
   newId,
 } from "@kit/core";
-import { PostgresEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
+import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
 import {
   findApprovalRequest,
   findDecisionForRequest,
@@ -20,7 +20,7 @@ import {
   loadPack,
   simulatePack,
 } from "@kit/pack";
-import { initStore, loadStoreConfig, withAdvisoryLock } from "@kit/store";
+import { initStore, loadStoreConfig, withStoreLock } from "@kit/store";
 import { createTemporalClient, taskQueue } from "@kit/workflow";
 import { nextCronOccurrence } from "./cron";
 import { type AutopilotState, ensureState, saveState } from "./state";
@@ -83,14 +83,14 @@ export async function runAutopilotTick(
   let temporal: Awaited<ReturnType<typeof createTemporalClient>> | undefined;
 
   try {
-    const acquired = await withAdvisoryLock(
-      store.sql,
+    const acquired = await withStoreLock(
+      store,
       `kit:autopilot:${WORKSPACE_ID}`,
       async () => {
         for (const pack of packs) {
           try {
             const state = await ensureState(
-              store.sql,
+              store.autopilotState,
               WORKSPACE_ID,
               pack.dirName,
               pack.config.enabled,
@@ -98,7 +98,7 @@ export async function runAutopilotTick(
             );
             if (!state.enabled) {
               state.lastTickAt = now.toISOString();
-              if (!(await saveState(store.sql, state))) {
+              if (!(await saveState(store.autopilotState, state))) {
                 result.errors.push(
                   `${pack.dirName}: state version conflict (disabled tick)`,
                 );
@@ -155,7 +155,7 @@ export async function runAutopilotTick(
             });
 
             state.lastTickAt = now.toISOString();
-            if (!(await saveState(store.sql, state))) {
+            if (!(await saveState(store.autopilotState, state))) {
               result.errors.push(
                 `${pack.dirName}: state version conflict (tick)`,
               );
@@ -176,7 +176,7 @@ export async function runAutopilotTick(
     if (temporal) {
       await temporal.connection.close();
     }
-    await store.sql.end();
+    await store.close();
   }
 
   return result;
@@ -651,7 +651,7 @@ async function processEvolution(input: {
     const archivePath = path.join(variantsRoot, "archive.jsonl");
     const cyclesPath = path.join(variantsRoot, "cycles.jsonl");
     const statePath = path.join(variantsRoot, "state.json");
-    const repo = new PostgresEvolutionRepository(input.store, {
+    const repo = new StoreEvolutionRepository(input.store, {
       variantsRoot,
       archivePath,
       cyclesPath,

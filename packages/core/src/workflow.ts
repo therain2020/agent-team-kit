@@ -45,10 +45,29 @@ export const workflowStageSchema = z
     gate: z.string().min(1).optional(),
     includeInitialInput: z.boolean().optional(),
     inputFrom: z.string().min(1).optional(),
+    inputsFrom: z.array(z.string().min(1)).min(1).optional(),
+    position: z.object({ x: z.number(), y: z.number() }).optional(),
     revisionAgent: z.string().min(1).optional(),
     approval: stageApprovalSchema.optional(),
   })
   .superRefine((stage, ctx) => {
+    if (stage.inputFrom && stage.inputsFrom) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "use inputFrom or inputsFrom, not both",
+        path: ["inputsFrom"],
+      });
+    }
+    if (
+      stage.inputsFrom &&
+      new Set(stage.inputsFrom).size !== stage.inputsFrom.length
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "inputsFrom must be unique",
+        path: ["inputsFrom"],
+      });
+    }
     if (stage.type === "agent" && !stage.agent) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -66,7 +85,7 @@ export const workflowStageSchema = z
   });
 
 export const deliverySchema = z.object({
-  channel: z.enum(["im", "email", "local_file"]),
+  channel: z.enum(["im", "email", "local_file", "webhook"]),
   approval: z.enum(["never", "required_if_published"]).optional(),
 });
 

@@ -34,7 +34,7 @@ describe.skipIf(!enabled)("store integration", () => {
   });
 
   afterAll(async () => {
-    await store?.sql.end();
+    await store?.close();
   });
 
   it("keeps two artifact identities over one blob", async () => {

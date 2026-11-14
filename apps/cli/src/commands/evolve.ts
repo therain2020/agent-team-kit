@@ -1,6 +1,6 @@
 import path from "node:path";
 import {
-  PostgresEvolutionRepository,
+  StoreEvolutionRepository,
   canaryStatus,
   compareVariants,
   evaluateCanary,
@@ -304,16 +304,16 @@ export function registerEvolve(program: Command): void {
 }
 
 async function withEvolutionRepo<T>(
-  fn: (repo: PostgresEvolutionRepository) => Promise<T>,
+  fn: (repo: StoreEvolutionRepository) => Promise<T>,
 ): Promise<T> {
   const store = await initStore(loadStoreConfig());
   try {
-    const repo = new PostgresEvolutionRepository(store, {
+    const repo = new StoreEvolutionRepository(store, {
       variantsRoot: path.resolve("variants"),
     });
     return await fn(repo);
   } finally {
-    await store.sql.end();
+    await store.close();
   }
 }
 

@@ -1,4 +1,4 @@
-import {
+﻿import {
   findApprovalRequest,
   findDecisionForRequest,
   recordDecision,
@@ -67,7 +67,7 @@ export function registerApprove(program: Command): void {
           process.exitCode = 1;
           return;
         } finally {
-          await store.sql.end();
+          await store.close();
         }
 
         const { client, connection } = await createTemporalClient();

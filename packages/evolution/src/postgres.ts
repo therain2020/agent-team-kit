@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { newId } from "@kit/core";
-import { type initStore, withAdvisoryLock } from "@kit/store";
+import { type initStore, withStoreLock } from "@kit/store";
 import type { CanaryState } from "./canary";
 import type { EvolutionCycleRecord } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
@@ -22,7 +22,7 @@ import type {
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
-export interface PostgresEvolutionOptions {
+export interface StoreEvolutionOptions {
   workspaceId?: string;
   variantsRoot?: string;
   archivePath?: string;
@@ -90,8 +90,8 @@ interface StateRow {
   version: number;
 }
 
-export class PostgresEvolutionRepository implements EvolutionRepository {
-  readonly kind = "postgres" as const;
+export class StoreEvolutionRepository implements EvolutionRepository {
+  readonly kind: "postgres" | "sqlite";
   private readonly workspaceId: string;
   private readonly variantsRoot: string;
   private readonly archivePath: string;
@@ -101,8 +101,9 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
 
   constructor(
     private readonly store: Store,
-    options: PostgresEvolutionOptions = {},
+    options: StoreEvolutionOptions = {},
   ) {
+    this.kind = store.driver;
     this.workspaceId = options.workspaceId ?? "default";
     this.variantsRoot = path.resolve(options.variantsRoot ?? "variants");
     this.archivePath = path.resolve(
@@ -223,13 +224,18 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
   async latestScores(): Promise<EvolutionRecord[]> {
     await this.ensureReady();
     const rows = await this.store.sql<ScoreRow[]>`
-      SELECT DISTINCT ON (s.variant_id)
-        s.*, v.name AS variant_name, v.agent_id AS variant_agent,
-        v.parent_id AS variant_parent
+      SELECT s.*, v.name AS variant_name, v.agent_id AS variant_agent,
+             v.parent_id AS variant_parent
       FROM evolution_scores s
       LEFT JOIN evolution_variants v ON v.variant_id = s.variant_id
       WHERE v.workspace_id = ${this.workspaceId}
-      ORDER BY s.variant_id ASC, s.created_at DESC, s.score_id DESC
+        AND s.score_id = (
+          SELECT s2.score_id FROM evolution_scores s2
+          WHERE s2.variant_id = s.variant_id
+          ORDER BY s2.created_at DESC, s2.score_id DESC
+          LIMIT 1
+        )
+      ORDER BY s.created_at ASC
     `;
     return rows
       .map(mapScore)
@@ -352,7 +358,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
-    return await withAdvisoryLock(this.store.sql, key, fn);
+    return await withStoreLock(this.store, key, fn);
   }
 
   private async persistVariant(
@@ -388,7 +394,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
         ) VALUES (
           ${meta.id}, ${this.workspaceId}, ${meta.name}, ${meta.parent},
           ${meta.agentId}, ${packDir}, ${dirPath},
-          ${JSON.stringify(meta)}::jsonb, 'active', ${meta.createdAt}
+          ${tx.json(meta)}, 'active', ${meta.createdAt}
         )
         ON CONFLICT (variant_id) DO UPDATE SET
           name = EXCLUDED.name,
@@ -456,7 +462,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
         dir_path, meta, status, created_at
       ) VALUES (
         ${record.variantId}, ${this.workspaceId}, ${record.name},
-        ${record.parent}, ${record.agentId}, '', '', ${JSON.stringify(meta)}::jsonb,
+        ${record.parent}, ${record.agentId}, '', '', ${this.store.sql.json(meta)},
         'active', ${record.createdAt}
       )
       ON CONFLICT (variant_id) DO NOTHING
@@ -467,7 +473,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
         draft_chars, stub, created_at
       ) VALUES (
         ${newId("scr")}, ${record.variantId}, ${record.pass},
-        ${JSON.stringify(record.scores)}::jsonb, ${record.rationale},
+        ${this.store.sql.json(record.scores)}, ${record.rationale},
         ${record.costCny}, ${record.tokens}, ${record.draftChars},
         ${record.stub}, ${record.createdAt}
       )
@@ -491,7 +497,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
         cost_cny, decision, rationale, auto_applied, error, created_at
       ) VALUES (
         ${record.cycleId}, ${this.workspaceId}, ${record.packDir}, ${record.agentId},
-        ${record.hypothesis}, ${JSON.stringify(record.signals)}::jsonb,
+        ${record.hypothesis}, ${this.store.sql.json(record.signals)},
         ${baselineId}, ${candidateId}, ${record.baselineName},
         ${record.candidateName}, ${record.baselinePass}, ${record.candidatePass},
         ${record.baselineScore}, ${record.candidateScore}, ${record.costCny},
@@ -523,7 +529,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
   }
 
   private async importLegacy(): Promise<void> {
-    const marker = await this.store.sql`
+    const marker = await this.store.sql<Array<unknown>>`
       SELECT 1 FROM evolution_meta
       WHERE workspace_id = ${this.workspaceId} AND key = 'imported_at'
       LIMIT 1
@@ -531,11 +537,11 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
     if (marker.length > 0) {
       return;
     }
-    const imported = await withAdvisoryLock(
-      this.store.sql,
+    const imported = await withStoreLock(
+      this.store,
       `kit:evolution:import:${this.workspaceId}`,
       async () => {
-        const again = await this.store.sql`
+        const again = await this.store.sql<Array<unknown>>`
           SELECT 1 FROM evolution_meta
           WHERE workspace_id = ${this.workspaceId} AND key = 'imported_at'
           LIMIT 1
@@ -567,7 +573,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
         }
 
         const scoreCount = await this.store.sql<Array<{ count: string }>>`
-          SELECT count(*)::text AS count
+          SELECT count(*) AS count
           FROM evolution_scores s
           JOIN evolution_variants v ON v.variant_id = s.variant_id
           WHERE v.workspace_id = ${this.workspaceId}
@@ -583,7 +589,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
         }
 
         const cycleCount = await this.store.sql<Array<{ count: string }>>`
-          SELECT count(*)::text AS count FROM evolution_cycles
+          SELECT count(*) AS count FROM evolution_cycles
           WHERE workspace_id = ${this.workspaceId}
         `;
         if (Number(cycleCount[0]?.count ?? 0) === 0) {
@@ -599,7 +605,7 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
         }
 
         const stateCount = await this.store.sql<Array<{ count: string }>>`
-          SELECT count(*)::text AS count FROM evolution_state
+          SELECT count(*) AS count FROM evolution_state
           WHERE workspace_id = ${this.workspaceId}
         `;
         if (
@@ -621,12 +627,12 @@ export class PostgresEvolutionRepository implements EvolutionRepository {
           INSERT INTO evolution_meta (workspace_id, key, value, updated_at)
           VALUES (
             ${this.workspaceId}, 'imported_at',
-            ${JSON.stringify({
+            ${this.store.sql.json({
               variantsRoot: this.variantsRoot,
               archivePath: this.archivePath,
               cyclesPath: this.cyclesPath,
               statePath: this.statePath,
-            })}::jsonb,
+            })},
             ${new Date().toISOString()}
           )
           ON CONFLICT (workspace_id, key) DO NOTHING
@@ -663,9 +669,9 @@ function mapScore(row: ScoreRow): EvolutionRecord {
     name: row.variant_name ?? "",
     parent: row.variant_parent ?? null,
     agentId: row.variant_agent ?? "",
-    stub: row.stub,
+    stub: Boolean(row.stub),
     createdAt: toIso(row.created_at) ?? new Date().toISOString(),
-    pass: row.pass,
+    pass: Boolean(row.pass),
     scores:
       typeof row.scores === "string"
         ? (JSON.parse(row.scores) as Record<string, number>)
@@ -689,14 +695,20 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
         : row.signals,
     baselineName: row.baseline_name,
     candidateName: row.candidate_name,
-    baselinePass: row.baseline_pass,
-    candidatePass: row.candidate_pass,
+    baselinePass:
+      row.baseline_pass === null || row.baseline_pass === undefined
+        ? null
+        : Boolean(row.baseline_pass),
+    candidatePass:
+      row.candidate_pass === null || row.candidate_pass === undefined
+        ? null
+        : Boolean(row.candidate_pass),
     baselineScore: row.baseline_score,
     candidateScore: row.candidate_score,
     costCny: Number(row.cost_cny),
     decision: row.decision as EvolutionCycleRecord["decision"],
     rationale: row.rationale,
-    autoApplied: row.auto_applied,
+    autoApplied: Boolean(row.auto_applied),
     createdAt: toIso(row.created_at) ?? new Date().toISOString(),
     ...(row.error ? { error: row.error } : {}),
   };

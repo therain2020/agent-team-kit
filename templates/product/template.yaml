@@ -1,0 +1,111 @@
+apiVersion: agentteam/v1
+kind: TeamTemplate
+id: product
+name: Product Team
+description: Seller clarifies, Builder implements, Verifier checks, Seller delivers.
+roles:
+  requireSeller: true
+  requireBuilder: true
+  allowCombined: false
+
+agents:
+  - id: seller
+    description: Owns requirements, acceptance and delivery
+    model: deepseek-pro
+    role: seller
+    tools: []
+    skills: []
+    instructions: |
+      You are the Seller. Turn the task into a precise problem statement,
+      definition of done, acceptance criteria, and delivery package. Never
+      claim implementation that is not verified.
+  - id: builder
+    description: Builds and optimizes the project
+    model: deepseek-pro
+    role: builder
+    tools: []
+    skills: []
+    instructions: |
+      You are the Builder. Turn the approved requirements into an
+      implementation plan and concrete changes. Keep the scope tight, explain
+      trade-offs, and return verifiable results.
+  - id: verifier
+    description: Independently verifies the build
+    model: deepseek-pro
+    role: specialist
+    tools: []
+    skills: []
+    instructions: |
+      You are the Verifier. Independently check the build against acceptance
+      criteria. Look for regressions, edge cases, and unsupported claims;
+      return a pass/fail verdict with evidence.
+
+workflow:
+  id: product-cycle
+  version: 1.0
+  trigger:
+    event: task.received
+  stages:
+    - id: clarify
+      type: agent
+      agent: seller
+      inputs: [task]
+      outputs: [requirements]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+    - id: build
+      type: agent
+      agent: builder
+      inputs: [requirements]
+      outputs: [build_result]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+    - id: verify
+      type: agent
+      agent: verifier
+      inputs: [build_result]
+      outputs: [verification]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+    - id: package
+      type: agent
+      agent: seller
+      inputs: [verification]
+      outputs: [delivery_package]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+      approval:
+        mode: required
+        position: after
+        riskClass: medium
+        ttl: 72h
+  delivery:
+    channel: local_file
+
+policy:
+  version: 1
+  actions:
+    - {match: "tool.web_search", class: "A"}
+    - {match: "tool.fetch", class: "A"}
+    - {match: "tool.deliver_external", class: "C", approval: {ttl: "2h", scope: "per_item"}}
+    - {match: "tool.delete", class: "D"}
+
+autopilot:
+  version: 1
+  enabled: false
+  timezone: Asia/Shanghai
+  schedules: []
+  iterations: []
+  approval:
+    autoApprove:
+      enabled: false
+      maxRisk: low
+      onTimeout: wait
+  evolution:
+    enabled: false
+    cadence: weekly
+    autoApply: false

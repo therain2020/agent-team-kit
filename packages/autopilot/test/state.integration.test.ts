@@ -23,23 +23,28 @@ describe.skipIf(!enabled)("autopilot state CAS", () => {
   afterAll(async () => {
     if (store) {
       await store.sql`DELETE FROM autopilot_state WHERE pack_dir = ${packDir}`;
-      await store.sql.end();
+      await store.close();
     }
   });
 
   it("rejects a stale version and accepts the current one", async () => {
-    const state = await ensureState(store.sql, "default", packDir, true);
+    const state = await ensureState(
+      store.autopilotState,
+      "default",
+      packDir,
+      true,
+    );
     const stale = { ...state };
     state.lastTickAt = new Date().toISOString();
-    expect(await saveState(store.sql, state)).toBe(true);
-    expect(await saveState(store.sql, stale)).toBe(false);
+    expect(await saveState(store.autopilotState, state)).toBe(true);
+    expect(await saveState(store.autopilotState, stale)).toBe(false);
 
-    const fresh = await getState(store.sql, "default", packDir);
+    const fresh = await getState(store.autopilotState, "default", packDir);
     expect(fresh).not.toBeNull();
     if (!fresh) {
       return;
     }
     fresh.lastError = "updated";
-    expect(await saveState(store.sql, fresh)).toBe(true);
+    expect(await saveState(store.autopilotState, fresh)).toBe(true);
   });
 });

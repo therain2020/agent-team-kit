@@ -1,6 +1,26 @@
 # Agent Team Kit
 
-A distributable, self-hosted kit for building private agent teams.
+**Own a private team of AI agents — with approvals, audit and rollback.**
+
+[![ci](https://github.com/therain2020/agent-team-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/therain2020/agent-team-kit/actions/workflows/ci.yml)
+![license](https://img.shields.io/badge/license-Apache--2.0-blue)
+![status](https://img.shields.io/badge/status-0.9.0_preview-orange)
+![runtime](https://img.shields.io/badge/runtime-Bun%201.4%2B-black)
+
+Self-hosted, file-based agent teams you can run, inspect, approve and improve.
+Not another agent library: a runtime plus a governance layer for teams that do
+real work.
+
+- **Teams are files** — a Team Pack is YAML and Markdown; diff it, review it, roll it back.
+- **Glass box by default** — every artifact carries provenance, gates and cost.
+- **Your data stays yours** — local-first, no telemetry, explicit approval for external effects.
+
+**Start here**
+- Live sample run: https://therain2020.github.io/agent-team-kit/
+- First hour: `bun run kit demo` (no Docker) · zero-config: `kit bootstrap` → `/welcome`
+- Create a team: `kit init my-team --template research` · [docs/pack-authoring.md](./docs/pack-authoring.md)
+- Docs: [docs/install.md](./docs/install.md) · Community: [CONTRIBUTING.md](./CONTRIBUTING.md) · [SUPPORT.md](./SUPPORT.md) · [ROADMAP.md](./ROADMAP.md)
+- 中文说明: [README.zh-CN.md](./README.zh-CN.md)
 
 The kit provides:
 - **Runtime Core** — events, orchestration, durable execution, artifact store, model/tool gateway.
@@ -28,25 +48,34 @@ and applies low-risk changes.
 **1.0 is not claimed yet.** 1.0 means the system runs without the operator and
 optimizes itself: a goal and budget go in, tasks are planned and executed,
 low-risk changes land automatically, and the operator only handles high-risk
-approval and release confirmation. The acceptance gate and current gaps are
-documented in `D:\GitHub\plans\agent-pipeline\85-autonomy-1.0.md`.
+approval and release confirmation. The acceptance gate is public in
+[ROADMAP.md](./ROADMAP.md).
 
 ## Requirements
 
 - Bun 1.4+
-- Docker Desktop (for the local stack)
+- Node 24 (the Temporal worker runs on Node/tsx)
+- Docker Desktop (for the local stack; `kit demo` runs without it)
 - Windows / macOS / Linux
 - Optional: DSH, Codex or OpenCode CLI for external coder tasks
+
+Run `bun run kit doctor` to check all of the above.
 
 ## Quick start
 
 ```bash
 bun install
-bun run kit up              # infra + runtime + worker + autopilot + gateway
+bun run kit doctor          # Bun, Node, Docker, ports and model key
+bun run kit demo            # demo team + static plan (no Docker required)
+bun run kit init packs/my-team --template research
+bun run kit up --web        # infra + runtime + worker + autopilot + gateway + console
 bun run kit up status       # supervisor, children and gateway health
-bun run web:dev             # optional Manager Console → http://localhost:3000
+bun run web:dev             # console only → http://localhost:3000
 bun run kit down            # stop the supervisor (and compose unless --keep-infra)
 ```
+
+For the zero-config path, run `kit bootstrap` (or open `/welcome` after
+`kit up --web`) and paste a model API key.
 
 `kit up` starts a detached supervisor with restart-on-exit, health checks and
 logs under `.tmp/supervisor/`. It starts Postgres, MinIO, NATS, Temporal,
@@ -142,6 +171,31 @@ feedback → risk classifier → low-risk apply with commit + backup → report.
   can be configured with `KIT_CODER_CODEX_CMD` / `KIT_CODER_OPENCODE_CMD`.
 - Evidence is stored as artifacts (`plan`, `coder.result`, `coder.transcript`,
   `coder.diff`, `verification`, `risk`, `apply`, `report`).
+
+### Open templates and workshop
+
+Built-in teams are data, not code: `templates/<id>/template.yaml` is validated
+and listed by the CLI and the new-pack wizard.
+
+```bash
+bun run kit init .tmp/my-team --template research
+bun run kit init .tmp/list --list
+```
+
+Pack Studio can list, create, rename and delete workflows; every write is
+validated and `team.yaml` is updated atomically.
+
+The GitHub workshop is topic-indexed (`agent-team-workshop`) and uses a
+`workshop.yaml` manifest. Installs pin a commit, reject unsafe paths, enforce
+size limits, and require explicit consent for code-bearing items.
+
+```bash
+bun run kit workshop search --query "code review"
+bun run kit workshop preview acme/team-pack
+bun run kit workshop install acme/team-pack --target packs --yes
+```
+
+Items with `permissions.code: true` additionally require `--allow-code`.
 
 ### Fitness signals and proposals
 
@@ -424,6 +478,38 @@ auto-approves matching paused runs, and records heartbeat state. The console at
 and a kill switch. `KIT_AUTOPILOT_DISABLED=1` stops all ticks. See
 [docs/open-platform.md](./docs/open-platform.md).
 
+### Delivery and publishing
+
+A workflow can deliver its final artifact after the run when it declares a
+`delivery` block:
+
+```yaml
+delivery:
+  channel: email        # email | webhook | im | local_file
+  approval: required_if_published
+```
+
+- **Email** uses `KIT_SMTP_*` plus `KIT_DELIVERY_EMAIL_TO`. QQ Mail requires the
+  SMTP authorization code, not the account password.
+- **Webhook** posts the artifact to `KIT_DELIVERY_WEBHOOK_URL` with an optional
+  HMAC signature; `im` is the same mechanism for chat robots.
+- **local_file** writes to `~/.agent-team-kit/outbox`.
+- `DRY_RUN` never sends. Every attempt is recorded as a `delivery` artifact.
+
+Publish runs to a static archive and push it to GitHub Pages:
+
+```bash
+bun run kit publish <runId> --push --yes
+```
+
+The archive gets a root index, a run page with metrics and a stage timeline, and
+one Markdown artifact page per artifact with provenance and a raw-content
+toggle. Tool calls, gates, approvals and delivery records are excluded; artifacts
+that match high-confidence secret patterns block the publish. Output lives in
+`~/.agent-team-kit/publish`; repeat publishes merge into the same archive.
+
+See [docs/delivery.md](./docs/delivery.md) for SMTP, Pages and safer alternatives.
+
 ### Task-centric team and tools
 
 Agents carry `role: builder | seller | manager | specialist`; a Pack decides
@@ -463,6 +549,7 @@ bun run web:dev   # http://localhost:3000
 | `/office` | Task-first Manager Office: Demand/Build/Deliver/Blocked/Done board, Seller/Builder/Specialist assignment, manager chat, pixel roster |
 | `/` | Command Center: exceptions, in-flight runs, spend, recent artifacts |
 | `/manager` | Streaming Manager chat with artifact citations and exchange artifacts |
+| `/factory` | Pixel approval conveyor: one-key low-risk, batch low, high-risk confirmation, keyboard; `/inbox` remains the list fallback |
 | `/inbox` | Paused approvals; evidence, draft, diff, approve/abort |
 | `/runs/[runId]` | Stage timeline, gate evidence, artifact viewer, provenance |
 | `/packs` | Inspect/validate/simulate packs; start DRY_RUN workflows; create teams |
@@ -520,6 +607,8 @@ packages/store  Postgres repositories + fs/S3 blob adapters
 packages/queue  NATS JetStream adapter
 packages/workflow Temporal adapter
 packages/coder  external coding-agent adapters + sandbox/diff evidence
+packages/delivery email, webhook and local-outbox delivery
+packages/workshop GitHub workshop manifest/search/preview/install
 packages/model  model gateway (DeepSeek)
 packages/manager Manager briefs, decisions, approval lookup
 packages/pack   Pack loading/validation, run builder, simulation, Studio CRUD
@@ -528,6 +617,7 @@ packages/autopilot Cron parser, daemon, budgets, auto-approvals, state
 packages/evolution Variant lab, canary, self-evolution cycle
 packages/tools  Tool registry: repo, security scans, checks, sandbox patches, web
 packages/telemetry OpenTelemetry
+templates/      data-driven built-in team templates
 packs/minimal   minimal example Team Pack
 packs/tech-radar reference mold + sample autopilot policy
 packs/self-improve task-centric Cyber/UX squad + iteration.yaml routing
@@ -542,6 +632,16 @@ bun run typecheck
 bun run test
 bun run lint
 ```
+
+## Community
+
+- **Contribute:** [CONTRIBUTING.md](./CONTRIBUTING.md) — teams, docs, translations and code.
+- **Questions:** [SUPPORT.md](./SUPPORT.md) and GitHub Discussions.
+- **Security:** [SECURITY.md](./SECURITY.md) — private reports only.
+- **Roadmap:** [ROADMAP.md](./ROADMAP.md).
+- **Share a team:** publish a pack in your own repository and open a "Team pack submission"
+  issue, or tag it with the `agent-team-workshop` topic so `kit workshop search` finds it.
+- **中文说明:** [README.zh-CN.md](./README.zh-CN.md).
 
 ## License
 

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import {
   Activity,
   Boxes,
+  Factory,
   FlaskConical,
   Gamepad2,
   GitBranch,
@@ -23,6 +24,7 @@ const NAV = [
   { href: "/office", labelKey: "office", icon: Gamepad2 },
   { href: "/", labelKey: "commandCenter", icon: LayoutDashboard, exact: true },
   { href: "/manager", labelKey: "manager", icon: MessageSquare },
+  { href: "/factory", labelKey: "factory", icon: Factory, badge: true },
   { href: "/inbox", labelKey: "inbox", icon: Inbox, badge: true },
   { href: "/runs", labelKey: "runs", icon: Play },
   { href: "/iterations", labelKey: "iterations", icon: GitBranch },

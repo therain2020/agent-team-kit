@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { type AutopilotState, nextCronOccurrence } from "@kit/autopilot";
+import { nextCronOccurrence } from "@kit/autopilot";
 import type { AutopilotConfig } from "@kit/core";
 import { loadPack } from "@kit/pack";
 import { getPacksRoot } from "./paths";
@@ -60,23 +60,8 @@ export interface AutopilotOverview {
 export async function loadAutopilotOverview(): Promise<AutopilotOverview> {
   await ensureStoreSchema();
   const store = getStore();
-  const states = await store.sql<
-    Array<{
-      workspace_id: string;
-      pack_dir: string;
-      enabled: boolean;
-      last_tick_at: Date | string | null;
-      next_runs: Record<string, string> | null;
-      day: string | Date | null;
-      runs_today: number;
-      spent_today: string | number;
-      last_error: string | null;
-      updated_at: string | Date;
-    }>
-  >`SELECT * FROM autopilot_state WHERE workspace_id = 'default'`;
-  const stateByPack = new Map(
-    states.map((row) => [row.pack_dir, normalizeState(row)]),
-  );
+  const states = await store.autopilotState.list("default");
+  const stateByPack = new Map(states.map((state) => [state.packDir, state]));
 
   const root = getPacksRoot();
   const packs: AutopilotPackView[] = [];
@@ -153,7 +138,7 @@ export async function loadAutopilotOverview(): Promise<AutopilotOverview> {
   packs.sort((a, b) => a.name.localeCompare(b.name));
   const heartbeat =
     states
-      .map((row) => toIso(row.last_tick_at))
+      .map((state) => state.lastTickAt)
       .filter((value): value is string => Boolean(value))
       .sort()
       .at(-1) ?? null;
@@ -200,36 +185,4 @@ async function loadAutoDecisions(): Promise<AutoDecisionView[]> {
     }
   }
   return decisions.slice(0, 10);
-}
-
-function normalizeState(row: {
-  pack_dir: string;
-  enabled: boolean;
-  last_tick_at: Date | string | null;
-  next_runs: Record<string, string> | null;
-  runs_today: number;
-  spent_today: string | number;
-  last_error: string | null;
-  version?: number;
-}): AutopilotState {
-  return {
-    workspaceId: "default",
-    packDir: row.pack_dir,
-    enabled: Boolean(row.enabled),
-    lastTickAt: toIso(row.last_tick_at),
-    nextRuns: row.next_runs ?? {},
-    day: null,
-    runsToday: Number(row.runs_today ?? 0),
-    spentToday: Number(row.spent_today ?? 0),
-    lastError: row.last_error,
-    updatedAt: new Date().toISOString(),
-    version: Number(row.version ?? 0),
-  };
-}
-
-function toIso(value: Date | string | null): string | null {
-  if (!value) {
-    return null;
-  }
-  return value instanceof Date ? value.toISOString() : value;
 }

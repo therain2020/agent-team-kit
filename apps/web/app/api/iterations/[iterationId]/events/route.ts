@@ -20,32 +20,32 @@ export async function GET(
   const kind = url.searchParams.get("kind") || null;
   const kindPrefix = kind ? `${kind}.%` : null;
   const store = getStore();
+  const filters = [
+    before !== null
+      ? store.sql`AND event_id < ${before}`
+      : after !== null
+        ? store.sql`AND event_id > ${after}`
+        : store.sql``,
+    task ? store.sql`AND task_id = ${task}` : store.sql``,
+    kind
+      ? store.sql`AND (kind = ${kind} OR kind LIKE ${kindPrefix})`
+      : store.sql``,
+  ];
+  const where = store.sql`${filters[0]} ${filters[1]} ${filters[2]}`;
 
   const rows =
     before !== null
       ? await store.sql<EventRow[]>`
         SELECT * FROM iteration_events
         WHERE iteration_id = ${iterationId}
-          AND (${before}::bigint IS NULL OR event_id < ${before})
-          AND (${task}::text IS NULL OR task_id = ${task})
-          AND (
-            ${kind}::text IS NULL
-            OR kind = ${kind}
-            OR kind LIKE ${kindPrefix}
-          )
+          ${where}
         ORDER BY event_id DESC
         LIMIT ${limit + 1}
       `
       : await store.sql<EventRow[]>`
         SELECT * FROM iteration_events
         WHERE iteration_id = ${iterationId}
-          AND (${after}::bigint IS NULL OR event_id > ${after})
-          AND (${task}::text IS NULL OR task_id = ${task})
-          AND (
-            ${kind}::text IS NULL
-            OR kind = ${kind}
-            OR kind LIKE ${kindPrefix}
-          )
+          ${where}
         ORDER BY event_id ASC
         LIMIT ${limit + 1}
       `;

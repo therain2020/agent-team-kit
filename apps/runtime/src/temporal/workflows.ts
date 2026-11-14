@@ -1,3 +1,4 @@
+﻿import { runPackPipeline } from "@kit/engine/pack-pipeline";
 import type {
   IterationInput,
   IterationResult,
@@ -34,6 +35,7 @@ const {
   failPackRun,
   setPackRunStatus,
   requestApproval,
+  deliverPackRun,
 } = proxyActivities<typeof packActivities>({
   startToCloseTimeout: "40 minutes",
   heartbeatTimeout: "2 minutes",
@@ -248,39 +250,25 @@ export async function iterationWorkflow(
 export async function packWorkflow(
   input: PackRunInput,
 ): Promise<PackRunResult> {
-  await preparePackRun({
-    runId: input.runId,
-    eventId: input.eventId,
-    workspaceId: input.workspaceId,
-    workflowId: input.workflowId,
-    workflowVersion: input.workflowVersion,
-    runMode: input.runMode,
-    stages: input.stages.map((stage) => ({
-      stageId: stage.stageId,
-      name: stage.stageName,
-    })),
-  });
-
-  let current = input.initialInput;
-  let lastArtifactId: string | undefined;
-  let previousStageId: string | undefined;
   let approvalPayload:
     | { decision: "approve" | "abort"; note?: string; requestId?: string }
     | undefined;
-  const artifactIds: string[] = [];
 
   setHandler(approvalSignal, (payload) => {
     approvalPayload = payload;
   });
 
-  try {
-    const outputs = new Map<string, { artifactId: string; text: string }>();
-
-    const waitForApproval = async (
-      requestId: string | undefined,
-      timeoutMs: number,
-    ): Promise<void> => {
-      await setPackRunStatus({ runId: input.runId, status: "paused" });
+  return runPackPipeline(input, {
+    activities: {
+      preparePackRun,
+      executePackStage,
+      requestApproval,
+      finishPackRun,
+      failPackRun,
+      setPackRunStatus,
+      deliverPackRun,
+    },
+    waitForApproval: async (requestId, timeoutMs) => {
       const fulfilled = await condition(
         () =>
           approvalPayload !== undefined &&
@@ -294,129 +282,9 @@ export async function packWorkflow(
       approvalPayload = undefined;
 
       if (!fulfilled || !payload) {
-        await failPackRun({
-          runId: input.runId,
-          reason: "approval timeout",
-        });
-        throw new Error("approval timeout");
+        return "timeout";
       }
-
-      if (payload.decision !== "approve") {
-        await failPackRun({
-          runId: input.runId,
-          reason: `approval ${payload.decision}`,
-        });
-        throw new Error("approval aborted");
-      }
-
-      await setPackRunStatus({ runId: input.runId, status: "running" });
-    };
-
-    for (const stage of input.stages) {
-      const upstream = stage.inputFromStageId
-        ? outputs.get(stage.inputFromStageId)
-        : undefined;
-
-      if (
-        stage.approval &&
-        stage.approval.mode !== "never" &&
-        stage.approval.position === "before"
-      ) {
-        const approval = await requestApproval({
-          runId: input.runId,
-          workspaceId: input.workspaceId,
-          runMode: input.runMode,
-          stageId: stage.stageId,
-          stageName: stage.stageName,
-          requestType: "stage_before",
-          approval: stage.approval,
-          summary: `Approve before running stage "${stage.stageName}".`,
-          options: ["approve", "abort"],
-        });
-        if (approval.required) {
-          await waitForApproval(approval.requestId, stage.approval.ttlMs);
-        }
-      }
-
-      let result = await executePackStage({
-        ...stage,
-        runId: input.runId,
-        workspaceId: input.workspaceId,
-        runMode: input.runMode,
-        inputText: upstream?.text ?? current,
-        inputArtifactId: upstream?.artifactId ?? lastArtifactId,
-        evidenceText: input.initialInput,
-        stub: input.stub,
-      });
-
-      if (result.approvalRequired) {
-        await waitForApproval(
-          result.approvalRequestId,
-          stage.approval?.ttlMs ?? 7 * 24 * 60 * 60 * 1000,
-        );
-        result = await executePackStage({
-          ...stage,
-          runId: input.runId,
-          workspaceId: input.workspaceId,
-          runMode: input.runMode,
-          inputText: result.effectiveInputText ?? current,
-          inputArtifactId: result.effectiveInputArtifactId ?? lastArtifactId,
-          evidenceText: input.initialInput,
-          stub: input.stub,
-          gateApproved: true,
-        });
-      }
-
-      if (
-        stage.approval &&
-        stage.approval.mode !== "never" &&
-        stage.approval.position === "after"
-      ) {
-        const approval = await requestApproval({
-          runId: input.runId,
-          workspaceId: input.workspaceId,
-          runMode: input.runMode,
-          stageId: stage.stageId,
-          stageName: stage.stageName,
-          requestType: "stage_after",
-          approval: stage.approval,
-          summary: `Approve the output of stage "${stage.stageName}".\n\n${result.text.slice(0, 400)}`,
-          draftArtifactId: result.artifactId,
-          options: ["approve", "abort"],
-        });
-        if (approval.required) {
-          await waitForApproval(approval.requestId, stage.approval.ttlMs);
-        }
-      }
-
-      if (result.effectiveInputArtifactId && previousStageId) {
-        outputs.set(previousStageId, {
-          artifactId: result.effectiveInputArtifactId,
-          text:
-            result.effectiveInputText ??
-            outputs.get(previousStageId)?.text ??
-            "",
-        });
-      }
-
-      outputs.set(stage.stageId, {
-        artifactId: result.artifactId,
-        text: result.text,
-      });
-      artifactIds.push(result.artifactId);
-      current = result.text;
-      lastArtifactId = result.artifactId;
-      previousStageId = stage.stageId;
-    }
-
-    await finishPackRun({ runId: input.runId });
-
-    return { runId: input.runId, artifactIds };
-  } catch (error) {
-    await failPackRun({
-      runId: input.runId,
-      reason: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
-  }
+      return payload.decision === "approve" ? "approved" : "aborted";
+    },
+  });
 }

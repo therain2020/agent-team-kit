@@ -276,6 +276,18 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
           `${workflowFile}: stage ${stage.id} inputFrom must reference an earlier stage: ${stage.inputFrom}`,
         );
       }
+      if (stage.inputFrom && stage.inputsFrom) {
+        errors.push(
+          `${workflowFile}: stage ${stage.id} cannot use inputFrom and inputsFrom together`,
+        );
+      }
+      for (const upstream of stage.inputsFrom ?? []) {
+        if (!seenStageIds.has(upstream)) {
+          errors.push(
+            `${workflowFile}: stage ${stage.id} inputsFrom must reference an earlier stage: ${upstream}`,
+          );
+        }
+      }
       if (stage.revisionAgent && !agents.has(stage.revisionAgent)) {
         errors.push(
           `${workflowFile}: stage ${stage.id} revisionAgent references unknown agent: ${stage.revisionAgent}`,

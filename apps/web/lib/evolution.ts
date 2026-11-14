@@ -3,7 +3,7 @@ import {
   type CanaryState,
   type EvolutionCycleRecord,
   type EvolutionRecord,
-  PostgresEvolutionRepository,
+  StoreEvolutionRepository,
   type VariantMeta,
 } from "@kit/evolution";
 import { getRepoRoot } from "./paths";
@@ -33,7 +33,7 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
   await ensureStoreSchema();
   const repoRoot = getRepoRoot();
   const variantsRoot = path.join(repoRoot, "variants");
-  const repo = new PostgresEvolutionRepository(getStore(), { variantsRoot });
+  const repo = new StoreEvolutionRepository(getStore(), { variantsRoot });
   await repo.ensureReady();
 
   const [storedState, records, cycles, storedVariants] = await Promise.all([

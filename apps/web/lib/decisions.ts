@@ -73,6 +73,16 @@ export async function decideApproval(input: {
     });
   }
 
+  if (store.driver === "sqlite") {
+    // Local runs poll decision records instead of receiving Temporal signals.
+    return {
+      ok: true,
+      requestId: input.requestId,
+      decision: input.decision,
+      duplicate: Boolean(existing),
+    };
+  }
+
   const { client, connection } = await createTemporalClient();
   try {
     const handle = client.workflow.getHandle(`pack-${input.runId}`);

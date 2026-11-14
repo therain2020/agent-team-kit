@@ -32,7 +32,10 @@ export function getStore(): Store {
 
 export async function ensureStoreSchema(): Promise<void> {
   const store = getStore();
-  globalForStore.__kitWebSchema ??= ensureSchema(store.sql).catch((error) => {
+  globalForStore.__kitWebSchema ??= ensureSchema(
+    store.exec,
+    store.driver,
+  ).catch((error) => {
     globalForStore.__kitWebSchema = undefined;
     throw error;
   });

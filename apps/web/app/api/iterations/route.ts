@@ -23,22 +23,27 @@ export async function GET(request: Request) {
   const domain = url.searchParams.get("domain") || null;
   const query = url.searchParams.get("q")?.trim() || null;
   const pattern = query ? `%${query}%` : null;
+  const filters = [
+    status ? store.sql`AND r.status = ${status}` : store.sql``,
+    domain
+      ? store.sql`AND EXISTS (
+          SELECT 1 FROM iteration_tasks t
+          WHERE t.iteration_id = r.iteration_id AND t.domain = ${domain}
+        )`
+      : store.sql``,
+    pattern
+      ? store.sql`AND (
+          LOWER(r.goal) LIKE LOWER(${pattern})
+          OR LOWER(r.iteration_id) LIKE LOWER(${pattern})
+        )`
+      : store.sql``,
+  ];
+  const where = store.sql`${filters[0]} ${filters[1]} ${filters[2]}`;
 
   const runs = await store.sql<RunRow[]>`
     SELECT r.* FROM iteration_runs r
     WHERE r.workspace_id = 'default'
-      AND (${status}::text IS NULL OR r.status = ${status})
-      AND (
-        ${domain}::text IS NULL OR EXISTS (
-          SELECT 1 FROM iteration_tasks t
-          WHERE t.iteration_id = r.iteration_id AND t.domain = ${domain}
-        )
-      )
-      AND (
-        ${pattern}::text IS NULL
-        OR r.goal ILIKE ${pattern}
-        OR r.iteration_id ILIKE ${pattern}
-      )
+      ${where}
     ORDER BY r.updated_at DESC
     LIMIT ${limit + 1}
     OFFSET ${offset}
@@ -48,18 +53,32 @@ export async function GET(request: Request) {
   const ids = pageRuns.map((row) => row.iteration_id);
 
   const tasks = ids.length
-    ? await store.sql<TaskRow[]>`
-        SELECT * FROM iteration_tasks
-        WHERE iteration_id = ANY(${store.sql.array(ids)})
-        ORDER BY started_at ASC
-      `
+    ? (
+        await Promise.all(
+          ids.map(
+            (id) =>
+              store.sql<TaskRow[]>`
+              SELECT * FROM iteration_tasks
+              WHERE iteration_id = ${id}
+              ORDER BY started_at ASC
+            `,
+          ),
+        )
+      ).flat()
     : [];
   const turns = ids.length
-    ? await store.sql<TurnRow[]>`
-        SELECT * FROM iteration_turns
-        WHERE iteration_id = ANY(${store.sql.array(ids)})
-        ORDER BY iteration_id ASC, task_id ASC, turn ASC
-      `
+    ? (
+        await Promise.all(
+          ids.map(
+            (id) =>
+              store.sql<TurnRow[]>`
+              SELECT * FROM iteration_turns
+              WHERE iteration_id = ${id}
+              ORDER BY iteration_id ASC, task_id ASC, turn ASC
+            `,
+          ),
+        )
+      ).flat()
     : [];
 
   const tasksByRun = new Map<string, TaskRow[]>();

@@ -8,10 +8,9 @@ import { cn } from "@/lib/utils";
 import { Bot, Plus, Rocket, Trash2, Users } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-type Template = "minimal" | "research" | "content" | "product";
 type Role = "builder" | "seller" | "specialist";
 
 interface Employee {
@@ -21,110 +20,58 @@ interface Employee {
   role: Role;
 }
 
-const TEMPLATES: Record<
-  Template,
-  { label: string; hint: string; employees: Employee[] }
-> = {
-  minimal: {
-    label: "Minimal",
-    hint: "One worker, one stage. Fastest way to see a run.",
-    employees: [
-      {
-        id: "worker",
-        description: "Completes the assigned task",
-        model: "deepseek-flash",
-        role: "builder",
-      },
-    ],
-  },
-  research: {
-    label: "Research",
-    hint: "Researcher → writer → reviewer. Evidence-first.",
-    employees: [
-      {
-        id: "researcher",
-        description: "Collects and verifies source evidence",
-        model: "deepseek-flash",
-        role: "builder",
-      },
-      {
-        id: "writer",
-        description: "Turns evidence into a structured brief",
-        model: "deepseek-pro",
-        role: "builder",
-      },
-      {
-        id: "reviewer",
-        description: "Checks citations and actionability",
-        model: "deepseek-pro",
-        role: "specialist",
-      },
-    ],
-  },
-  content: {
-    label: "Content",
-    hint: "Seller → builder → editor. Human-sounding output.",
-    employees: [
-      {
-        id: "planner",
-        description: "Clarifies audience, angle, and acceptance",
-        model: "deepseek-flash",
-        role: "seller",
-      },
-      {
-        id: "writer",
-        description: "Writes the primary content",
-        model: "deepseek-pro",
-        role: "builder",
-      },
-      {
-        id: "editor",
-        description: "Edits for clarity and accuracy",
-        model: "deepseek-pro",
-        role: "specialist",
-      },
-    ],
-  },
-  product: {
-    label: "Product",
-    hint: "Seller → builder → verifier → seller package. Task-centric.",
-    employees: [
-      {
-        id: "seller",
-        description: "Owns requirements, acceptance, and delivery",
-        model: "deepseek-pro",
-        role: "seller",
-      },
-      {
-        id: "builder",
-        description: "Builds and optimizes the project",
-        model: "deepseek-pro",
-        role: "builder",
-      },
-      {
-        id: "verifier",
-        description: "Independently verifies the build",
-        model: "deepseek-pro",
-        role: "specialist",
-      },
-    ],
-  },
-};
+interface TemplateSummary {
+  id: string;
+  name: string;
+  description: string;
+  agents: Array<{
+    id: string;
+    description: string;
+    model: string;
+    role: string;
+  }>;
+}
 
 export function NewPackWizard() {
   const t = useTranslations("newPack");
   const router = useRouter();
-  const [template, setTemplate] = useState<Template>("research");
+  const [templates, setTemplates] = useState<TemplateSummary[]>([]);
+  const [template, setTemplate] = useState("");
   const [name, setName] = useState("my-team");
   const [dirName, setDirName] = useState("my-team");
   const [description, setDescription] = useState("");
   const [managerName, setManagerName] = useState("manager");
   const [managerModel, setManagerModel] = useState("deepseek-pro");
   const [managerInstructions, setManagerInstructions] = useState("");
-  const [employees, setEmployees] = useState<Employee[]>(
-    TEMPLATES.research.employees,
-  );
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/templates")
+      .then((response) => response.json())
+      .then((payload: { templates?: TemplateSummary[] }) => {
+        if (cancelled) {
+          return;
+        }
+        const list = payload.templates ?? [];
+        setTemplates(list);
+        const preferred =
+          list.find((item) => item.id === "research") ?? list[0];
+        if (preferred) {
+          setTemplate(preferred.id);
+          setEmployees(toEmployees(preferred));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          toast.error(t("failed"));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [t]);
 
   const slug = useMemo(
     () =>
@@ -136,9 +83,13 @@ export function NewPackWizard() {
     [name],
   );
 
-  function chooseTemplate(value: Template) {
+  function chooseTemplate(value: string) {
+    const selected = templates.find((item) => item.id === value);
+    if (!selected) {
+      return;
+    }
     setTemplate(value);
-    setEmployees(TEMPLATES[value].employees.map((item) => ({ ...item })));
+    setEmployees(toEmployees(selected));
   }
 
   function patchEmployee(index: number, patch: Partial<Employee>) {
@@ -150,6 +101,9 @@ export function NewPackWizard() {
   }
 
   async function create() {
+    if (!template) {
+      return;
+    }
     setPending(true);
     try {
       const response = await fetch("/api/packs", {
@@ -191,25 +145,26 @@ export function NewPackWizard() {
             {t("template")}
           </h2>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {(Object.keys(TEMPLATES) as Template[]).map((value) => (
+            {templates.map((item) => (
               <button
-                key={value}
+                key={item.id}
                 type="button"
-                onClick={() => chooseTemplate(value)}
+                onClick={() => chooseTemplate(item.id)}
                 className={cn(
                   "rounded-lg border border-border p-3 text-left transition-colors hover:border-zinc-600",
-                  template === value &&
+                  template === item.id &&
                     "border-emerald-500/50 bg-emerald-500/5",
                 )}
               >
-                <p className="text-xs font-medium text-zinc-200">
-                  {TEMPLATES[value].label}
-                </p>
+                <p className="text-xs font-medium text-zinc-200">{item.name}</p>
                 <p className="mt-1 text-[10px] leading-relaxed text-zinc-500">
-                  {TEMPLATES[value].hint}
+                  {item.description}
                 </p>
               </button>
             ))}
+            {templates.length === 0 ? (
+              <p className="text-[10px] text-zinc-500">…</p>
+            ) : null}
           </div>
         </section>
 
@@ -407,7 +362,7 @@ export function NewPackWizard() {
           <Button
             className="mt-4 w-full"
             onClick={create}
-            disabled={pending || !name.trim() || !dirName.trim()}
+            disabled={pending || !template || !name.trim() || !dirName.trim()}
           >
             {pending ? t("creating") : t("create")}
           </Button>
@@ -418,4 +373,20 @@ export function NewPackWizard() {
       </div>
     </div>
   );
+}
+
+function toEmployees(template: TemplateSummary): Employee[] {
+  return template.agents
+    .filter((agent) => agent.role !== "manager")
+    .map((agent) => ({
+      id: agent.id,
+      description: agent.description,
+      model: agent.model,
+      role:
+        agent.role === "seller"
+          ? "seller"
+          : agent.role === "specialist"
+            ? "specialist"
+            : "builder",
+    }));
 }

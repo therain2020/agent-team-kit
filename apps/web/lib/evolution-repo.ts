@@ -1,11 +1,11 @@
 import path from "node:path";
-import { PostgresEvolutionRepository } from "@kit/evolution";
+import { StoreEvolutionRepository } from "@kit/evolution";
 import { getRepoRoot } from "./paths";
 import { ensureStoreSchema, getStore } from "./store";
 
-export async function getEvolutionRepo(): Promise<PostgresEvolutionRepository> {
+export async function getEvolutionRepo(): Promise<StoreEvolutionRepository> {
   await ensureStoreSchema();
-  return new PostgresEvolutionRepository(getStore(), {
+  return new StoreEvolutionRepository(getStore(), {
     variantsRoot: path.join(getRepoRoot(), "variants"),
   });
 }

@@ -42,13 +42,18 @@ export async function PUT(request: Request) {
 
   await ensureStoreSchema();
   const store = getStore();
-  const state = await ensureState(store.sql, "default", body.packDir, false);
+  const state = await ensureState(
+    store.autopilotState,
+    "default",
+    body.packDir,
+    false,
+  );
   const saved = {
     ...state,
     enabled: body.enabled,
     updatedAt: new Date().toISOString(),
   };
-  await saveState(store.sql, saved);
+  await saveState(store.autopilotState, saved);
   return NextResponse.json({
     ok: true,
     packDir: body.packDir,

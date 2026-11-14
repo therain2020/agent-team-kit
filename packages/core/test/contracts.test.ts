@@ -6,6 +6,7 @@ import {
   runModeSchema,
   teamPackSchema,
   workflowStageSchema,
+  workshopManifestSchema,
 } from "../src/index";
 
 const at = "2026-11-14T00:00:00.000Z";
@@ -134,6 +135,42 @@ describe("workflow stages", () => {
       outputs: ["draft"],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("workshop manifest", () => {
+  const manifest = {
+    apiVersion: "agentteam/v1",
+    kind: "workflow",
+    id: "demo-flow",
+    name: "Demo Flow",
+    version: "1.0.0",
+    entry: "workflows/demo.yaml",
+    files: ["workflows/demo.yaml"],
+  };
+
+  it("parses a valid manifest", () => {
+    const parsed = workshopManifestSchema.parse(manifest);
+    expect(parsed.permissions.code).toBe(false);
+  });
+
+  it("requires entry to be listed in files", () => {
+    expect(
+      workshopManifestSchema.safeParse({
+        ...manifest,
+        entry: "workflows/other.yaml",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects path traversal in files", () => {
+    expect(
+      workshopManifestSchema.safeParse({
+        ...manifest,
+        entry: "../evil.yaml",
+        files: ["../evil.yaml"],
+      }).success,
+    ).toBe(false);
   });
 });
 

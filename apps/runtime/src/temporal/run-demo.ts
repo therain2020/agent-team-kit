@@ -1,4 +1,4 @@
-import { eventEnvelopeSchema, newId } from "@kit/core";
+﻿import { eventEnvelopeSchema, newId } from "@kit/core";
 import { initStore } from "@kit/store";
 import { createTemporalClient, taskQueue } from "./client";
 import type { DemoInput } from "./types";
@@ -37,4 +37,4 @@ const handle = await client.workflow.start(demoWorkflow, {
 
 console.log(JSON.stringify(await handle.result(), null, 2));
 await connection.close();
-await store.sql.end();
+await store.close();

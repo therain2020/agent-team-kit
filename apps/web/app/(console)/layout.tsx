@@ -1,6 +1,7 @@
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { loadPausedCount } from "@/lib/runs";
+import { hasApiKey } from "@kit/bootstrap";
 import type { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
@@ -10,13 +11,53 @@ export default async function ConsoleLayout({
 }: {
   children: ReactNode;
 }) {
-  const pausedCount = await loadPausedCount();
+  let pausedCount = 0;
+  let backendDown = false;
+
+  try {
+    pausedCount = await loadPausedCount();
+  } catch (error) {
+    console.error("console backend unreachable", error);
+    backendDown = true;
+  }
+
+  let keyConfigured = true;
+  try {
+    keyConfigured = hasApiKey();
+  } catch {
+    // A keychain failure should not take the console down.
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar pausedCount={pausedCount} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
+        {backendDown ? (
+          <div
+            role="alert"
+            className="border-b border-amber-700/40 bg-amber-950/30 px-5 py-2 text-xs text-amber-200"
+          >
+            Backend unreachable — run{" "}
+            <code className="rounded bg-amber-900/40 px-1">bun run kit up</code>
+            . Packs and Studio still work. 后端不可达——请运行{" "}
+            <code className="rounded bg-amber-900/40 px-1">bun run kit up</code>
+            ，团队与 Studio 仍可使用。
+          </div>
+        ) : null}
+        {!keyConfigured ? (
+          <output className="block border-b border-sky-800/40 bg-sky-950/30 px-5 py-2 text-xs text-sky-200">
+            No model key configured —{" "}
+            <a className="underline" href="/welcome">
+              open /welcome
+            </a>{" "}
+            to add one. 未配置模型密钥——前往{" "}
+            <a className="underline" href="/welcome">
+              /welcome
+            </a>{" "}
+            添加。
+          </output>
+        ) : null}
         <main className="flex-1 overflow-y-auto px-5 py-6 lg:px-8">
           {children}
         </main>

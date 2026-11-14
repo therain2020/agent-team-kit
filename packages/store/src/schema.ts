@@ -1,9 +1,13 @@
 import type { Producer } from "@kit/core";
 import {
   bigint,
+  boolean,
+  date,
   integer,
   jsonb,
+  numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
@@ -102,3 +106,57 @@ export const artifacts = pgTable("artifacts", {
     mode: "string",
   }).notNull(),
 });
+
+export const runRequests = pgTable("run_requests", {
+  requestId: text("request_id").primaryKey(),
+  runId: text("run_id").notNull().unique(),
+  workspaceId: text("workspace_id").notNull(),
+  workflowId: text("workflow_id").notNull(),
+  payload: text("payload").notNull(),
+  status: text("status").notNull(),
+  claimedBy: text("claimed_by"),
+  claimedAt: timestamp("claimed_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  heartbeatAt: timestamp("heartbeat_at", {
+    withTimezone: true,
+    mode: "string",
+  }),
+  error: text("error"),
+  createdAt: timestamp("created_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+  updatedAt: timestamp("updated_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+});
+
+export const autopilotState = pgTable(
+  "autopilot_state",
+  {
+    workspaceId: text("workspace_id").notNull(),
+    packDir: text("pack_dir").notNull(),
+    enabled: boolean("enabled").notNull().default(false),
+    lastTickAt: timestamp("last_tick_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    nextRuns: jsonb("next_runs")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    day: date("day", { mode: "string" }),
+    runsToday: integer("runs_today").notNull().default(0),
+    spentToday: numeric("spent_today").notNull().default("0"),
+    lastError: text("last_error"),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    version: integer("version").notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
+);

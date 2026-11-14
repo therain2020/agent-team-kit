@@ -126,7 +126,7 @@ export async function updateTask(
 ): Promise<void> {
   const now = new Date().toISOString();
   const changedFiles = patch.changedFiles
-    ? JSON.stringify(patch.changedFiles)
+    ? store.sql.json(patch.changedFiles)
     : null;
   await store.sql`
     UPDATE iteration_tasks SET
@@ -135,7 +135,7 @@ export async function updateTask(
       attempt = COALESCE(${patch.attempt ?? null}, attempt),
       coder = COALESCE(${patch.coder ?? null}, coder),
       risk = COALESCE(${patch.risk ?? null}, risk),
-      changed_files = COALESCE(${changedFiles}::jsonb, changed_files),
+      changed_files = COALESCE(${changedFiles}, changed_files),
       tokens = COALESCE(${patch.tokens ?? null}, tokens),
       coder_summary = COALESCE(${patch.coderSummary ?? null}, coder_summary),
       apply_status = COALESCE(${patch.applyStatus ?? null}, apply_status),
@@ -181,7 +181,7 @@ export async function appendEvent(
         ${input.iterationId}, ${input.taskId ?? null}, ${input.turn ?? null},
         ${input.step ?? null}, ${input.kind}, ${input.status ?? null},
         ${input.tool ?? null}, ${input.summary ?? null},
-        ${JSON.stringify(input.payload ?? {})}::jsonb, ${at}
+        ${store.sql.json(input.payload ?? {})}, ${at}
       )
       RETURNING event_id
     `;

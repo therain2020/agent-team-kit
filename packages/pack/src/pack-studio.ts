@@ -7,27 +7,21 @@ import {
   type StageApproval,
   autopilotSchema,
   stageApprovalSchema,
+  workflowDefinitionSchema,
 } from "@kit/core";
 import { parse, stringify } from "yaml";
 import { type LoadResult, loadPack } from "./load-pack";
 import { inferAgentRole } from "./role-plan";
+import { loadTemplate } from "./templates";
 
 const MAX_FILE_BYTES = 256 * 1024;
 const AGENT_ID = /^[a-z][a-z0-9-]*$/;
+const WORKFLOW_ID = /^[a-z][a-z0-9-]*$/;
+const WORKFLOW_FILE = /^workflows\/[a-z][a-z0-9-]*\.yaml$/;
 const ALLOWED_FILES =
   /^(team\.yaml|autopilot\.yaml|README\.md|agents\/[^/]+\.md|workflows\/[^/]+\.yaml|policies\/[^/]+\.yaml|evals\/[^/]+\.yaml|skills\/[^/]+\/SKILL\.md)$/;
 
-export type PackTemplate = "minimal" | "research" | "content" | "product";
-
-export interface TemplateAgent {
-  id: string;
-  description: string;
-  model: string;
-  role: AgentRole;
-  instructions: string;
-  tools?: string[];
-  skills?: string[];
-}
+export type PackTemplate = string;
 
 export interface CreatePackInput {
   root: string;
@@ -133,24 +127,29 @@ export async function createPack(
     throw new Error(`pack already exists: ${input.dirName}`);
   }
 
-  const template = templateAgents(input.template);
-  const employees = (input.agents?.length ? input.agents : template).map(
-    (agent, index) => {
-      const id = agent.id || `worker-${index + 1}`;
-      const description = agent.description || "Team member";
-      return {
-        id,
-        description,
-        model: agent.model || (index === 0 ? "deepseek-flash" : "deepseek-pro"),
-        role: agent.role ?? inferAgentRole(id, description),
-        instructions:
-          agent.instructions ||
-          `You are ${id}. Complete the assigned stage and return a concise, verifiable result.`,
-        tools: [] as string[],
-        skills: [] as string[],
-      };
-    },
-  );
+  const template = await loadTemplate(input.template);
+  const employees = input.agents?.length
+    ? input.agents.map((agent, index) => {
+        const id = agent.id || `worker-${index + 1}`;
+        const description = agent.description || "Team member";
+        return {
+          id,
+          description,
+          model:
+            agent.model || (index === 0 ? "deepseek-flash" : "deepseek-pro"),
+          role: agent.role ?? inferAgentRole(id, description),
+          instructions:
+            agent.instructions ||
+            `You are ${id}. Complete the assigned stage and return a concise, verifiable result.`,
+          tools: [] as string[],
+          skills: [] as string[],
+        };
+      })
+    : template.agents.map((agent) => ({
+        ...agent,
+        tools: [...agent.tools],
+        skills: [...agent.skills],
+      }));
 
   for (const agent of employees) {
     if (!AGENT_ID.test(agent.id)) {
@@ -160,6 +159,15 @@ export async function createPack(
   const unique = new Set(employees.map((agent) => agent.id));
   if (unique.size !== employees.length) {
     throw new Error("agent ids must be unique");
+  }
+
+  const agentIds = new Set(["manager", ...employees.map((agent) => agent.id)]);
+  for (const stage of template.workflow.stages) {
+    if (stage.agent && !agentIds.has(stage.agent)) {
+      throw new Error(
+        `template ${template.id} workflow references unknown agent: ${stage.agent}`,
+      );
+    }
   }
 
   const managerModel = input.managerModel || "deepseek-pro";
@@ -177,7 +185,7 @@ export async function createPack(
       description: input.description || `${input.name} agent team`,
       license: "Apache-2.0",
       compatibility: { kit: ">=0.1 <2.0" },
-      topics: ["agent-team-pack", input.template],
+      topics: ["agent-team-pack", template.id],
     },
     manager: {
       agent: "agents/manager.md",
@@ -202,7 +210,7 @@ export async function createPack(
         skills: agent.skills,
       })),
     ],
-    roles: templateRoleRules(input.template),
+    roles: template.roles,
     workspaces: {
       default: {
         agents: employees.map((agent) => agent.id),
@@ -213,40 +221,9 @@ export async function createPack(
     policies: ["policies/autonomy.yaml"],
   };
 
-  const workflow = buildStarterWorkflow(input.template, employees);
-
-  const autonomy = {
-    version: 1,
-    actions: [
-      { match: "tool.web_search", class: "A" },
-      { match: "tool.fetch", class: "A" },
-      {
-        match: "tool.deliver_external",
-        class: "C",
-        approval: { ttl: "2h", scope: "per_item" },
-      },
-      { match: "tool.delete", class: "D" },
-    ],
-  };
-
-  const autopilot = {
-    version: 1,
-    enabled: false,
-    timezone: "Asia/Shanghai",
-    schedules: [],
-    approval: {
-      autoApprove: {
-        enabled: false,
-        maxRisk: "low",
-        onTimeout: "wait",
-      },
-    },
-    evolution: {
-      enabled: false,
-      cadence: "weekly",
-      autoApply: false,
-    },
-  };
+  const workflow = template.workflow;
+  const autonomy = template.policy;
+  const autopilot = template.autopilot;
 
   await mkdir(path.join(dir, "agents"), { recursive: true });
   await mkdir(path.join(dir, "workflows"), { recursive: true });
@@ -295,7 +272,7 @@ export async function createPack(
   }
   await writeFile(
     path.join(dir, "README.md"),
-    `# ${input.name}\n\n${input.description || `${input.name} agent team`}\n\nTeam Pack for Agent Team Kit. Start with \`bun run kit pack validate packs/${input.dirName}\`.\n`,
+    `# ${input.name}\n\n${input.description || `${input.name} agent team`}\n\nTeam Pack for Agent Team Kit.\n\nNext steps (run from this directory):\n\n\`\`\`bash\nkit pack validate .\nkit pack simulate .\n\`\`\`\n\nOpen the Manager Console, pick this team under /packs, and run it.\n`,
     "utf8",
   );
 
@@ -477,6 +454,232 @@ export async function writeWorkflowFile(
   }
 }
 
+export interface WorkflowSummary {
+  file: string;
+  id: string;
+}
+
+export interface CreateWorkflowInput {
+  file?: string;
+  id?: string;
+  content?: string;
+}
+
+export interface RenameWorkflowInput {
+  file: string;
+  newFile: string;
+  newId?: string;
+}
+
+export async function listWorkflows(
+  packDir: string,
+): Promise<WorkflowSummary[]> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  return Promise.all(
+    loaded.pack.workflows.map(async (file) => {
+      const raw = await readFile(path.join(loaded.dir, file), "utf8");
+      const doc = parse(raw) as { id?: unknown };
+      return {
+        file,
+        id: typeof doc.id === "string" ? doc.id : file,
+      };
+    }),
+  );
+}
+
+export async function createWorkflow(
+  packDir: string,
+  input: CreateWorkflowInput = {},
+): Promise<WorkflowSummary> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  const id = input.id ?? nextWorkflowId(loaded);
+  if (!WORKFLOW_ID.test(id)) {
+    throw new Error("workflow id must match ^[a-z][a-z0-9-]*$");
+  }
+  const file = input.file ?? `workflows/${id}.yaml`;
+  if (!WORKFLOW_FILE.test(file)) {
+    throw new Error("workflow file must be workflows/<id>.yaml");
+  }
+  if (loaded.pack.workflows.includes(file)) {
+    throw new Error(`workflow file already exists: ${file}`);
+  }
+  if (loaded.workflows.some((workflow) => workflow.id === id)) {
+    throw new Error(`workflow id already exists: ${id}`);
+  }
+
+  const content =
+    input.content ?? stringify(defaultWorkflow(id, firstAgentId(loaded)));
+  const parsed = workflowDefinitionSchema.safeParse(parse(content));
+  if (!parsed.success) {
+    throw new Error(
+      parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("\n"),
+    );
+  }
+  if (parsed.data.id !== id) {
+    throw new Error(
+      `workflow content id "${parsed.data.id}" does not match "${id}"`,
+    );
+  }
+
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  teamDoc.workflows = [...(teamDoc.workflows ?? []), file];
+
+  await writePackFile(packDir, file, content);
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    const created = resolvePackRelative(packDir, file);
+    if (created) {
+      await rm(created, { force: true }).catch(() => undefined);
+    }
+    await writeFile(teamPath, originalTeam, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+
+  return { file, id };
+}
+
+export async function deleteWorkflow(
+  packDir: string,
+  file: string,
+): Promise<void> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  if (!loaded.pack.workflows.includes(file)) {
+    throw new Error(`workflow is not listed in team.yaml: ${file}`);
+  }
+  if (loaded.pack.workflows.length <= 1) {
+    throw new Error("a Pack must keep at least one workflow");
+  }
+  const absolute = resolvePackRelative(packDir, file);
+  if (!absolute || !existsSync(absolute)) {
+    throw new Error(`workflow file not found: ${file}`);
+  }
+
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const originalContent = await readFile(absolute, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  teamDoc.workflows = (teamDoc.workflows ?? []).filter((item) => item !== file);
+
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+  await rm(absolute, { force: true });
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    await writeFile(teamPath, originalTeam, "utf8");
+    await writeFile(absolute, originalContent, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+}
+
+export async function renameWorkflow(
+  packDir: string,
+  input: RenameWorkflowInput,
+): Promise<WorkflowSummary> {
+  const loaded = await loadPack(packDir);
+  if (!loaded.ok) {
+    throw new Error(loaded.errors.join("\n"));
+  }
+  if (!loaded.pack.workflows.includes(input.file)) {
+    throw new Error(`workflow is not listed in team.yaml: ${input.file}`);
+  }
+  if (!WORKFLOW_FILE.test(input.newFile)) {
+    throw new Error("workflow file must be workflows/<id>.yaml");
+  }
+  if (loaded.pack.workflows.includes(input.newFile)) {
+    throw new Error(`workflow file already exists: ${input.newFile}`);
+  }
+  const oldAbsolute = resolvePackRelative(packDir, input.file);
+  const newAbsolute = resolvePackRelative(packDir, input.newFile);
+  if (!oldAbsolute || !newAbsolute || !existsSync(oldAbsolute)) {
+    throw new Error(`workflow file not found: ${input.file}`);
+  }
+  if (existsSync(newAbsolute)) {
+    throw new Error(`workflow file already exists: ${input.newFile}`);
+  }
+
+  const originalContent = await readFile(oldAbsolute, "utf8");
+  const doc = parse(originalContent) as Record<string, unknown>;
+  const nextId =
+    input.newId ?? (typeof doc.id === "string" ? doc.id : input.newFile);
+  if (!WORKFLOW_ID.test(nextId)) {
+    throw new Error("workflow id must match ^[a-z][a-z0-9-]*$");
+  }
+  const nextContent = stringify({ ...doc, id: nextId });
+
+  const teamPath = path.join(loaded.dir, "team.yaml");
+  const originalTeam = await readFile(teamPath, "utf8");
+  const teamDoc = parseTeamDoc(originalTeam);
+  teamDoc.workflows = (teamDoc.workflows ?? []).map((item) =>
+    item === input.file ? input.newFile : item,
+  );
+
+  await writePackFile(packDir, input.newFile, nextContent);
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+  await rm(oldAbsolute, { force: true });
+
+  const validation = await loadPack(packDir);
+  if (!validation.ok) {
+    await writeFile(teamPath, originalTeam, "utf8");
+    await rm(newAbsolute, { force: true }).catch(() => undefined);
+    await writeFile(oldAbsolute, originalContent, "utf8");
+    throw new Error(validation.errors.join("\n"));
+  }
+
+  return { file: input.newFile, id: nextId };
+}
+
+export interface StagePosition {
+  x: number;
+  y: number;
+}
+
+export async function setStagePositions(
+  packDir: string,
+  relative: string,
+  positions: Record<string, StagePosition>,
+): Promise<string> {
+  const raw = await readPackFile(packDir, relative);
+  const doc = parse(raw) as {
+    stages?: Array<Record<string, unknown>>;
+  };
+  const stages = doc.stages;
+  if (!Array.isArray(stages)) {
+    throw new Error("workflow stages missing");
+  }
+  for (const [stageId, position] of Object.entries(positions)) {
+    if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+      throw new Error(`invalid position for stage: ${stageId}`);
+    }
+    const index = stages.findIndex((stage) => stage.id === stageId);
+    const stage = index >= 0 ? stages[index] : undefined;
+    if (!stage) {
+      continue;
+    }
+    stage.position = {
+      x: Math.round(position.x),
+      y: Math.round(position.y),
+    };
+  }
+  const content = stringify(doc);
+  await writeWorkflowFile(packDir, relative, content);
+  return content;
+}
+
 export async function setStageApproval(
   packDir: string,
   relative: string,
@@ -552,6 +755,7 @@ export async function validatePack(
 
 export interface TeamDoc {
   manager?: { model?: string };
+  workflows?: string[];
   agents: Array<{
     id: string;
     file: string;
@@ -570,6 +774,48 @@ function parseTeamDoc(text: string): TeamDoc {
     throw new Error("team.yaml agents must be an array");
   }
   return parsed as TeamDoc;
+}
+
+function nextWorkflowId(loaded: {
+  workflows: Array<{ id: string }>;
+}): string {
+  const used = new Set(loaded.workflows.map((workflow) => workflow.id));
+  let index = 1;
+  while (used.has(`workflow-${index}`)) {
+    index += 1;
+  }
+  return `workflow-${index}`;
+}
+
+function firstAgentId(loaded: {
+  agents: ReadonlyMap<string, { spec: { id: string }; role: string }>;
+}): string {
+  for (const agent of loaded.agents.values()) {
+    if (agent.role !== "manager") {
+      return agent.spec.id;
+    }
+  }
+  return "manager";
+}
+
+function defaultWorkflow(id: string, agent: string) {
+  return {
+    id,
+    version: "1.0",
+    trigger: { event: "task.received" },
+    stages: [
+      {
+        id: agent,
+        type: "agent",
+        agent,
+        inputs: ["task"],
+        outputs: [`${agent}_output`],
+        timeout: "15m",
+        retry: { max: 1, backoff: "fixed" },
+      },
+    ],
+    delivery: { channel: "local_file" },
+  };
 }
 
 export function splitFrontmatter(text: string): {
@@ -609,229 +855,4 @@ function agentMarkdown(input: {
     permissions: { filesystem: "readonly", network: "none" },
   };
   return `---\n${stringify(frontmatter)}---\n\n${input.instructions.trim()}\n`;
-}
-
-function templateRoleRules(template: PackTemplate): {
-  requireSeller: boolean;
-  requireBuilder: boolean;
-  allowCombined: boolean;
-} {
-  if (template === "product") {
-    return {
-      requireSeller: true,
-      requireBuilder: true,
-      allowCombined: false,
-    };
-  }
-  if (template === "content") {
-    return {
-      requireSeller: true,
-      requireBuilder: true,
-      allowCombined: true,
-    };
-  }
-  return {
-    requireSeller: false,
-    requireBuilder: true,
-    allowCombined: true,
-  };
-}
-
-function buildStarterWorkflow(
-  template: PackTemplate,
-  employees: Array<{ id: string; role: AgentRole }>,
-): {
-  id: string;
-  version: string;
-  trigger: { event: string };
-  stages: Array<Record<string, unknown>>;
-  delivery: { channel: string };
-} {
-  const approval = {
-    mode: "required",
-    position: "after",
-    riskClass: "medium",
-    ttl: "72h",
-  };
-  const retry = { max: 1, backoff: "fixed" };
-  const stage = (
-    id: string,
-    agent: string,
-    inputs: string[],
-    outputs: string[],
-    options: Record<string, unknown> = {},
-  ) => ({
-    id,
-    type: "agent",
-    agent,
-    inputs,
-    outputs,
-    timeout: "15m",
-    retry,
-    ...options,
-  });
-
-  if (template === "product") {
-    const seller = employees.find((agent) => agent.role === "seller");
-    const builder = employees.find((agent) => agent.role === "builder");
-    const verifier = employees.find((agent) => agent.role === "specialist");
-    if (seller && builder) {
-      const stages = [
-        stage("clarify", seller.id, ["task"], ["requirements"], {
-          includeInitialInput: true,
-        }),
-        stage("build", builder.id, ["requirements"], ["build_result"], {
-          includeInitialInput: true,
-        }),
-      ];
-      if (verifier) {
-        stages.push(
-          stage("verify", verifier.id, ["build_result"], ["verification"], {
-            includeInitialInput: true,
-          }),
-        );
-      }
-      stages.push(
-        stage(
-          "package",
-          seller.id,
-          [verifier ? "verification" : "build_result"],
-          ["delivery_package"],
-          { includeInitialInput: true, approval },
-        ),
-      );
-      return {
-        id: "product-cycle",
-        version: "1.0",
-        trigger: { event: "task.received" },
-        stages,
-        delivery: { channel: "local_file" },
-      };
-    }
-  }
-
-  const stages = employees.map((agent, index) =>
-    stage(
-      agent.id,
-      agent.id,
-      index === 0 ? ["task"] : [`${employees[index - 1]?.id ?? "task"}_output`],
-      [`${agent.id}_output`],
-      {
-        includeInitialInput: index > 0,
-        ...(index === employees.length - 1 ? { approval } : {}),
-      },
-    ),
-  );
-
-  return {
-    id: "starter",
-    version: "1.0",
-    trigger: { event: "task.received" },
-    stages:
-      stages.length > 0
-        ? stages
-        : [stage("draft", "worker", ["task"], ["draft"], { approval })],
-    delivery: { channel: "local_file" },
-  };
-}
-
-function templateAgents(template: PackTemplate): TemplateAgent[] {
-  if (template === "research") {
-    return [
-      {
-        id: "researcher",
-        description: "Collects and verifies source evidence",
-        model: "deepseek-flash",
-        role: "builder",
-        instructions:
-          "You are a researcher. Gather verifiable evidence, keep provenance for every claim, and return a compact evidence set with citations.",
-        tools: ["web_search", "fetch"],
-      },
-      {
-        id: "writer",
-        description: "Turns evidence into a structured brief",
-        model: "deepseek-pro",
-        role: "builder",
-        instructions:
-          "You are a writer. Turn the evidence set into a structured brief. Cite every factual claim with [S#]; never invent citations.",
-      },
-      {
-        id: "reviewer",
-        description: "Checks citations, clarity, and actionability",
-        model: "deepseek-pro",
-        role: "specialist",
-        instructions:
-          "You are a reviewer. Check citations against the evidence set, flag unsupported claims, and suggest concrete fixes.",
-      },
-    ];
-  }
-
-  if (template === "content") {
-    return [
-      {
-        id: "planner",
-        description: "Clarifies the audience and content requirements",
-        model: "deepseek-flash",
-        role: "seller",
-        instructions:
-          "You are the Seller. Clarify the audience, angle, outline, acceptance criteria, and delivery checklist. Do not write the final content yet.",
-      },
-      {
-        id: "writer",
-        description: "Writes the primary content",
-        model: "deepseek-pro",
-        role: "builder",
-        instructions:
-          "You are a writer. Follow the approved outline, keep claims verifiable, and write in a natural human voice.",
-      },
-      {
-        id: "editor",
-        description: "Edits for clarity, accuracy, and tone",
-        model: "deepseek-pro",
-        role: "specialist",
-        instructions:
-          "You are an editor. Remove AI-sounding filler, tighten the structure, and verify every claim.",
-      },
-    ];
-  }
-
-  if (template === "product") {
-    return [
-      {
-        id: "seller",
-        description: "Owns requirements, acceptance and delivery",
-        model: "deepseek-pro",
-        role: "seller",
-        instructions:
-          "You are the Seller. Turn the task into a precise problem statement, definition of done, acceptance criteria, and delivery package. Never claim implementation that is not verified.",
-      },
-      {
-        id: "builder",
-        description: "Builds and optimizes the project",
-        model: "deepseek-pro",
-        role: "builder",
-        instructions:
-          "You are the Builder. Turn the approved requirements into an implementation plan and concrete changes. Keep the scope tight, explain trade-offs, and return verifiable results.",
-      },
-      {
-        id: "verifier",
-        description: "Independently verifies the build",
-        model: "deepseek-pro",
-        role: "specialist",
-        instructions:
-          "You are the Verifier. Independently check the build against acceptance criteria. Look for regressions, edge cases, and unsupported claims; return a pass/fail verdict with evidence.",
-      },
-    ];
-  }
-
-  return [
-    {
-      id: "worker",
-      description: "Completes the assigned task",
-      model: "deepseek-flash",
-      role: "builder",
-      instructions:
-        "You are a worker. Complete the assigned task and return a concise, verifiable result.",
-    },
-  ];
 }

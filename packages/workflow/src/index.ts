@@ -21,10 +21,13 @@ export interface StageDefinition {
   timeout?: string;
   retry?: RetryPolicy;
   gate?: string;
+  inputFrom?: string;
+  inputsFrom?: string[];
+  position?: { x: number; y: number };
 }
 
 export interface DeliveryDefinition {
-  channel: "im" | "email" | "local_file";
+  channel: "im" | "email" | "local_file" | "webhook";
   approval?: "never" | "required_if_published";
 }
 

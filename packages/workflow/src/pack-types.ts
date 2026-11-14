@@ -39,6 +39,8 @@ export interface PackStageSpec {
   gate?: StageGate;
   includeInitialInput?: boolean;
   inputFromStageId?: string;
+  inputsFromStageIds?: string[];
+  position?: { x: number; y: number };
   revision?: RevisionSpec;
   approval?: PackApprovalSpec;
 }
@@ -53,6 +55,10 @@ export interface PackRunInput {
   initialInput: string;
   stages: PackStageSpec[];
   stub: boolean;
+  delivery?: {
+    channel: "im" | "email" | "local_file" | "webhook";
+    approval?: "never" | "required_if_published";
+  };
 }
 
 export interface PreparePackRunInput {
@@ -71,6 +77,7 @@ export interface PackStageExecutionInput extends PackStageSpec {
   runMode: "DRY_RUN" | "LIVE";
   inputText: string;
   inputArtifactId?: string;
+  inputArtifactIds?: string[];
   evidenceText?: string;
   stub: boolean;
   gateApproved?: boolean;

@@ -598,7 +598,7 @@ export async function applyIterationTask(
         created_at, updated_at
       ) VALUES (
         ${ticketId}, ${input.iterationId}, ${input.task.id}, ${input.baselineSha},
-        ${input.diffArtifactId}, ${JSON.stringify(input.changedFiles)}::jsonb,
+        ${input.diffArtifactId}, ${store.sql.json(input.changedFiles)},
         ${input.risk}, ${status}, ${headBefore || null},
         ${extra.commit ?? null},
         ${status === "blocked" || status === "reverted" ? reason : null},

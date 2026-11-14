@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   }
   if (url.searchParams.get("live") === "1") {
     const rows = await store.sql<Array<{ max: string }>>`
-      SELECT COALESCE(MAX(event_id), 0)::text AS max FROM iteration_events
+      SELECT COALESCE(MAX(event_id), 0) AS max FROM iteration_events
     `;
     lastEventId = Number(rows[0]?.max ?? 0);
   }
@@ -26,6 +26,7 @@ export async function GET(request: Request) {
   const encoder = new TextEncoder();
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let poll: ReturnType<typeof setInterval> | undefined;
   let listen: { unlisten(): Promise<void> } | undefined;
 
   const close = async (controller?: ReadableStreamDefaultController) => {
@@ -35,6 +36,9 @@ export async function GET(request: Request) {
     closed = true;
     if (heartbeat) {
       clearInterval(heartbeat);
+    }
+    if (poll) {
+      clearInterval(poll);
     }
     try {
       await listen?.unlisten();
@@ -92,18 +96,27 @@ export async function GET(request: Request) {
       try {
         controller.enqueue(encoder.encode("retry: 2000\n\n"));
         await drain();
-        listen = await store.sql.listen("kit_iteration_events", (value) => {
-          try {
-            const payload = JSON.parse(value) as { iterationId?: string };
-            if (iterationId === "*" || payload.iterationId === iterationId) {
-              void drain().catch(() => {
-                void close(controller);
-              });
+        if (store.driver === "postgres") {
+          listen = await store.sql.listen("kit_iteration_events", (value) => {
+            try {
+              const payload = JSON.parse(value) as { iterationId?: string };
+              if (iterationId === "*" || payload.iterationId === iterationId) {
+                void drain().catch(() => {
+                  void close(controller);
+                });
+              }
+            } catch {
+              // ignore malformed notifications
             }
-          } catch {
-            // ignore malformed notifications
-          }
-        });
+          });
+        } else {
+          // SQLite has no LISTEN/NOTIFY; poll the append-only cursor.
+          poll = setInterval(() => {
+            void drain().catch(() => {
+              void close(controller);
+            });
+          }, 1000);
+        }
         heartbeat = setInterval(() => {
           if (!closed) {
             try {

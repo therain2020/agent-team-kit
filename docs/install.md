@@ -7,6 +7,19 @@
 - Docker Desktop (Postgres, MinIO, NATS, Temporal, OTel collector, Jaeger)
 - Optional: DSH, Codex or OpenCode CLI for external coder tasks
 
+## First five minutes
+
+```bash
+bun install
+bun run kit doctor          # Bun, Node, Docker, ports, model key
+bun run kit demo            # demo team + static plan (no Docker)
+bun run kit init packs/my-team --template research
+bun run kit pack simulate packs/my-team
+bun run kit up --web        # console at http://localhost:3000
+```
+
+Open `/welcome` to store a model key, or run `bun run kit bootstrap`.
+
 ## Local stack
 
 ```bash
@@ -120,7 +133,11 @@ bun run kit manager brief <runId>
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `KIT_DB_URL` | `postgres://kit:kit@localhost:5432/kit` | Postgres |
+| `KIT_RUNTIME_MODE` | `scale` | `local` uses the embedded SQLite store (no Docker) |
+| `KIT_DB_DRIVER` | per mode | `sqlite` or `postgres` override |
+| `KIT_LOCAL_DB` | `~/.agent-team-kit/data/kit.db` | Local SQLite database file |
+| `KIT_HOME` | `~/.agent-team-kit` | Bootstrap profile, key and local data |
+| `KIT_DB_URL` | `postgres://kit:kit@localhost:5432/kit` | Postgres (Scale Mode) |
 | `KIT_BLOB_BACKEND` | `fs` | `fs` or `s3` |
 | `KIT_S3_*` | MinIO defaults | S3 endpoint/bucket/credentials |
 | `DEEPSEEK_API_KEY` | unset | Live model calls; otherwise stub |
@@ -153,6 +170,8 @@ bun run kit manager brief <runId>
 | `KIT_CODER_SANDBOX_ROOT` | `%TEMP%/agent-team-kit` | external coder sandbox root (outside the repo) |
 | `KIT_SIGNALS_ROOT` | `%USERPROFILE%/.agent-team-kit/signals` | iteration fitness JSONL root |
 | `KIT_PROPOSALS_ROOT` | `%USERPROFILE%/.agent-team-kit/proposals` | improvement proposal output |
+| `KIT_TEMPLATES_ROOT` | `./templates` | built-in template registry |
+| `KIT_WORKSHOP_ROOT` | `./workshop` | workshop install root |
 | `KIT_SUPERVISOR_WEB` | `0` | Set by `kit up --web` |
 | `KIT_WEB_MODE` | `production` | `production` serves the built console (`next start`); `dev` uses `next dev` |
 

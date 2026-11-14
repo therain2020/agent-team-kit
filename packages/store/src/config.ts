@@ -1,6 +1,12 @@
+import os from "node:os";
+import path from "node:path";
+
 export type BlobBackend = "s3" | "fs";
+export type StoreDriver = "postgres" | "sqlite";
 
 export interface StoreConfig {
+  driver: StoreDriver;
+  localDbPath: string;
   dbUrl: string;
   blobBackend: BlobBackend;
   blobRoot: string;
@@ -14,7 +20,17 @@ export interface StoreConfig {
 export function loadStoreConfig(
   env: Record<string, string | undefined> = process.env,
 ): StoreConfig {
+  const home = env.KIT_HOME
+    ? path.resolve(env.KIT_HOME)
+    : path.join(os.homedir(), ".agent-team-kit");
+  const driver: StoreDriver =
+    env.KIT_DB_DRIVER === "sqlite" || env.KIT_RUNTIME_MODE === "local"
+      ? "sqlite"
+      : "postgres";
+
   return {
+    driver,
+    localDbPath: env.KIT_LOCAL_DB ?? path.join(home, "data", "kit.db"),
     dbUrl: env.KIT_DB_URL ?? "postgres://kit:kit@localhost:5432/kit",
     blobBackend: env.KIT_BLOB_BACKEND === "s3" ? "s3" : "fs",
     blobRoot: env.KIT_BLOB_ROOT ?? ".tmp/blobs",

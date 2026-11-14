@@ -19,7 +19,7 @@ export interface StoredVariant {
  * legacy local workflows.
  */
 export interface EvolutionRepository {
-  readonly kind: "postgres" | "file";
+  readonly kind: "postgres" | "sqlite" | "file";
   ensureReady(): Promise<void>;
   saveVariant(input: {
     meta: VariantMeta;
