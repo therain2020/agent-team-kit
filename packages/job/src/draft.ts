@@ -2,12 +2,13 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { createModelGateway, loadModelConfig } from "@kit/model";
 import { loadPack } from "@kit/pack";
-import { type ProjectTarget, resolveProject } from "./projects";
+import { type ProjectTarget, resolveProjectTarget } from "./projects";
 import { JobError } from "./types";
 
 export interface DraftJobInput {
   goal: string;
   projectId?: string;
+  projectPath?: string;
   packDir?: string;
   repoRoot: string;
   env?: Record<string, string | undefined>;
@@ -43,7 +44,14 @@ export async function draftJob(input: DraftJobInput): Promise<DraftJobResult> {
     throw new JobError("goal_required", "a goal is required", 400);
   }
   const env = input.env ?? process.env;
-  const project = await resolveProject(input.repoRoot, input.projectId, env);
+  const project = await resolveProjectTarget(
+    input.repoRoot,
+    {
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      ...(input.projectPath ? { projectPath: input.projectPath } : {}),
+    },
+    env,
+  );
   const packId = input.packDir?.trim() || "self-improve";
   const packDir = resolvePackDir(input.repoRoot, packId);
   const loaded = await loadPack(packDir);
@@ -71,6 +79,17 @@ export async function draftJob(input: DraftJobInput): Promise<DraftJobResult> {
     loaded.iteration.planner.maxTasks,
   );
   const warnings: string[] = [`目标项目：${project.name}（${project.path}）。`];
+  if (project.branch && project.defaultBranch) {
+    warnings.push(
+      project.onDefaultBranch
+        ? `当前分支：${project.branch}（默认分支）。`
+        : `当前分支：${project.branch}，不是默认分支 ${project.defaultBranch}；启动会被拒绝，请先切换分支。`,
+    );
+  } else if (project.defaultBranch) {
+    warnings.push(
+      `当前处于 detached HEAD，默认分支为 ${project.defaultBranch}；启动会被拒绝，请先检出默认分支。`,
+    );
+  }
   if (project.checks.length === 0) {
     warnings.push(
       "目标项目没有可用的验证脚本（typecheck/lint/test）；Verifier 可能判定任务失败。",

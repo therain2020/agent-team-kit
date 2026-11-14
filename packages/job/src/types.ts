@@ -20,6 +20,8 @@ export interface StartJobInput {
   packDir: string;
   /** Project id from the projects registry; iterations operate on its repo. */
   projectId?: string;
+  /** Arbitrary local folder; takes precedence over projectId and is normalized to the main worktree. */
+  projectPath?: string;
   workflow?: string;
   domain?: string;
   runMode?: JobRunMode;

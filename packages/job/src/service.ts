@@ -27,7 +27,7 @@ import {
   createTemporalClient,
   taskQueue,
 } from "@kit/workflow";
-import { type ProjectTarget, resolveProject } from "./projects";
+import { type ProjectTarget, resolveProjectTarget } from "./projects";
 import {
   type JobApplyMode,
   JobError,
@@ -64,7 +64,10 @@ export async function startJob(
     );
   }
   if (input.kind === "iteration") {
-    const project = await resolveProject(options.repoRoot, input.projectId);
+    const project = await resolveProjectTarget(options.repoRoot, {
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      ...(input.projectPath ? { projectPath: input.projectPath } : {}),
+    });
     return await startIterationJob(
       store,
       input,
@@ -431,6 +434,15 @@ async function startIterationJob(
   const coder = parseCoder(input.coder);
   const applyMode: JobApplyMode =
     runMode === "LIVE" ? (input.applyMode ?? "low") : "none";
+  if (runMode === "LIVE" && applyMode !== "none" && !project.onDefaultBranch) {
+    const current = project.branch ?? "detached HEAD";
+    const expected = project.defaultBranch ?? "the default branch";
+    throw new JobError(
+      "not_default_branch",
+      `目标仓库当前在 ${current}，不是默认分支 ${expected}；请先切换到 ${expected} 再启动。`,
+      409,
+    );
+  }
   const dedupeKey = input.dedupeKey?.trim();
   const iterationId = newId("it");
   const workflowId = dedupeKey

@@ -68,6 +68,7 @@ export async function POST(request: Request) {
         kind: parseKind(body.kind) ?? "packRun",
         packDir,
         projectId: asString(body.projectId),
+        projectPath: asString(body.projectPath),
         origin: "web",
         runMode,
         goal: asString(body.goal),
