@@ -63,6 +63,7 @@ function routerFor(
     runs: { list: async () => [] },
     degradation: { listActive: async () => [] },
     killSwitches: { listActive: async () => [] },
+    budgetService: { admitRun: async () => ({ ok: true }) },
   };
   const temporal = {
     client: {
