@@ -53,6 +53,11 @@ logs under `.tmp/supervisor/`. It starts Postgres, MinIO, NATS, Temporal,
 Jaeger and the OTel collector through Docker Compose. Use `--no-infra` when
 the stack is already running; `--web` also starts the console.
 
+The console starts in dev mode by default. Set `KIT_WEB_MODE=production` (or
+pass `--web-mode production`) to serve the production build instead: the
+supervisor builds it once when `.next/BUILD_ID` is missing, then runs
+`next start`. Unset or any other value keeps the existing `next dev` path.
+
 Manual fallback (legacy):
 
 ```bash
