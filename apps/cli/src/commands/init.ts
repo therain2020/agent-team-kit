@@ -1,18 +1,13 @@
 import path from "node:path";
-import { type PackTemplate, createPack } from "@kit/pack";
+import { createPack, listTemplates } from "@kit/pack";
 import type { Command } from "commander";
-
-const TEMPLATES: PackTemplate[] = ["minimal", "research", "content", "product"];
 
 export function registerInit(program: Command): void {
   program
     .command("init <dir>")
     .description("Create a Team Pack from a template")
-    .option(
-      "--template <name>",
-      "minimal | research | content | product",
-      "minimal",
-    )
+    .option("--template <name>", "template id (see --list)", "minimal")
+    .option("--list", "list available templates", false)
     .option("--name <name>", "team name")
     .option("--description <text>", "team description")
     .option("--manager <name>", "manager display name", "manager")
@@ -22,16 +17,26 @@ export function registerInit(program: Command): void {
         dir: string,
         options: {
           template: string;
+          list: boolean;
           name?: string;
           description?: string;
           manager: string;
           managerModel: string;
         },
       ) => {
-        const template = options.template as PackTemplate;
-        if (!TEMPLATES.includes(template)) {
+        const templates = await listTemplates();
+        if (options.list) {
+          for (const template of templates) {
+            console.log(`${template.id}\t${template.name}`);
+          }
+          return;
+        }
+        const template = options.template;
+        if (!templates.some((item) => item.id === template)) {
           console.error(`✖ unknown template: ${options.template}`);
-          console.error(`  choose one of: ${TEMPLATES.join(", ")}`);
+          console.error(
+            `  choose one of: ${templates.map((item) => item.id).join(", ")}`,
+          );
           process.exitCode = 1;
           return;
         }

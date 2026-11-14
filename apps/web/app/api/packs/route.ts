@@ -1,10 +1,8 @@
 import { sameOriginError } from "@/lib/http";
 import { getPacksRoot } from "@/lib/paths";
 import { parseRole } from "@/lib/roles";
-import { type PackTemplate, createPack } from "@kit/pack";
+import { createPack, listTemplates } from "@kit/pack";
 import { NextResponse } from "next/server";
-
-const TEMPLATES: PackTemplate[] = ["minimal", "research", "content", "product"];
 
 export async function POST(request: Request) {
   const originError = sameOriginError(request);
@@ -34,10 +32,21 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  const template = body.template as PackTemplate;
-  if (!TEMPLATES.includes(template)) {
+  if (typeof body.template !== "string") {
     return NextResponse.json(
-      { error: `template must be one of ${TEMPLATES.join(", ")}` },
+      { error: "template is required" },
+      { status: 400 },
+    );
+  }
+  const template = body.template;
+  const templates = await listTemplates();
+  if (!templates.some((item) => item.id === template)) {
+    return NextResponse.json(
+      {
+        error: `template must be one of ${templates
+          .map((item) => item.id)
+          .join(", ")}`,
+      },
       { status: 400 },
     );
   }

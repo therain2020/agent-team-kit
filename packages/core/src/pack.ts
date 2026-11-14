@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { autopilotSchema } from "./autopilot";
+import { policySchema } from "./policy";
+import { workflowDefinitionSchema } from "./workflow";
 
 export const budgetSchema = z.object({
   tokens: z.number().int().positive().optional(),
@@ -93,3 +96,42 @@ export const teamPackSchema = z.object({
 });
 
 export type TeamPack = z.infer<typeof teamPackSchema>;
+
+export const templateAgentSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9-]*$/),
+  description: z.string().min(1),
+  model: z.string().min(1),
+  role: agentRoleSchema.default("builder"),
+  instructions: z.string().min(1),
+  tools: z.array(z.string()).default([]),
+  skills: z.array(z.string()).default([]),
+});
+
+export const templateRolesSchema = z
+  .object({
+    requireSeller: z.boolean().default(false),
+    requireBuilder: z.boolean().default(true),
+    allowCombined: z.boolean().default(true),
+  })
+  .default({
+    requireSeller: false,
+    requireBuilder: true,
+    allowCombined: true,
+  });
+
+export const templateDefinitionSchema = z.object({
+  apiVersion: z.literal("agentteam/v1").default("agentteam/v1"),
+  kind: z.literal("TeamTemplate").default("TeamTemplate"),
+  id: z.string().regex(/^[a-z][a-z0-9-]*$/),
+  name: z.string().min(1),
+  description: z.string().default(""),
+  roles: templateRolesSchema,
+  agents: z.array(templateAgentSchema).min(1),
+  workflow: workflowDefinitionSchema,
+  policy: policySchema,
+  autopilot: autopilotSchema,
+});
+
+export type TemplateAgent = z.infer<typeof templateAgentSchema>;
+export type TemplateDefinition = z.infer<typeof templateDefinitionSchema>;
+export type TemplateRoles = z.infer<typeof templateRolesSchema>;

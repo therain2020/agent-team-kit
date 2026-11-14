@@ -1,0 +1,65 @@
+apiVersion: agentteam/v1
+kind: TeamTemplate
+id: minimal
+name: Minimal Team
+description: One worker for the smallest runnable team.
+roles:
+  requireSeller: false
+  requireBuilder: true
+  allowCombined: true
+
+agents:
+  - id: worker
+    description: Completes the assigned task
+    model: deepseek-flash
+    role: builder
+    tools: []
+    skills: []
+    instructions: |
+      You are a worker. Complete the assigned task and return a concise,
+      verifiable result.
+
+workflow:
+  id: starter
+  version: 1.0
+  trigger:
+    event: task.received
+  stages:
+    - id: worker
+      type: agent
+      agent: worker
+      inputs: [task]
+      outputs: [worker_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      approval:
+        mode: required
+        position: after
+        riskClass: medium
+        ttl: 72h
+  delivery:
+    channel: local_file
+
+policy:
+  version: 1
+  actions:
+    - {match: "tool.web_search", class: "A"}
+    - {match: "tool.fetch", class: "A"}
+    - {match: "tool.deliver_external", class: "C", approval: {ttl: "2h", scope: "per_item"}}
+    - {match: "tool.delete", class: "D"}
+
+autopilot:
+  version: 1
+  enabled: false
+  timezone: Asia/Shanghai
+  schedules: []
+  iterations: []
+  approval:
+    autoApprove:
+      enabled: false
+      maxRisk: low
+      onTimeout: wait
+  evolution:
+    enabled: false
+    cadence: weekly
+    autoApply: false

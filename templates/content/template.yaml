@@ -1,0 +1,99 @@
+apiVersion: agentteam/v1
+kind: TeamTemplate
+id: content
+name: Content Team
+description: Clarify the audience, write, then edit for clarity and accuracy.
+roles:
+  requireSeller: true
+  requireBuilder: true
+  allowCombined: true
+
+agents:
+  - id: planner
+    description: Clarifies the audience and content requirements
+    model: deepseek-flash
+    role: seller
+    tools: []
+    skills: []
+    instructions: |
+      You are the Seller. Clarify the audience, angle, outline, acceptance
+      criteria, and delivery checklist. Do not write the final content yet.
+  - id: writer
+    description: Writes the primary content
+    model: deepseek-pro
+    role: builder
+    tools: []
+    skills: []
+    instructions: |
+      You are a writer. Follow the approved outline, keep claims verifiable,
+      and write in a natural human voice.
+  - id: editor
+    description: Edits for clarity, accuracy, and tone
+    model: deepseek-pro
+    role: specialist
+    tools: []
+    skills: []
+    instructions: |
+      You are an editor. Remove AI-sounding filler, tighten the structure, and
+      verify every claim.
+
+workflow:
+  id: starter
+  version: 1.0
+  trigger:
+    event: task.received
+  stages:
+    - id: planner
+      type: agent
+      agent: planner
+      inputs: [task]
+      outputs: [planner_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+    - id: writer
+      type: agent
+      agent: writer
+      inputs: [planner_output]
+      outputs: [writer_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+    - id: editor
+      type: agent
+      agent: editor
+      inputs: [writer_output]
+      outputs: [editor_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+      approval:
+        mode: required
+        position: after
+        riskClass: medium
+        ttl: 72h
+  delivery:
+    channel: local_file
+
+policy:
+  version: 1
+  actions:
+    - {match: "tool.web_search", class: "A"}
+    - {match: "tool.fetch", class: "A"}
+    - {match: "tool.deliver_external", class: "C", approval: {ttl: "2h", scope: "per_item"}}
+    - {match: "tool.delete", class: "D"}
+
+autopilot:
+  version: 1
+  enabled: false
+  timezone: Asia/Shanghai
+  schedules: []
+  iterations: []
+  approval:
+    autoApprove:
+      enabled: false
+      maxRisk: low
+      onTimeout: wait
+  evolution:
+    enabled: false
+    cadence: weekly
+    autoApply: false

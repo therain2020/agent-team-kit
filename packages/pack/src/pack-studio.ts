@@ -11,23 +11,14 @@ import {
 import { parse, stringify } from "yaml";
 import { type LoadResult, loadPack } from "./load-pack";
 import { inferAgentRole } from "./role-plan";
+import { loadTemplate } from "./templates";
 
 const MAX_FILE_BYTES = 256 * 1024;
 const AGENT_ID = /^[a-z][a-z0-9-]*$/;
 const ALLOWED_FILES =
   /^(team\.yaml|autopilot\.yaml|README\.md|agents\/[^/]+\.md|workflows\/[^/]+\.yaml|policies\/[^/]+\.yaml|evals\/[^/]+\.yaml|skills\/[^/]+\/SKILL\.md)$/;
 
-export type PackTemplate = "minimal" | "research" | "content" | "product";
-
-export interface TemplateAgent {
-  id: string;
-  description: string;
-  model: string;
-  role: AgentRole;
-  instructions: string;
-  tools?: string[];
-  skills?: string[];
-}
+export type PackTemplate = string;
 
 export interface CreatePackInput {
   root: string;
@@ -133,24 +124,29 @@ export async function createPack(
     throw new Error(`pack already exists: ${input.dirName}`);
   }
 
-  const template = templateAgents(input.template);
-  const employees = (input.agents?.length ? input.agents : template).map(
-    (agent, index) => {
-      const id = agent.id || `worker-${index + 1}`;
-      const description = agent.description || "Team member";
-      return {
-        id,
-        description,
-        model: agent.model || (index === 0 ? "deepseek-flash" : "deepseek-pro"),
-        role: agent.role ?? inferAgentRole(id, description),
-        instructions:
-          agent.instructions ||
-          `You are ${id}. Complete the assigned stage and return a concise, verifiable result.`,
-        tools: [] as string[],
-        skills: [] as string[],
-      };
-    },
-  );
+  const template = await loadTemplate(input.template);
+  const employees = input.agents?.length
+    ? input.agents.map((agent, index) => {
+        const id = agent.id || `worker-${index + 1}`;
+        const description = agent.description || "Team member";
+        return {
+          id,
+          description,
+          model:
+            agent.model || (index === 0 ? "deepseek-flash" : "deepseek-pro"),
+          role: agent.role ?? inferAgentRole(id, description),
+          instructions:
+            agent.instructions ||
+            `You are ${id}. Complete the assigned stage and return a concise, verifiable result.`,
+          tools: [] as string[],
+          skills: [] as string[],
+        };
+      })
+    : template.agents.map((agent) => ({
+        ...agent,
+        tools: [...agent.tools],
+        skills: [...agent.skills],
+      }));
 
   for (const agent of employees) {
     if (!AGENT_ID.test(agent.id)) {
@@ -160,6 +156,15 @@ export async function createPack(
   const unique = new Set(employees.map((agent) => agent.id));
   if (unique.size !== employees.length) {
     throw new Error("agent ids must be unique");
+  }
+
+  const agentIds = new Set(["manager", ...employees.map((agent) => agent.id)]);
+  for (const stage of template.workflow.stages) {
+    if (stage.agent && !agentIds.has(stage.agent)) {
+      throw new Error(
+        `template ${template.id} workflow references unknown agent: ${stage.agent}`,
+      );
+    }
   }
 
   const managerModel = input.managerModel || "deepseek-pro";
@@ -177,7 +182,7 @@ export async function createPack(
       description: input.description || `${input.name} agent team`,
       license: "Apache-2.0",
       compatibility: { kit: ">=0.1 <2.0" },
-      topics: ["agent-team-pack", input.template],
+      topics: ["agent-team-pack", template.id],
     },
     manager: {
       agent: "agents/manager.md",
@@ -202,7 +207,7 @@ export async function createPack(
         skills: agent.skills,
       })),
     ],
-    roles: templateRoleRules(input.template),
+    roles: template.roles,
     workspaces: {
       default: {
         agents: employees.map((agent) => agent.id),
@@ -213,40 +218,9 @@ export async function createPack(
     policies: ["policies/autonomy.yaml"],
   };
 
-  const workflow = buildStarterWorkflow(input.template, employees);
-
-  const autonomy = {
-    version: 1,
-    actions: [
-      { match: "tool.web_search", class: "A" },
-      { match: "tool.fetch", class: "A" },
-      {
-        match: "tool.deliver_external",
-        class: "C",
-        approval: { ttl: "2h", scope: "per_item" },
-      },
-      { match: "tool.delete", class: "D" },
-    ],
-  };
-
-  const autopilot = {
-    version: 1,
-    enabled: false,
-    timezone: "Asia/Shanghai",
-    schedules: [],
-    approval: {
-      autoApprove: {
-        enabled: false,
-        maxRisk: "low",
-        onTimeout: "wait",
-      },
-    },
-    evolution: {
-      enabled: false,
-      cadence: "weekly",
-      autoApply: false,
-    },
-  };
+  const workflow = template.workflow;
+  const autonomy = template.policy;
+  const autopilot = template.autopilot;
 
   await mkdir(path.join(dir, "agents"), { recursive: true });
   await mkdir(path.join(dir, "workflows"), { recursive: true });
@@ -609,229 +583,4 @@ function agentMarkdown(input: {
     permissions: { filesystem: "readonly", network: "none" },
   };
   return `---\n${stringify(frontmatter)}---\n\n${input.instructions.trim()}\n`;
-}
-
-function templateRoleRules(template: PackTemplate): {
-  requireSeller: boolean;
-  requireBuilder: boolean;
-  allowCombined: boolean;
-} {
-  if (template === "product") {
-    return {
-      requireSeller: true,
-      requireBuilder: true,
-      allowCombined: false,
-    };
-  }
-  if (template === "content") {
-    return {
-      requireSeller: true,
-      requireBuilder: true,
-      allowCombined: true,
-    };
-  }
-  return {
-    requireSeller: false,
-    requireBuilder: true,
-    allowCombined: true,
-  };
-}
-
-function buildStarterWorkflow(
-  template: PackTemplate,
-  employees: Array<{ id: string; role: AgentRole }>,
-): {
-  id: string;
-  version: string;
-  trigger: { event: string };
-  stages: Array<Record<string, unknown>>;
-  delivery: { channel: string };
-} {
-  const approval = {
-    mode: "required",
-    position: "after",
-    riskClass: "medium",
-    ttl: "72h",
-  };
-  const retry = { max: 1, backoff: "fixed" };
-  const stage = (
-    id: string,
-    agent: string,
-    inputs: string[],
-    outputs: string[],
-    options: Record<string, unknown> = {},
-  ) => ({
-    id,
-    type: "agent",
-    agent,
-    inputs,
-    outputs,
-    timeout: "15m",
-    retry,
-    ...options,
-  });
-
-  if (template === "product") {
-    const seller = employees.find((agent) => agent.role === "seller");
-    const builder = employees.find((agent) => agent.role === "builder");
-    const verifier = employees.find((agent) => agent.role === "specialist");
-    if (seller && builder) {
-      const stages = [
-        stage("clarify", seller.id, ["task"], ["requirements"], {
-          includeInitialInput: true,
-        }),
-        stage("build", builder.id, ["requirements"], ["build_result"], {
-          includeInitialInput: true,
-        }),
-      ];
-      if (verifier) {
-        stages.push(
-          stage("verify", verifier.id, ["build_result"], ["verification"], {
-            includeInitialInput: true,
-          }),
-        );
-      }
-      stages.push(
-        stage(
-          "package",
-          seller.id,
-          [verifier ? "verification" : "build_result"],
-          ["delivery_package"],
-          { includeInitialInput: true, approval },
-        ),
-      );
-      return {
-        id: "product-cycle",
-        version: "1.0",
-        trigger: { event: "task.received" },
-        stages,
-        delivery: { channel: "local_file" },
-      };
-    }
-  }
-
-  const stages = employees.map((agent, index) =>
-    stage(
-      agent.id,
-      agent.id,
-      index === 0 ? ["task"] : [`${employees[index - 1]?.id ?? "task"}_output`],
-      [`${agent.id}_output`],
-      {
-        includeInitialInput: index > 0,
-        ...(index === employees.length - 1 ? { approval } : {}),
-      },
-    ),
-  );
-
-  return {
-    id: "starter",
-    version: "1.0",
-    trigger: { event: "task.received" },
-    stages:
-      stages.length > 0
-        ? stages
-        : [stage("draft", "worker", ["task"], ["draft"], { approval })],
-    delivery: { channel: "local_file" },
-  };
-}
-
-function templateAgents(template: PackTemplate): TemplateAgent[] {
-  if (template === "research") {
-    return [
-      {
-        id: "researcher",
-        description: "Collects and verifies source evidence",
-        model: "deepseek-flash",
-        role: "builder",
-        instructions:
-          "You are a researcher. Gather verifiable evidence, keep provenance for every claim, and return a compact evidence set with citations.",
-        tools: ["web_search", "fetch"],
-      },
-      {
-        id: "writer",
-        description: "Turns evidence into a structured brief",
-        model: "deepseek-pro",
-        role: "builder",
-        instructions:
-          "You are a writer. Turn the evidence set into a structured brief. Cite every factual claim with [S#]; never invent citations.",
-      },
-      {
-        id: "reviewer",
-        description: "Checks citations, clarity, and actionability",
-        model: "deepseek-pro",
-        role: "specialist",
-        instructions:
-          "You are a reviewer. Check citations against the evidence set, flag unsupported claims, and suggest concrete fixes.",
-      },
-    ];
-  }
-
-  if (template === "content") {
-    return [
-      {
-        id: "planner",
-        description: "Clarifies the audience and content requirements",
-        model: "deepseek-flash",
-        role: "seller",
-        instructions:
-          "You are the Seller. Clarify the audience, angle, outline, acceptance criteria, and delivery checklist. Do not write the final content yet.",
-      },
-      {
-        id: "writer",
-        description: "Writes the primary content",
-        model: "deepseek-pro",
-        role: "builder",
-        instructions:
-          "You are a writer. Follow the approved outline, keep claims verifiable, and write in a natural human voice.",
-      },
-      {
-        id: "editor",
-        description: "Edits for clarity, accuracy, and tone",
-        model: "deepseek-pro",
-        role: "specialist",
-        instructions:
-          "You are an editor. Remove AI-sounding filler, tighten the structure, and verify every claim.",
-      },
-    ];
-  }
-
-  if (template === "product") {
-    return [
-      {
-        id: "seller",
-        description: "Owns requirements, acceptance and delivery",
-        model: "deepseek-pro",
-        role: "seller",
-        instructions:
-          "You are the Seller. Turn the task into a precise problem statement, definition of done, acceptance criteria, and delivery package. Never claim implementation that is not verified.",
-      },
-      {
-        id: "builder",
-        description: "Builds and optimizes the project",
-        model: "deepseek-pro",
-        role: "builder",
-        instructions:
-          "You are the Builder. Turn the approved requirements into an implementation plan and concrete changes. Keep the scope tight, explain trade-offs, and return verifiable results.",
-      },
-      {
-        id: "verifier",
-        description: "Independently verifies the build",
-        model: "deepseek-pro",
-        role: "specialist",
-        instructions:
-          "You are the Verifier. Independently check the build against acceptance criteria. Look for regressions, edge cases, and unsupported claims; return a pass/fail verdict with evidence.",
-      },
-    ];
-  }
-
-  return [
-    {
-      id: "worker",
-      description: "Completes the assigned task",
-      model: "deepseek-flash",
-      role: "builder",
-      instructions:
-        "You are a worker. Complete the assigned task and return a concise, verifiable result.",
-    },
-  ];
 }
