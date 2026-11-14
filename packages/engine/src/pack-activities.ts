@@ -10,6 +10,7 @@ import {
   StubModelGateway,
   createModelGateway,
 } from "@kit/model";
+import { type AlertInput, emitAlert, getOpsGate } from "@kit/ops";
 import { initStore } from "@kit/store";
 import {
   type Tool,
@@ -48,6 +49,17 @@ async function safeActivity(store: Store, input: ActivityInput): Promise<void> {
   } catch (error) {
     console.error(
       `[activity] ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+// Alerting must never break a run.
+async function safeAlert(store: Store, input: AlertInput): Promise<void> {
+  try {
+    await emitAlert(store, input);
+  } catch (error) {
+    console.error(
+      `[ops] ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -412,6 +424,16 @@ export async function failPackRun(input: {
     "failed",
     new Date().toISOString(),
   );
+  const run = await store.runs.get(input.runId);
+  await safeAlert(store, {
+    workspaceId: run?.workspaceId ?? "default",
+    tier: "P1",
+    kind: "run.failed",
+    title: `Run failed: ${input.runId}`,
+    body: input.reason,
+    runId: input.runId,
+    source: "engine",
+  });
 }
 
 export async function deliverPackRun(input: {
@@ -427,38 +449,57 @@ export async function deliverPackRun(input: {
     { workspaceId: input.workspaceId },
     "delivery",
   );
+  const gate = await getOpsGate(store);
   let result: Awaited<ReturnType<typeof deliverArtifact>>;
 
-  try {
-    const artifact = await store.artifactStore.findById(input.artifactId);
-    if (!artifact) {
-      throw new Error(`artifact not found: ${input.artifactId}`);
-    }
-    const manifest = await store.manifests.get(artifact.manifestId);
-    const blob = await store.blobs.findById(artifact.blobId);
-    if (!blob) {
-      throw new Error(`blob not found for artifact ${input.artifactId}`);
-    }
-    const bytes = await store.blobClient.get(blob.storageKey);
-    const markdown = new TextDecoder().decode(bytes);
-
-    result = await deliverArtifact({
-      channel: input.channel,
-      runId: input.runId,
-      artifactId: input.artifactId,
-      title: manifest
-        ? `${input.runId} · ${manifest.stageId}`
-        : input.artifactId,
-      markdown,
-      runMode: input.runMode,
-    });
-  } catch (error) {
+  if (gate.readOnly) {
     result = {
       ok: false,
       channel: input.channel,
-      skipped: false,
-      detail: error instanceof Error ? error.message : String(error),
+      skipped: true,
+      detail: `skipped: ${gate.reason ?? "night mode"}`,
     };
+    await safeActivity(store, {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      agentId: "ops",
+      kind: "ops.side_effect.blocked",
+      status: "blocked",
+      summary: `delivery skipped: ${gate.reason ?? "night mode"}`,
+      payload: { action: "delivery", channel: input.channel },
+    });
+  } else {
+    try {
+      const artifact = await store.artifactStore.findById(input.artifactId);
+      if (!artifact) {
+        throw new Error(`artifact not found: ${input.artifactId}`);
+      }
+      const manifest = await store.manifests.get(artifact.manifestId);
+      const blob = await store.blobs.findById(artifact.blobId);
+      if (!blob) {
+        throw new Error(`blob not found for artifact ${input.artifactId}`);
+      }
+      const bytes = await store.blobClient.get(blob.storageKey);
+      const markdown = new TextDecoder().decode(bytes);
+
+      result = await deliverArtifact({
+        channel: input.channel,
+        runId: input.runId,
+        artifactId: input.artifactId,
+        title: manifest
+          ? `${input.runId} · ${manifest.stageId}`
+          : input.artifactId,
+        markdown,
+        runMode: input.runMode,
+      });
+    } catch (error) {
+      result = {
+        ok: false,
+        channel: input.channel,
+        skipped: false,
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   await store.artifactService.publish({
@@ -713,6 +754,11 @@ async function runAgentWithTools(input: {
     input.input.runId,
   );
   await mkdir(sandboxRoot, { recursive: true });
+  const gate = await getOpsGate(
+    input.store,
+    new Date(),
+    input.input.workspaceId,
+  );
   const context: ToolContext = {
     repoRoot,
     sandboxRoot,
@@ -723,6 +769,7 @@ async function runAgentWithTools(input: {
       input.input.runMode === "LIVE" ||
       process.env.KIT_TOOLS_ALLOW_NETWORK === "1",
     allowLocalhost: process.env.KIT_TOOLS_ALLOW_LOCALHOST !== "0",
+    readOnly: gate.readOnly,
   };
 
   const messages: ModelMessage[] = [
@@ -1062,8 +1109,10 @@ async function gateWithRevisions(
   }
 
   const runCostCny = await calculateRunCost(store, input.runId);
+  const gate = await getOpsGate(store, new Date(), input.workspaceId);
   if (
     approval?.mode === "auto" &&
+    !gate.readOnly &&
     autoApprovalAllowed(approval, runCostCny, input.stageName, riskClass)
   ) {
     await recordAutoApproval(store, input, {
@@ -1133,6 +1182,7 @@ export async function requestApproval(
 ): Promise<RequestApprovalResult> {
   const store = await getStore();
   const runCostCny = await calculateRunCost(store, input.runId);
+  const gate = await getOpsGate(store, new Date(), input.workspaceId);
 
   if (input.approval.mode === "never") {
     return { required: false, runCostCny };
@@ -1140,6 +1190,7 @@ export async function requestApproval(
 
   if (
     input.approval.mode === "auto" &&
+    !gate.readOnly &&
     autoApprovalAllowed(
       input.approval,
       runCostCny,
@@ -1271,9 +1322,12 @@ async function createApprovalRequest(
     ttlMs: input.ttlMs,
   };
 
+  const gate = await getOpsGate(store, new Date(), input.workspaceId);
   let notified = false;
   let notifyError: string | undefined;
-  if (input.notify?.webhook) {
+  if (gate.readOnly) {
+    notifyError = `skipped: ${gate.reason ?? "night mode"}`;
+  } else if (input.notify?.webhook) {
     try {
       await notifyApprovalWebhook(input.notify, request);
       notified = true;
@@ -1302,6 +1356,26 @@ async function createApprovalRequest(
     cost: { currency: "CNY", amount: 0, tokens: 0 },
     sensitivity: "internal",
     retentionClass: "artifact_365d",
+  });
+
+  await safeAlert(store, {
+    workspaceId: input.workspaceId,
+    tier: input.riskClass === "high" ? "P1" : "P2",
+    kind: "approval.requested",
+    title:
+      input.requestType === "gate_failure"
+        ? `Gate failed: ${input.stageName}`
+        : `Approval requested: ${input.stageName}`,
+    body: input.summary,
+    runId: input.runId,
+    stageId: input.stageId,
+    requestId,
+    source: "engine",
+    meta: {
+      requestType: input.requestType,
+      riskClass: input.riskClass,
+      expiresAt,
+    },
   });
 
   return { requestId, expiresAt };

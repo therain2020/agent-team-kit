@@ -7,6 +7,7 @@ import {
   updateRun,
   updateTask,
 } from "@kit/iteration";
+import { getOpsGate } from "@kit/ops";
 import type { initStore } from "@kit/store";
 import { type ApplyPendingResult, JobError, type PendingChange } from "./types";
 
@@ -112,6 +113,15 @@ export async function applyPendingChange(
   const diff = await readArtifactText(store, ticket.patch_artifact_id);
   if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
     throw new JobError("invalid_diff", "diff is empty or truncated", 409);
+  }
+
+  const gate = await getOpsGate(store, new Date(), run.workspace_id);
+  if (gate.readOnly) {
+    throw new JobError(
+      "night_mode",
+      `apply blocked by ${gate.reason ?? "night mode"}`,
+      409,
+    );
   }
 
   const applied = await applyDiffToRepo({

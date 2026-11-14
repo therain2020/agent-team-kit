@@ -10,6 +10,7 @@
     "@kit/core": "workspace:*",
     "@kit/evolution": "workspace:*",
     "@kit/manager": "workspace:*",
+    "@kit/ops": "workspace:*",
     "@kit/pack": "workspace:*",
     "@kit/store": "workspace:*",
     "@kit/workflow": "workspace:*"

@@ -43,6 +43,7 @@ import {
   updateTask,
 } from "@kit/iteration";
 import { createModelGateway } from "@kit/model";
+import { getOpsGate } from "@kit/ops";
 import { loadPack } from "@kit/pack";
 import { initStore } from "@kit/store";
 import { securityScanCodeTool } from "@kit/tools";
@@ -801,6 +802,14 @@ export async function applyIterationTask(
     const diff = await readArtifactText(store, input.diffArtifactId);
     if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
       return await publishApply("blocked", "diff is empty or truncated");
+    }
+
+    const gate = await getOpsGate(store);
+    if (gate.readOnly) {
+      return await publishApply(
+        "blocked",
+        `night mode: ${gate.reason ?? "side effects paused"}`,
+      );
     }
 
     const applied = await applyDiffToRepo({

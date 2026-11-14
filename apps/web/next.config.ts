@@ -12,7 +12,6 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: repoRoot,
   turbopack: { root: repoRoot },
   distDir: process.env.KIT_WEB_DIST_DIR ?? ".next",
-  outputFileTracingRoot: path.resolve(process.cwd(), "../.."),
   transpilePackages: [
     "@kit/core",
     "@kit/store",

@@ -15,6 +15,7 @@ import {
   findDecisionForRequest,
   recordDecision,
 } from "@kit/manager";
+import { getOpsGate } from "@kit/ops";
 import {
   type LoadedPack,
   buildPackRun,
@@ -37,6 +38,8 @@ export interface TickResult {
   autoApproved: string[];
   aborted: string[];
   errors: string[];
+  nightMode?: boolean;
+  nightModeReason?: string;
   blocked?: { scope: string; target: string; reason: string };
 }
 
@@ -83,6 +86,11 @@ export async function runAutopilotTick(
       .map((run) => run.workflowId),
   );
   let temporal: Awaited<ReturnType<typeof createTemporalClient>> | undefined;
+  const gate = await getOpsGate(store, now, WORKSPACE_ID);
+  if (gate.readOnly) {
+    result.nightMode = true;
+    result.nightModeReason = gate.reason ?? "night mode";
+  }
 
   try {
     const hit = resolveKillSwitch(await store.killSwitches.listActive(), {
@@ -121,52 +129,54 @@ export async function runAutopilotTick(
             }
             result.enabled += 1;
 
-            await processSchedules({
-              pack,
-              state,
-              now,
-              runningWorkflows,
-              dryRun: options.dryRun ?? false,
-              store,
-              result,
-              getTemporal: async () => {
-                temporal ??= await createTemporalClient();
-                return temporal;
-              },
-            });
+            if (!gate.readOnly) {
+              await processSchedules({
+                pack,
+                state,
+                now,
+                runningWorkflows,
+                dryRun: options.dryRun ?? false,
+                store,
+                result,
+                getTemporal: async () => {
+                  temporal ??= await createTemporalClient();
+                  return temporal;
+                },
+              });
 
-            await processIterations({
-              pack,
-              state,
-              now,
-              dryRun: options.dryRun ?? false,
-              result,
-              getTemporal: async () => {
-                temporal ??= await createTemporalClient();
-                return temporal;
-              },
-            });
+              await processIterations({
+                pack,
+                state,
+                now,
+                dryRun: options.dryRun ?? false,
+                result,
+                getTemporal: async () => {
+                  temporal ??= await createTemporalClient();
+                  return temporal;
+                },
+              });
 
-            await processAutoApprovals({
-              pack,
-              state,
-              now,
-              store,
-              result,
-              getTemporal: async () => {
-                temporal ??= await createTemporalClient();
-                return temporal;
-              },
-            });
+              await processAutoApprovals({
+                pack,
+                state,
+                now,
+                store,
+                result,
+                getTemporal: async () => {
+                  temporal ??= await createTemporalClient();
+                  return temporal;
+                },
+              });
 
-            await processEvolution({
-              pack,
-              state,
-              now,
-              dryRun: options.dryRun ?? false,
-              store,
-              result,
-            });
+              await processEvolution({
+                pack,
+                state,
+                now,
+                dryRun: options.dryRun ?? false,
+                store,
+                result,
+              });
+            }
 
             state.lastTickAt = now.toISOString();
             if (!(await saveState(store.autopilotState, state))) {

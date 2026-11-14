@@ -85,5 +85,10 @@ export async function executeTool(
   if (!tool) {
     throw new Error(`unknown tool: ${name}`);
   }
+  if (context.readOnly === true && tool.definition.risk !== "read") {
+    throw new Error(
+      `tool "${name}" is a ${tool.definition.risk} action; side effects are paused by night mode`,
+    );
+  }
   return tool.execute(args, context);
 }

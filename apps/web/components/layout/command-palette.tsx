@@ -12,6 +12,7 @@ import {
   Package,
   Play,
   Search,
+  Siren,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
@@ -21,6 +22,7 @@ const ITEMS = [
   { href: "/", labelKey: "commandCenter", icon: LayoutDashboard },
   { href: "/manager", labelKey: "manager", icon: MessageSquare },
   { href: "/inbox", labelKey: "inbox", icon: Inbox },
+  { href: "/ops", labelKey: "ops", icon: Siren },
   { href: "/runs", labelKey: "runs", icon: Play },
   { href: "/packs", labelKey: "packs", icon: Package },
   { href: "/evolution", labelKey: "evolution", icon: FlaskConical },

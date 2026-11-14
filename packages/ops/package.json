@@ -1,0 +1,16 @@
+{
+  "name": "@kit/ops",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@kit/activity": "workspace:*",
+    "@kit/core": "workspace:*",
+    "@kit/delivery": "workspace:*",
+    "@kit/store": "workspace:*",
+    "zod": "^3.24.1"
+  }
+}
