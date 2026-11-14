@@ -1,5 +1,6 @@
 export * from "./canary";
 export * from "./cycle";
+export * from "./evidence";
 export * from "./evolve";
 export * from "./postgres";
 export * from "./repository";

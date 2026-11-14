@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { CanaryDecision, CanaryEvaluationSummary } from "@kit/evolution";
 import { Beaker, Gauge, Rocket, RotateCcw, ShieldCheck } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
@@ -21,6 +22,12 @@ const EVIDENCE_PLACEHOLDER =
   '{"sources":[{"citationId":"S1","title":"…","url":"…"}],"errors":[]}';
 
 type Mode = "start" | "traffic" | "evaluate" | "rollback" | "promote" | null;
+
+interface EvaluationResult {
+  decision: CanaryDecision;
+  evaluation?: CanaryEvaluationSummary;
+  evidence?: { generated: boolean; sources: number };
+}
 
 export interface VariantOption {
   dirName: string;
@@ -60,7 +67,7 @@ export function EvolutionActions({
   const [percent, setPercent] = useState(0);
   const [trafficPercent, setTrafficPercent] = useState(canaryPercent);
   const [evidenceText, setEvidenceText] = useState("");
-  const [stub, setStub] = useState(true);
+  const [result, setResult] = useState<EvaluationResult | null>(null);
   const [reason, setReason] = useState("");
   const [targetPack, setTargetPack] = useState(packs[0]?.dirName ?? "");
   const [apply, setApply] = useState(false);
@@ -98,24 +105,29 @@ export function EvolutionActions({
         });
         toast.success(t("trafficUpdated", { percent: trafficPercent }));
       } else if (mode === "evaluate") {
-        const payload = await post("/api/evolution/canary/evaluate", {
-          evidenceText,
-          stub,
-        });
-        const decision = payload.decision as {
-          rollback?: boolean;
-          reason?: string;
+        const payload = (await post("/api/evolution/canary/evaluate", {
+          evidenceText: evidenceText.trim() || undefined,
+        })) as {
+          decision: CanaryDecision;
+          evaluation?: CanaryEvaluationSummary;
+          evidence?: { generated: boolean; sources: number };
         };
-        if (decision.rollback) {
+        setResult({
+          decision: payload.decision,
+          ...(payload.evaluation ? { evaluation: payload.evaluation } : {}),
+          ...(payload.evidence ? { evidence: payload.evidence } : {}),
+        });
+        if (payload.decision.rollback) {
           toast.error(
             t("rolledBackReason", {
-              reason: decision.reason ?? "regression",
+              reason: payload.decision.reason ?? "regression",
             }),
           );
         } else {
           toast.success(t("canaryPassed"));
         }
         router.refresh();
+        return;
       } else if (mode === "rollback") {
         await post("/api/evolution/canary/rollback", {
           reason: reason || t("reasonPlaceholder"),
@@ -185,7 +197,10 @@ export function EvolutionActions({
         <Button
           size="sm"
           variant="outline"
-          onClick={() => setMode("evaluate")}
+          onClick={() => {
+            setResult(null);
+            setMode("evaluate");
+          }}
           disabled={!canEvaluate}
         >
           <ShieldCheck className="size-3.5" />
@@ -216,6 +231,7 @@ export function EvolutionActions({
           if (!open && !pending) {
             setMode(null);
             setError(null);
+            setResult(null);
           }
         }}
       >
@@ -302,30 +318,100 @@ export function EvolutionActions({
 
             {mode === "evaluate" ? (
               <>
-                <label className="flex items-start gap-2 rounded-md border border-border px-3 py-2">
-                  <input
-                    type="checkbox"
-                    checked={stub}
-                    onChange={(event) => setStub(event.target.checked)}
-                    className="mt-0.5 size-3.5 accent-emerald-500"
-                  />
-                  <span>
-                    <span className="block text-xs font-medium text-zinc-300">
-                      {t("stubEvaluation")}
-                    </span>
-                    <span className="block text-[11px] text-zinc-500">
-                      {t("stubDesc")}
-                    </span>
-                  </span>
-                </label>
-                <Field label={t("evidenceLabel")}>
+                <Field label={t("evidenceOptional")}>
                   <Textarea
                     value={evidenceText}
                     onChange={(event) => setEvidenceText(event.target.value)}
                     placeholder={EVIDENCE_PLACEHOLDER}
-                    className="min-h-36 font-mono text-[11px]"
+                    className="min-h-32 font-mono text-[11px]"
                   />
                 </Field>
+                <p className="text-[10px] text-zinc-500">
+                  {t("evidenceOptionalHint")}
+                </p>
+                {result ? (
+                  <div className="rounded-lg border border-border bg-zinc-950/60 p-3 text-[11px] text-zinc-300">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                          result.decision.rollback
+                            ? "border-red-500/40 text-red-300"
+                            : "border-emerald-500/40 text-emerald-300"
+                        }`}
+                      >
+                        {result.decision.rollback
+                          ? t("evaluationRolledBack")
+                          : t("evaluationPassed")}
+                      </span>
+                      {result.evidence ? (
+                        <span className="text-[10px] text-zinc-500">
+                          {result.evidence.generated
+                            ? t("autoEvidence")
+                            : t("manualEvidence")}{" "}
+                          ·{" "}
+                          {t("evidenceSources", {
+                            count: result.evidence.sources,
+                          })}
+                        </span>
+                      ) : null}
+                    </div>
+                    {result.evaluation ? (
+                      <div className="mt-2 space-y-1">
+                        <p>
+                          {t("championScore")}:{" "}
+                          <span className="font-mono text-zinc-100">
+                            {result.evaluation.champion.averageScore.toFixed(2)}
+                          </span>{" "}
+                          · {t("passRate")}{" "}
+                          <span className="font-mono text-zinc-100">
+                            {result.evaluation.champion.passRate.toFixed(2)}
+                          </span>
+                        </p>
+                        <p>
+                          {t("candidateScore")}:{" "}
+                          <span className="font-mono text-zinc-100">
+                            {result.evaluation.candidate.averageScore.toFixed(
+                              2,
+                            )}
+                          </span>{" "}
+                          · {t("passRate")}{" "}
+                          <span className="font-mono text-zinc-100">
+                            {result.evaluation.candidate.passRate.toFixed(2)}
+                          </span>
+                        </p>
+                        <p className="font-mono text-[10px] text-zinc-400">
+                          Δ score {signed(result.evaluation.delta.score)} · Δ
+                          pass rate {signed(result.evaluation.delta.passRate)} ·
+                          cost {result.evaluation.delta.costRatio.toFixed(2)}×
+                        </p>
+                        <p className="text-[10px] text-zinc-500">
+                          {t("thresholds")}:{" "}
+                          {t("thresholdScore", {
+                            value: signed(-result.evaluation.thresholds.score),
+                          })}{" "}
+                          ·{" "}
+                          {t("thresholdPassRate", {
+                            value: signed(
+                              -result.evaluation.thresholds.passRate,
+                            ),
+                          })}{" "}
+                          ·{" "}
+                          {t("thresholdCost", {
+                            value:
+                              result.evaluation.thresholds.costMultiplier.toFixed(
+                                1,
+                              ),
+                          })}
+                        </p>
+                      </div>
+                    ) : null}
+                    {result.decision.reason ? (
+                      <p className="mt-1 text-[10px] text-zinc-500">
+                        {result.decision.reason}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             ) : null}
 
@@ -403,8 +489,7 @@ export function EvolutionActions({
               onClick={runAction}
               disabled={
                 pending ||
-                (mode === "evaluate" &&
-                  (evidenceText.trim().length === 0 || !canEvaluate)) ||
+                (mode === "evaluate" && !canEvaluate) ||
                 (mode === "promote" &&
                   (apply ? confirmation !== "PROMOTE" : false))
               }
@@ -428,6 +513,10 @@ export function EvolutionActions({
       </Dialog>
     </>
   );
+}
+
+function signed(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
 }
 
 function Field({
