@@ -3,6 +3,25 @@
 > `1.0.0` is not released. It is gated on the unattended autonomy acceptance in
 > `plans/agent-pipeline/85-autonomy-1.0.md`. The current preview is `0.9.0`.
 
+## Unreleased
+
+- Pack DAG execution is now genuinely parallel: stages whose `inputFrom` /
+  `inputsFrom` dependencies are satisfied run concurrently (default 4, override
+  `KIT_PACK_CONCURRENCY`, clamped to 1–16). Join stages wait for every upstream,
+  a failed branch stops new scheduling while in-flight work settles, artifact
+  order stays deterministic, and concurrent approvals keep the run paused until
+  the last decision. Temporal's approval signal now queues by `requestId`.
+- AI-first configuration for autonomy: `/autopilot` lists every valid pack and
+  drafts a schedule from one line of intent (cron, budgets, timezone,
+  auto-approval, daemon switch). Drafts are reviewed then saved through
+  `PUT /api/packs/[dir]/autopilot`, which requires `confirmRisk` for LIVE,
+  auto-approval or a running daemon and rejects `maxRisk: high`.
+- Evolution cycles start from one line of intent: the composer picks an agent
+  and proposes a checkable hypothesis; `runEvolutionCycle` records and feeds
+  that hypothesis to the meta-agent. Evidence stays operator-provided.
+- `@kit/core/cron` exposes `isCronExpression` without node-only imports so the
+  composer can validate cron expressions in the browser.
+
 ## 0.9.0 — 2026-11-14
 
 - Autonomy foundation: external coder adapters for DSH (live), Codex and

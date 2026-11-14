@@ -11,6 +11,7 @@
       "@/*": ["./*"],
       "@kit/core": ["../../packages/core/src/index.ts"],
       "@kit/activity": ["../../packages/activity/src/index.ts"],
+      "@kit/core/cron": ["../../packages/core/src/cron.ts"],
       "@kit/bootstrap": ["../../packages/bootstrap/src/index.ts"],
       "@kit/engine": ["../../packages/engine/src/index.ts"],
       "@kit/engine/*": ["../../packages/engine/src/*.ts"],
@@ -24,7 +25,8 @@
       "@kit/pack": ["../../packages/pack/src/index.ts"],
       "@kit/evolution": ["../../packages/evolution/src/index.ts"],
       "@kit/telemetry": ["../../packages/telemetry/src/index.ts"],
-      "@kit/source": ["../../packages/source/src/index.ts"]
+      "@kit/source": ["../../packages/source/src/index.ts"],
+      "@kit/workshop": ["../../packages/workshop/src/index.ts"]
     }
   },
   "include": [

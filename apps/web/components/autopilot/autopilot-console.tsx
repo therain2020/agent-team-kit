@@ -1,5 +1,6 @@
 "use client";
 
+import { AutopilotPlanDialog } from "@/components/autopilot/autopilot-plan-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -235,6 +236,9 @@ export function AutopilotConsole({
                       <Badge variant={pack.enabled ? "success" : "outline"}>
                         {pack.enabled ? t("running") : t("paused")}
                       </Badge>
+                      {!pack.hasConfig ? (
+                        <Badge variant="warning">{t("notConfigured")}</Badge>
+                      ) : null}
                       <span className="font-mono text-[10px] text-zinc-600">
                         packs/{pack.dirName}
                       </span>
@@ -247,6 +251,13 @@ export function AutopilotConsole({
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <AutopilotPlanDialog
+                      packDir={pack.dirName}
+                      packName={pack.name}
+                      enabled={pack.enabled}
+                      config={pack.config}
+                      workflows={pack.workflows}
+                    />
                     <Link
                       href={`/packs/${encodeURIComponent(pack.dirName)}/studio`}
                     >

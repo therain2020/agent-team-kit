@@ -1,5 +1,10 @@
 import { fileURLToPath } from "node:url";
-import { setActivityHeartbeat } from "@kit/engine";
+import {
+  createDegradationGuard,
+  guardedActivities,
+  setActivityHeartbeat,
+} from "@kit/engine";
+import { initStore } from "@kit/store";
 import { initTelemetry, shutdownTelemetry } from "@kit/telemetry";
 import { applyTaskQueue } from "@kit/workflow";
 import { Context } from "@temporalio/activity";
@@ -23,13 +28,22 @@ const activityConcurrency = clampInt(
 
 const connection = await NativeConnection.connect({ address });
 const { applyIterationTask, ...mainIterationActivities } = iterationActivities;
+const engineStore = await initStore();
+const guardedPackActivities = guardedActivities(
+  createDegradationGuard(engineStore),
+  packActivities,
+);
 
 const worker = await Worker.create({
   connection,
   namespace,
   taskQueue,
   workflowsPath: fileURLToPath(new URL("./workflows.ts", import.meta.url)),
-  activities: { ...activities, ...packActivities, ...mainIterationActivities },
+  activities: {
+    ...activities,
+    ...guardedPackActivities,
+    ...mainIterationActivities,
+  },
   maxConcurrentActivityTaskExecutions: activityConcurrency,
 });
 
@@ -58,6 +72,7 @@ process.once("SIGTERM", () => {
 });
 
 await Promise.all([worker.run(), applyWorker.run()]);
+await engineStore.close().catch(() => undefined);
 await shutdownTelemetry();
 
 function clampInt(

@@ -32,9 +32,50 @@ bun run kit pack simulate my-team
 
 ### 3. Change the core
 
-1. Open an issue first for anything larger than a bug fix.
-2. Fork, branch, and run the checks below.
-3. Keep pull requests focused. One concern per PR.
+Every change that alters behavior or a contract follows the same six steps:
+**plan → issue → claim → branch/PR → merge and write back → clean up the
+worktree.** Typo and link-only fixes can go straight to a PR.
+
+1. **Plan first.** Align on the plan before writing code. The planning source of
+   truth lives outside this repository (see [docs/README.md](./docs/README.md)).
+2. **Open an issue that carries the plan.** Title it
+   `[<plan-slice>] <summary>` and include the parent issue, the plan reference
+   (`<file> §x.y`), current state, what to implement, acceptance criteria, and
+   the affected packages. Reference sections instead of pasting whole plans, so
+   the issue and the plan do not drift.
+3. **Claim it.** Assign the issue and leave a comment, so parallel workers do
+   not pick up the same task (this is how coding agents claim work too):
+
+   ```bash
+   gh issue edit <n> --add-assignee therain2020
+   gh issue comment <n> --body "claimed by <worktree/session>"
+   ```
+
+   Then work in an isolated worktree branched from `origin/develop`.
+4. **Branch and open a PR.** One issue, one branch, one PR. Name the branch
+   `<type>/<issue>-<slug>`, where `<type>` is `feat` (feature), `fix` (bug
+   fix), `docs` (docs or templates) or `chore` (tooling, CI or dependencies
+   with no behavior change). Target `develop`, and put `Closes #<n>` in the PR
+   body.
+5. **Merge and write back.** Once CI is green, squash-merge. Then update the
+   plan's status and decisions, comment the merge commit on the issue, and close
+   it.
+6. **Clean up the worktree.** Remove it as soon as the PR is merged — worktrees
+   are full checkouts and pile up quickly:
+
+   ```bash
+   git worktree remove .claude/worktrees/<topic>
+   git worktree prune
+   ```
+
+   `git worktree remove` refuses to run with uncommitted changes, so confirm the
+   work is merged or explicitly discarded first. Never remove someone else's
+   worktree.
+
+`develop` is the integration branch and the only default merge target. `master`
+is the release line, and `feat/autonomy-0.9` is the remote default branch — neither
+is a target for everyday PRs. Do not push to `develop` or `master`, and do not
+force-push shared branches.
 
 ## Local setup
 
@@ -65,6 +106,8 @@ bun run kit pack validate my-team
 
 ## Pull request rules
 
+- Target `develop` and link exactly one issue with `Closes #<n>`; name the plan
+  reference in the body. A PR without a corresponding issue is not merged.
 - `bun run typecheck`, `bun run lint` and `bun run test` must pass.
 - Add a test for behavior changes. Pack and template changes must validate.
 - Keep the diff small; do not include formatting-only changes in a feature PR.
@@ -93,4 +136,4 @@ test: cover template resolution
 
 Look for the `good first issue` label. Typical starter tasks include CLI messages,
 console empty states, docs links, translations and small validation tests. If you
-pick one up, comment on the issue so others know.
+pick one up, comment on the issue and assign it to yourself so others know.

@@ -18,6 +18,12 @@ import {
   scoreVariant,
 } from "./evolve";
 import type { EvolutionRepository } from "./repository";
+import {
+  createEvalSnapshot,
+  defaultCyclesRoot,
+  evaluatorHashForPack,
+  findPreviousEvalSnapshot,
+} from "./snapshot";
 
 export const DEFAULT_CYCLES = "variants/cycles.jsonl";
 
@@ -39,12 +45,17 @@ export interface EvolutionCycleRecord {
   autoApplied: boolean;
   createdAt: string;
   error?: string;
+  evalSnapshotPath?: string;
+  evalSnapshotHash?: string;
+  evaluatorHash?: string;
+  evaluatorApprovalRef?: string;
 }
 
 export interface CycleOptions {
   packDir: string;
   agentId?: string;
   inputFile: string;
+  hypothesis?: string;
   signals?: string[];
   stub?: boolean;
   autoApply?: boolean;
@@ -56,6 +67,11 @@ export interface CycleOptions {
   variantsRoot?: string;
   percent?: number;
   repo?: EvolutionRepository;
+  cyclesRoot?: string;
+  hiddenEvalsDir?: string;
+  freezeSnapshot?: boolean;
+  allowEvaluatorChange?: boolean;
+  evaluatorApprovalRef?: string;
 }
 
 export async function runEvolutionCycle(
@@ -75,6 +91,7 @@ export async function runEvolutionCycle(
   }
   const persistCycle = (record: EvolutionCycleRecord) =>
     finish(cyclesPath, record, repo);
+  let snapshotFields: Partial<EvolutionCycleRecord> = {};
   const baseRecord: EvolutionCycleRecord = {
     cycleId,
     packDir,
@@ -121,6 +138,7 @@ export async function runEvolutionCycle(
     if (!agent) {
       throw new Error(`unknown agent: ${agentId}`);
     }
+    baseRecord.agentId = agentId;
 
     const signals = [
       ...(options.signals ?? []),
@@ -136,10 +154,53 @@ export async function runEvolutionCycle(
       });
     }
 
+    const cyclesRoot = options.cyclesRoot ?? defaultCyclesRoot();
+    const evaluatorHash = await evaluatorHashForPack(loaded.dir);
+    const previous = await findPreviousEvalSnapshot({
+      cyclesRoot,
+      excludeCycleId: cycleId,
+      packDir: loaded.dir,
+    });
+    const evaluatorChanged =
+      previous !== null && previous.manifest.evaluatorHash !== evaluatorHash;
+    if (evaluatorChanged && !options.allowEvaluatorChange) {
+      return await persistCycle({
+        ...baseRecord,
+        evaluatorHash,
+        decision: "skipped",
+        rationale: `evaluator changed since cycle ${previous.manifest.cycleId}; pass --approve-evaluator-change with an approval reference`,
+      });
+    }
+
+    const snapshot = await createEvalSnapshot({
+      cycleId,
+      packDir: loaded.dir,
+      cyclesRoot,
+      ...(options.hiddenEvalsDir
+        ? { hiddenEvalsDir: options.hiddenEvalsDir }
+        : {}),
+      ...(options.freezeSnapshot === undefined
+        ? {}
+        : { freeze: options.freezeSnapshot }),
+      expectedEvaluatorHash: evaluatorHash,
+    });
+    snapshotFields = {
+      evalSnapshotPath: snapshot.dir,
+      evalSnapshotHash: snapshot.manifestHash,
+      evaluatorHash: snapshot.manifest.evaluatorHash,
+      ...(evaluatorChanged
+        ? {
+            evaluatorApprovalRef:
+              options.evaluatorApprovalRef ?? "operator-approved",
+          }
+        : {}),
+    };
+
     const hypothesis =
-      signals.length > 0
+      options.hypothesis?.trim() ||
+      (signals.length > 0
         ? `Improve ${agentId} against the latest failure signals without changing tools or permissions.`
-        : `Explore a more robust ${agentId} instruction set without changing tools or permissions.`;
+        : `Explore a more robust ${agentId} instruction set without changing tools or permissions.`);
 
     const current = await readFile(
       path.join(loaded.dir, agent.spec.file),
@@ -150,6 +211,7 @@ export async function runEvolutionCycle(
       agentId,
       currentInstructions,
       signals,
+      hypothesis,
       stub: options.stub ?? false,
     });
 
@@ -197,6 +259,7 @@ export async function runEvolutionCycle(
       {
         stub: options.stub,
         archive: archivePath,
+        evalDir: snapshot.dir,
         ...(repo ? { repo } : {}),
       },
     );
@@ -208,6 +271,7 @@ export async function runEvolutionCycle(
       {
         stub: options.stub,
         archive: archivePath,
+        evalDir: snapshot.dir,
         ...(repo ? { repo } : {}),
       },
     );
@@ -225,6 +289,7 @@ export async function runEvolutionCycle(
 
     const withScores: EvolutionCycleRecord = {
       ...baseRecord,
+      ...snapshotFields,
       agentId,
       hypothesis,
       signals,
@@ -253,11 +318,13 @@ export async function runEvolutionCycle(
       options.percent ?? 20,
       statePath,
       repo,
+      snapshot.dir,
     );
     const canary = await evaluateCanary([options.inputFile], {
       stub: options.stub,
       archive: archivePath,
       statePath,
+      evalDir: snapshot.dir,
       ...(repo ? { repo } : {}),
     });
     costCny += [...canary.champion, ...canary.variant].reduce(
@@ -303,6 +370,7 @@ export async function runEvolutionCycle(
   } catch (error) {
     return await persistCycle({
       ...baseRecord,
+      ...snapshotFields,
       decision: "failed",
       error: error instanceof Error ? error.message : String(error),
       rationale: "evolution cycle failed",
@@ -339,6 +407,7 @@ async function proposeInstructions(input: {
   agentId: string;
   currentInstructions: string;
   signals: string[];
+  hypothesis?: string;
   stub: boolean;
 }): Promise<{ instructions: string; costCny: number }> {
   if (input.stub || process.env.KIT_MODEL_MODE === "stub") {
@@ -363,6 +432,9 @@ Rules:
 - Fix the failure signals directly and keep the instructions under 2000 characters.
 - Do not mention these instructions or the meta-agent.`,
     input: `Agent: ${input.agentId}
+
+Hypothesis to test:
+${input.hypothesis || "- improve reliability against the failure signals"}
 
 Current instructions:
 ${input.currentInstructions}

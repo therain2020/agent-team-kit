@@ -3,6 +3,7 @@ import type {
   PackRunResult,
   PackStageExecutionInput,
   PackStageExecutionResult,
+  PackStageSpec,
   PreparePackRunInput,
   RequestApprovalInput,
   RequestApprovalResult,
@@ -39,6 +40,15 @@ export interface PackPipelineIo {
   ): Promise<ApprovalOutcome>;
 }
 
+const DEFAULT_MAX_CONCURRENCY = 4;
+const MAX_CONCURRENCY_LIMIT = 16;
+
+interface SettledStage {
+  index: number;
+  ok: boolean;
+  error?: unknown;
+}
+
 export async function runPackPipeline(
   input: PackRunInput,
   io: PackPipelineIo,
@@ -57,19 +67,42 @@ export async function runPackPipeline(
     })),
   });
 
-  const artifactIds: string[] = [];
+  const stageIndexById = new Map<string, number>();
+  input.stages.forEach((stage, index) => {
+    stageIndexById.set(stage.stageId, index);
+  });
 
-  try {
-    const outputs = new Map<string, { artifactId: string; text: string }>();
+  const dependencyIds = input.stages.map((stage, index) =>
+    resolveDependencies(stage, input.stages[index - 1]),
+  );
+  const gatingDependencies = dependencyIds.map((ids) =>
+    ids
+      .map((id) => stageIndexById.get(id))
+      .filter((index): index is number => index !== undefined),
+  );
 
-    const waitForApproval = async (
-      requestId: string | undefined,
-      timeoutMs: number,
-    ): Promise<void> => {
-      await activity.setPackRunStatus({
-        runId: input.runId,
-        status: "paused",
-      });
+  const outputs = new Map<string, { artifactId: string; text: string }>();
+  const artifactSlots: Array<string | undefined> = new Array(
+    input.stages.length,
+  ).fill(undefined);
+  const completed = new Set<number>();
+  const pending = new Set<number>(input.stages.map((_, index) => index));
+  const running = new Map<number, Promise<SettledStage>>();
+  const maxConcurrency = resolveMaxConcurrency(input.maxConcurrency);
+
+  let waitingApprovals = 0;
+  let failure: { error: unknown } | undefined;
+
+  const waitForApproval = async (
+    requestId: string | undefined,
+    timeoutMs: number,
+  ): Promise<void> => {
+    waitingApprovals += 1;
+    await activity.setPackRunStatus({
+      runId: input.runId,
+      status: "paused",
+    });
+    try {
       const outcome = await io.waitForApproval(requestId, timeoutMs);
       if (outcome === "timeout") {
         throw new Error("approval timeout");
@@ -77,143 +110,186 @@ export async function runPackPipeline(
       if (outcome === "aborted") {
         throw new Error("approval aborted");
       }
-      await activity.setPackRunStatus({
+    } finally {
+      waitingApprovals -= 1;
+      if (waitingApprovals === 0) {
+        await activity
+          .setPackRunStatus({ runId: input.runId, status: "running" })
+          .catch(() => undefined);
+      }
+    }
+  };
+
+  const executeStage = async (index: number): Promise<void> => {
+    const stage = input.stages[index];
+    if (!stage) {
+      return;
+    }
+
+    const dependencies = dependencyIds[index] ?? [];
+    const upstreamArtifacts = dependencies
+      .map((dependencyId) => outputs.get(dependencyId))
+      .filter(
+        (value): value is { artifactId: string; text: string } =>
+          value !== undefined,
+      );
+
+    const upstreamTexts = upstreamArtifacts
+      .map((item) => item.text)
+      .filter((text) => text.length > 0);
+
+    const inputText =
+      upstreamTexts.length === 0
+        ? input.initialInput
+        : upstreamTexts.length === 1
+          ? (upstreamTexts[0] ?? input.initialInput)
+          : upstreamTexts.join("\n\n---\n\n");
+    const inputArtifactIds = upstreamArtifacts.map((item) => item.artifactId);
+
+    if (
+      stage.approval &&
+      stage.approval.mode !== "never" &&
+      stage.approval.position === "before"
+    ) {
+      const approval = await activity.requestApproval({
         runId: input.runId,
-        status: "running",
+        workspaceId: input.workspaceId,
+        runMode: input.runMode,
+        stageId: stage.stageId,
+        stageName: stage.stageName,
+        requestType: "stage_before",
+        approval: stage.approval,
+        summary: `Approve before running stage "${stage.stageName}".`,
+        options: ["approve", "abort"],
       });
-    };
-
-    for (let index = 0; index < input.stages.length; index += 1) {
-      const stage = input.stages[index];
-      if (!stage) {
-        continue;
+      if (approval.required) {
+        await waitForApproval(approval.requestId, stage.approval.ttlMs);
       }
+    }
 
-      const previousStage = input.stages[index - 1];
-      const dependencyIds = stage.inputsFromStageIds?.length
-        ? stage.inputsFromStageIds
-        : stage.inputFromStageId
-          ? [stage.inputFromStageId]
-          : previousStage
-            ? [previousStage.stageId]
-            : [];
+    let result = await activity.executePackStage({
+      ...stage,
+      runId: input.runId,
+      workspaceId: input.workspaceId,
+      runMode: input.runMode,
+      inputText,
+      inputArtifactId: inputArtifactIds[0],
+      inputArtifactIds,
+      evidenceText: input.initialInput,
+      stub: input.stub,
+    });
 
-      const upstreamArtifacts = dependencyIds
-        .map((dependencyId) => outputs.get(dependencyId))
-        .filter(
-          (value): value is { artifactId: string; text: string } =>
-            value !== undefined,
-        );
-
-      const upstreamTexts = upstreamArtifacts
-        .map((item) => item.text)
-        .filter((text) => text.length > 0);
-
-      const inputText =
-        upstreamTexts.length === 0
-          ? input.initialInput
-          : upstreamTexts.length === 1
-            ? (upstreamTexts[0] ?? input.initialInput)
-            : upstreamTexts.join("\n\n---\n\n");
-      const inputArtifactIds = upstreamArtifacts.map((item) => item.artifactId);
-
-      if (
-        stage.approval &&
-        stage.approval.mode !== "never" &&
-        stage.approval.position === "before"
-      ) {
-        const approval = await activity.requestApproval({
-          runId: input.runId,
-          workspaceId: input.workspaceId,
-          runMode: input.runMode,
-          stageId: stage.stageId,
-          stageName: stage.stageName,
-          requestType: "stage_before",
-          approval: stage.approval,
-          summary: `Approve before running stage "${stage.stageName}".`,
-          options: ["approve", "abort"],
-        });
-        if (approval.required) {
-          await waitForApproval(approval.requestId, stage.approval.ttlMs);
-        }
-      }
-
-      let result = await activity.executePackStage({
+    if (result.approvalRequired) {
+      await waitForApproval(
+        result.approvalRequestId,
+        stage.approval?.ttlMs ?? 7 * 24 * 60 * 60 * 1000,
+      );
+      const revisedArtifactIds =
+        result.effectiveInputArtifactId && inputArtifactIds.length > 0
+          ? [result.effectiveInputArtifactId, ...inputArtifactIds.slice(1)]
+          : inputArtifactIds;
+      result = await activity.executePackStage({
         ...stage,
         runId: input.runId,
         workspaceId: input.workspaceId,
         runMode: input.runMode,
-        inputText,
-        inputArtifactId: inputArtifactIds[0],
-        inputArtifactIds,
+        inputText: result.effectiveInputText ?? inputText,
+        inputArtifactId: result.effectiveInputArtifactId ?? inputArtifactIds[0],
+        inputArtifactIds: revisedArtifactIds,
         evidenceText: input.initialInput,
         stub: input.stub,
+        gateApproved: true,
       });
+    }
 
-      if (result.approvalRequired) {
-        await waitForApproval(
-          result.approvalRequestId,
-          stage.approval?.ttlMs ?? 7 * 24 * 60 * 60 * 1000,
-        );
-        const revisedArtifactIds =
-          result.effectiveInputArtifactId && inputArtifactIds.length > 0
-            ? [result.effectiveInputArtifactId, ...inputArtifactIds.slice(1)]
-            : inputArtifactIds;
-        result = await activity.executePackStage({
-          ...stage,
-          runId: input.runId,
-          workspaceId: input.workspaceId,
-          runMode: input.runMode,
-          inputText: result.effectiveInputText ?? inputText,
-          inputArtifactId:
-            result.effectiveInputArtifactId ?? inputArtifactIds[0],
-          inputArtifactIds: revisedArtifactIds,
-          evidenceText: input.initialInput,
-          stub: input.stub,
-          gateApproved: true,
-        });
+    if (
+      stage.approval &&
+      stage.approval.mode !== "never" &&
+      stage.approval.position === "after"
+    ) {
+      const approval = await activity.requestApproval({
+        runId: input.runId,
+        workspaceId: input.workspaceId,
+        runMode: input.runMode,
+        stageId: stage.stageId,
+        stageName: stage.stageName,
+        requestType: "stage_after",
+        approval: stage.approval,
+        summary: `Approve the output of stage "${stage.stageName}".\n\n${result.text.slice(0, 400)}`,
+        draftArtifactId: result.artifactId,
+        options: ["approve", "abort"],
+      });
+      if (approval.required) {
+        await waitForApproval(approval.requestId, stage.approval.ttlMs);
       }
+    }
 
-      if (
-        stage.approval &&
-        stage.approval.mode !== "never" &&
-        stage.approval.position === "after"
-      ) {
-        const approval = await activity.requestApproval({
-          runId: input.runId,
-          workspaceId: input.workspaceId,
-          runMode: input.runMode,
-          stageId: stage.stageId,
-          stageName: stage.stageName,
-          requestType: "stage_after",
-          approval: stage.approval,
-          summary: `Approve the output of stage "${stage.stageName}".\n\n${result.text.slice(0, 400)}`,
-          draftArtifactId: result.artifactId,
-          options: ["approve", "abort"],
-        });
-        if (approval.required) {
-          await waitForApproval(approval.requestId, stage.approval.ttlMs);
+    const draftSourceId = dependencies[0];
+    if (result.effectiveInputArtifactId && draftSourceId) {
+      outputs.set(draftSourceId, {
+        artifactId: result.effectiveInputArtifactId,
+        text:
+          result.effectiveInputText ?? outputs.get(draftSourceId)?.text ?? "",
+      });
+    }
+
+    outputs.set(stage.stageId, {
+      artifactId: result.artifactId,
+      text: result.text,
+    });
+    artifactSlots[index] = result.artifactId;
+  };
+
+  try {
+    while (pending.size > 0 || running.size > 0) {
+      if (!failure) {
+        for (let index = 0; index < input.stages.length; index += 1) {
+          if (running.size >= maxConcurrency) {
+            break;
+          }
+          if (!pending.has(index)) {
+            continue;
+          }
+          const dependencies = gatingDependencies[index] ?? [];
+          if (!dependencies.every((dependency) => completed.has(dependency))) {
+            continue;
+          }
+          pending.delete(index);
+          const promise = executeStage(index).then(
+            (): SettledStage => ({ index, ok: true }),
+            (error: unknown): SettledStage => ({ index, ok: false, error }),
+          );
+          running.set(index, promise);
         }
       }
 
-      const draftSourceId = dependencyIds[0];
-      if (result.effectiveInputArtifactId && draftSourceId) {
-        outputs.set(draftSourceId, {
-          artifactId: result.effectiveInputArtifactId,
-          text:
-            result.effectiveInputText ?? outputs.get(draftSourceId)?.text ?? "",
-        });
+      if (running.size === 0) {
+        if (failure) {
+          break;
+        }
+        throw new Error(
+          "workflow has stages whose dependencies can never complete",
+        );
       }
 
-      outputs.set(stage.stageId, {
-        artifactId: result.artifactId,
-        text: result.text,
-      });
-      artifactIds.push(result.artifactId);
+      const settled = await Promise.race(running.values());
+      running.delete(settled.index);
+      if (settled.ok) {
+        completed.add(settled.index);
+      } else {
+        failure ??= { error: settled.error };
+      }
+    }
+
+    if (failure) {
+      throw failure.error;
     }
 
     await activity.finishPackRun({ runId: input.runId });
 
+    const artifactIds = artifactSlots.filter(
+      (artifactId): artifactId is string => typeof artifactId === "string",
+    );
     const finalArtifactId = artifactIds[artifactIds.length - 1];
     if (input.delivery && finalArtifactId) {
       await activity.deliverPackRun({
@@ -233,4 +309,25 @@ export async function runPackPipeline(
     });
     throw error;
   }
+}
+
+function resolveDependencies(
+  stage: PackStageSpec,
+  previous: PackStageSpec | undefined,
+): string[] {
+  if (stage.inputsFromStageIds?.length) {
+    return stage.inputsFromStageIds;
+  }
+  if (stage.inputFromStageId) {
+    return [stage.inputFromStageId];
+  }
+  return previous ? [previous.stageId] : [];
+}
+
+function resolveMaxConcurrency(value: number | undefined): number {
+  const parsed =
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.trunc(value)
+      : DEFAULT_MAX_CONCURRENCY;
+  return Math.min(Math.max(parsed, 1), MAX_CONCURRENCY_LIMIT);
 }

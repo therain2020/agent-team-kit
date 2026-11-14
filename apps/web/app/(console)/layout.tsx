@@ -1,5 +1,7 @@
+import { DegradationBanner } from "@/components/layout/degradation-banner";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
+import { loadActiveModes } from "@/lib/degradation";
 import { loadPausedCount } from "@/lib/runs";
 import { hasApiKey } from "@kit/bootstrap";
 import type { ReactNode } from "react";
@@ -21,6 +23,13 @@ export default async function ConsoleLayout({
     backendDown = true;
   }
 
+  let activeModes: Awaited<ReturnType<typeof loadActiveModes>> = [];
+  try {
+    activeModes = await loadActiveModes();
+  } catch {
+    // A degradation lookup failure is surfaced by the health pill instead.
+  }
+
   let keyConfigured = true;
   try {
     keyConfigured = hasApiKey();
@@ -33,6 +42,15 @@ export default async function ConsoleLayout({
       <Sidebar pausedCount={pausedCount} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
+        <DegradationBanner
+          initialModes={activeModes.map((mode) => ({
+            modeId: mode.modeId,
+            scope: mode.scope,
+            workspaceId: mode.workspaceId,
+            kind: mode.kind,
+            enteredAt: mode.enteredAt,
+          }))}
+        />
         {backendDown ? (
           <div
             role="alert"

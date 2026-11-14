@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { EventEnvelope } from "@kit/core";
+import { isExecutionBlocked } from "@kit/core";
+import { activeModeForWorkspace, auditBlockedExecution } from "@kit/engine";
 import { type LoadedPack, buildPackRun, loadPack } from "@kit/pack";
 import type { initStore } from "@kit/store";
 import { type createTemporalClient, taskQueue } from "@kit/workflow";
@@ -28,6 +30,15 @@ export class EventRouter {
     const result: RouteResult = { started: [], skipped: [], errors: [] };
     const packs = await this.loadPacks();
     const active = await this.store.runs.list({ limit: 200 });
+    const mode = await activeModeForWorkspace(this.store, event.workspaceId);
+    const readOnly = isExecutionBlocked(mode);
+    if (mode && readOnly) {
+      await auditBlockedExecution(this.store, mode, event.workspaceId, {
+        action: "route",
+        eventId: event.eventId,
+        eventType: event.type,
+      });
+    }
 
     for (const pack of packs) {
       for (const workflow of pack.workflows) {
@@ -36,6 +47,14 @@ export class EventRouter {
         }
 
         const packName = pack.pack.metadata.name;
+        if (readOnly) {
+          result.skipped.push({
+            pack: packName,
+            workflow: workflow.id,
+            reason: "workspace is in read-only mode",
+          });
+          continue;
+        }
         const busy = active.some(
           (run) =>
             run.workflowId === workflow.id &&

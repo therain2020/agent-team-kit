@@ -18,6 +18,7 @@ import { createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
 import { parse, stringify } from "yaml";
 import type { EvolutionRepository } from "./repository";
+import { verifyEvalSnapshot } from "./snapshot";
 
 export const DEFAULT_ARCHIVE = "variants/archive.jsonl";
 
@@ -153,6 +154,7 @@ export async function scoreVariant(
     rubricRef?: string;
     archive?: string;
     repo?: EvolutionRepository;
+    evalDir?: string;
   } = {},
 ): Promise<EvolutionRecord> {
   const meta = await readVariantMeta(variantDir);
@@ -176,8 +178,20 @@ export async function scoreVariant(
   const [rubricFile, rubricKey] = (
     options.rubricRef ?? "evals/rubrics.yaml#radar"
   ).split("#");
+
+  let rubricRoot = baseline.dir;
+  if (options.evalDir) {
+    const verification = await verifyEvalSnapshot(options.evalDir);
+    if (!verification.ok) {
+      throw new Error(
+        `frozen eval snapshot failed verification: ${verification.mismatches.join(", ")}`,
+      );
+    }
+    rubricRoot = path.resolve(options.evalDir);
+  }
+
   const rubricDoc = parse(
-    await readFile(path.join(baseline.dir, rubricFile ?? ""), "utf8"),
+    await readFile(path.join(rubricRoot, rubricFile ?? ""), "utf8"),
   ) as {
     rubrics?: Record<
       string,

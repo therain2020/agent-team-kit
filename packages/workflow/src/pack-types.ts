@@ -44,6 +44,7 @@ export interface PackStageSpec {
   position?: { x: number; y: number };
   revision?: RevisionSpec;
   approval?: PackApprovalSpec;
+  failureMode?: "fail_open" | "fail_closed";
 }
 
 export interface PackRunInput {
@@ -56,6 +57,7 @@ export interface PackRunInput {
   initialInput: string;
   stages: PackStageSpec[];
   stub: boolean;
+  maxConcurrency?: number;
   delivery?: {
     channel: "im" | "email" | "local_file" | "webhook";
     approval?: "never" | "required_if_published";

@@ -1,6 +1,7 @@
 import type {
   ArtifactVersion,
   Blob,
+  DegradationScope,
   EventEnvelope,
   Manifest,
   Run,
@@ -12,12 +13,16 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
   fromArtifactRow,
   fromBlobRow,
+  fromDegradationAuditRow,
+  fromDegradationRow,
   fromEventRow,
   fromManifestRow,
   fromRunRow,
   fromStageRow,
   toArtifactRow,
   toBlobRow,
+  toDegradationAuditRow,
+  toDegradationRow,
   toEventRow,
   toManifestRow,
   toRunRow,
@@ -28,6 +33,9 @@ import type {
   AutopilotStateRecord,
   AutopilotStateStore,
   BlobRepository,
+  DegradationAuditRecord,
+  DegradationStateRecord,
+  DegradationStore,
   EventStore,
   ManifestStore,
   RunRequestRecord,
@@ -41,6 +49,8 @@ import {
   artifacts,
   autopilotState,
   blobs,
+  degradationAudit,
+  degradationState,
   manifests,
   runRequests,
   runs,
@@ -520,4 +530,81 @@ function fromSqliteAutopilotRow(
     updatedAt: row.updatedAt,
     version: Number(row.version ?? 0),
   };
+}
+
+export class SqliteDegradationStore implements DegradationStore {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async get(
+    scope: DegradationScope,
+    workspaceId: string,
+  ): Promise<DegradationStateRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(degradationState)
+      .where(
+        and(
+          eq(degradationState.scope, scope),
+          eq(degradationState.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+    return row ? fromDegradationRow(row) : null;
+  }
+
+  async listActive(): Promise<DegradationStateRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(degradationState)
+      .where(eq(degradationState.status, "active"))
+      .orderBy(desc(degradationState.enteredAt));
+    return rows.map(fromDegradationRow);
+  }
+
+  async upsert(record: DegradationStateRecord): Promise<void> {
+    const values = toDegradationRow(record);
+    await this.db
+      .insert(degradationState)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [degradationState.scope, degradationState.workspaceId],
+        set: values,
+      });
+  }
+
+  async markExited(
+    scope: DegradationScope,
+    workspaceId: string,
+    exitedAt: string,
+    exitReason: string,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(degradationState)
+      .set({ status: "exited", exitedAt, exitReason })
+      .where(
+        and(
+          eq(degradationState.scope, scope),
+          eq(degradationState.workspaceId, workspaceId),
+          eq(degradationState.status, "active"),
+        ),
+      )
+      .returning({ modeId: degradationState.modeId });
+    return rows.length > 0;
+  }
+
+  async appendAudit(record: DegradationAuditRecord): Promise<void> {
+    await this.db
+      .insert(degradationAudit)
+      .values(toDegradationAuditRow(record))
+      .onConflictDoNothing();
+  }
+
+  async listAudit(limit = 50): Promise<DegradationAuditRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(degradationAudit)
+      .orderBy(desc(degradationAudit.occurredAt))
+      .limit(limit);
+    return rows.map(fromDegradationAuditRow);
+  }
 }

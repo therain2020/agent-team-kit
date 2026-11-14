@@ -162,6 +162,10 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   rationale TEXT NOT NULL,
   auto_applied BOOLEAN NOT NULL DEFAULT false,
   error TEXT,
+  eval_snapshot_path TEXT,
+  eval_snapshot_hash TEXT,
+  evaluator_hash TEXT,
+  evaluator_approval_ref TEXT,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -174,6 +178,7 @@ CREATE TABLE IF NOT EXISTS evolution_state (
   canary_percent INTEGER,
   canary_since TIMESTAMPTZ,
   canary_reason TEXT,
+  canary_eval_snapshot_path TEXT,
   version INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (workspace_id, pack_dir)
@@ -186,6 +191,17 @@ CREATE TABLE IF NOT EXISTS evolution_meta (
   updated_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (workspace_id, key)
 );
+
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS eval_snapshot_path TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS eval_snapshot_hash TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS evaluator_hash TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS evaluator_approval_ref TEXT;
+ALTER TABLE evolution_state
+  ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS merge_tickets (
   ticket_id TEXT PRIMARY KEY,
@@ -300,6 +316,36 @@ CREATE TABLE IF NOT EXISTS activity_events (
   payload JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS degradation_state (
+  scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  triggers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  behavior TEXT NOT NULL,
+  quality_floor JSONB NOT NULL DEFAULT '{}'::jsonb,
+  exit_criteria JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL,
+  entered_at TIMESTAMPTZ NOT NULL,
+  entered_by TEXT NOT NULL,
+  exited_at TIMESTAMPTZ,
+  exit_reason TEXT,
+  PRIMARY KEY (scope, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS degradation_audit (
+  audit_id TEXT PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  detail JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
@@ -478,6 +524,10 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   rationale TEXT NOT NULL,
   auto_applied INTEGER NOT NULL DEFAULT 0,
   error TEXT,
+  eval_snapshot_path TEXT,
+  eval_snapshot_hash TEXT,
+  evaluator_hash TEXT,
+  evaluator_approval_ref TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -490,6 +540,7 @@ CREATE TABLE IF NOT EXISTS evolution_state (
   canary_percent INTEGER,
   canary_since TEXT,
   canary_reason TEXT,
+  canary_eval_snapshot_path TEXT,
   version INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, pack_dir)
@@ -617,9 +668,45 @@ CREATE TABLE IF NOT EXISTS activity_events (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS degradation_state (
+  scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  triggers TEXT NOT NULL DEFAULT '[]',
+  behavior TEXT NOT NULL,
+  quality_floor TEXT NOT NULL DEFAULT '{}',
+  exit_criteria TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL,
+  entered_at TEXT NOT NULL,
+  entered_by TEXT NOT NULL,
+  exited_at TEXT,
+  exit_reason TEXT,
+  PRIMARY KEY (scope, workspace_id)
+);
+
+CREATE TABLE IF NOT EXISTS degradation_audit (
+  audit_id TEXT PRIMARY KEY,
+  occurred_at TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
+
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE iteration_runs ADD COLUMN repo_root TEXT;
+
+ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_path TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_hash TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN evaluator_hash TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN evaluator_approval_ref TEXT;
+ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);

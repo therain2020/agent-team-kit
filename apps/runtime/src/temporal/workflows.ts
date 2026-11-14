@@ -252,13 +252,20 @@ export async function iterationWorkflow(
 export async function packWorkflow(
   input: PackRunInput,
 ): Promise<PackRunResult> {
-  let approvalPayload:
-    | { decision: "approve" | "abort"; note?: string; requestId?: string }
-    | undefined;
+  const approvalQueue: Array<{
+    decision: "approve" | "abort";
+    note?: string;
+    requestId?: string;
+  }> = [];
 
   setHandler(approvalSignal, (payload) => {
-    approvalPayload = payload;
+    approvalQueue.push(payload);
   });
+
+  const matches = (
+    payload: { requestId?: string },
+    requestId: string | undefined,
+  ) => !payload.requestId || !requestId || payload.requestId === requestId;
 
   return runPackPipeline(input, {
     activities: {
@@ -272,18 +279,19 @@ export async function packWorkflow(
     },
     waitForApproval: async (requestId, timeoutMs) => {
       const fulfilled = await condition(
-        () =>
-          approvalPayload !== undefined &&
-          (!approvalPayload.requestId ||
-            !requestId ||
-            approvalPayload.requestId === requestId),
+        () => approvalQueue.some((payload) => matches(payload, requestId)),
         timeoutMs,
       );
 
-      const payload = approvalPayload;
-      approvalPayload = undefined;
+      const index = approvalQueue.findIndex((payload) =>
+        matches(payload, requestId),
+      );
+      if (!fulfilled || index < 0) {
+        return "timeout";
+      }
+      const [payload] = approvalQueue.splice(index, 1);
 
-      if (!fulfilled || !payload) {
+      if (!payload) {
         return "timeout";
       }
       return payload.decision === "approve" ? "approved" : "aborted";

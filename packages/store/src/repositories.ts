@@ -1,8 +1,15 @@
 ﻿import type {
   ArtifactVersion,
   Blob,
+  DegradationAuditAction,
+  DegradationScope,
+  DegradationTrigger,
+  DegradedModeKind,
+  DegradedModeStatus,
   EventEnvelope,
+  ExitCriteria,
   Manifest,
+  QualityFloor,
   Run,
   RunMode,
   RunStatus,
@@ -17,6 +24,8 @@ import {
   artifacts,
   autopilotState,
   blobs,
+  degradationAudit,
+  degradationState,
   manifests,
   runRequests,
   runs,
@@ -810,5 +819,192 @@ export class PostgresRunRequestStore implements RunRequestStore {
       .where(eq(runRequests.runId, runId))
       .limit(1);
     return row ? fromRunRequestRow(row) : null;
+  }
+}
+
+export interface DegradationStateRecord {
+  scope: DegradationScope;
+  workspaceId: string;
+  modeId: string;
+  kind: DegradedModeKind;
+  triggers: DegradationTrigger[];
+  behavior: string;
+  qualityFloor: QualityFloor;
+  exitCriteria: ExitCriteria;
+  status: DegradedModeStatus;
+  enteredAt: string;
+  enteredBy: string;
+  exitedAt: string | null;
+  exitReason: string | null;
+}
+
+export interface DegradationAuditRecord {
+  auditId: string;
+  occurredAt: string;
+  actor: string;
+  action: DegradationAuditAction;
+  scope: DegradationScope;
+  workspaceId: string;
+  modeId: string;
+  detail: Record<string, unknown>;
+}
+
+export interface DegradationStore {
+  get(
+    scope: DegradationScope,
+    workspaceId: string,
+  ): Promise<DegradationStateRecord | null>;
+  listActive(): Promise<DegradationStateRecord[]>;
+  upsert(record: DegradationStateRecord): Promise<void>;
+  markExited(
+    scope: DegradationScope,
+    workspaceId: string,
+    exitedAt: string,
+    exitReason: string,
+  ): Promise<boolean>;
+  appendAudit(record: DegradationAuditRecord): Promise<void>;
+  listAudit(limit?: number): Promise<DegradationAuditRecord[]>;
+}
+
+export function toDegradationRow(record: DegradationStateRecord) {
+  return {
+    scope: record.scope,
+    workspaceId: record.workspaceId,
+    modeId: record.modeId,
+    kind: record.kind,
+    triggers: record.triggers,
+    behavior: record.behavior,
+    qualityFloor: record.qualityFloor,
+    exitCriteria: record.exitCriteria,
+    status: record.status,
+    enteredAt: record.enteredAt,
+    enteredBy: record.enteredBy,
+    exitedAt: record.exitedAt,
+    exitReason: record.exitReason,
+  };
+}
+
+export function fromDegradationRow(
+  row: typeof degradationState.$inferSelect,
+): DegradationStateRecord {
+  return {
+    scope: row.scope as DegradationScope,
+    workspaceId: row.workspaceId,
+    modeId: row.modeId,
+    kind: row.kind as DegradedModeKind,
+    triggers: row.triggers,
+    behavior: row.behavior,
+    qualityFloor: row.qualityFloor,
+    exitCriteria: row.exitCriteria,
+    status: row.status as DegradedModeStatus,
+    enteredAt: row.enteredAt,
+    enteredBy: row.enteredBy,
+    exitedAt: row.exitedAt ?? null,
+    exitReason: row.exitReason ?? null,
+  };
+}
+
+export function toDegradationAuditRow(record: DegradationAuditRecord) {
+  return {
+    auditId: record.auditId,
+    occurredAt: record.occurredAt,
+    actor: record.actor,
+    action: record.action,
+    scope: record.scope,
+    workspaceId: record.workspaceId,
+    modeId: record.modeId,
+    detail: record.detail,
+  };
+}
+
+export function fromDegradationAuditRow(
+  row: typeof degradationAudit.$inferSelect,
+): DegradationAuditRecord {
+  return {
+    auditId: row.auditId,
+    occurredAt: row.occurredAt,
+    actor: row.actor,
+    action: row.action as DegradationAuditAction,
+    scope: row.scope as DegradationScope,
+    workspaceId: row.workspaceId,
+    modeId: row.modeId,
+    detail: row.detail,
+  };
+}
+
+export class PostgresDegradationStore implements DegradationStore {
+  constructor(private readonly db: Database) {}
+
+  async get(
+    scope: DegradationScope,
+    workspaceId: string,
+  ): Promise<DegradationStateRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(degradationState)
+      .where(
+        and(
+          eq(degradationState.scope, scope),
+          eq(degradationState.workspaceId, workspaceId),
+        ),
+      )
+      .limit(1);
+    return row ? fromDegradationRow(row) : null;
+  }
+
+  async listActive(): Promise<DegradationStateRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(degradationState)
+      .where(eq(degradationState.status, "active"))
+      .orderBy(desc(degradationState.enteredAt));
+    return rows.map(fromDegradationRow);
+  }
+
+  async upsert(record: DegradationStateRecord): Promise<void> {
+    const values = toDegradationRow(record);
+    await this.db
+      .insert(degradationState)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [degradationState.scope, degradationState.workspaceId],
+        set: values,
+      });
+  }
+
+  async markExited(
+    scope: DegradationScope,
+    workspaceId: string,
+    exitedAt: string,
+    exitReason: string,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(degradationState)
+      .set({ status: "exited", exitedAt, exitReason })
+      .where(
+        and(
+          eq(degradationState.scope, scope),
+          eq(degradationState.workspaceId, workspaceId),
+          eq(degradationState.status, "active"),
+        ),
+      )
+      .returning({ modeId: degradationState.modeId });
+    return rows.length > 0;
+  }
+
+  async appendAudit(record: DegradationAuditRecord): Promise<void> {
+    await this.db
+      .insert(degradationAudit)
+      .values(toDegradationAuditRow(record))
+      .onConflictDoNothing();
+  }
+
+  async listAudit(limit = 50): Promise<DegradationAuditRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(degradationAudit)
+      .orderBy(desc(degradationAudit.occurredAt))
+      .limit(limit);
+    return rows.map(fromDegradationAuditRow);
   }
 }

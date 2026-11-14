@@ -23,6 +23,7 @@
     "@kit/pack": "workspace:*",
     "@kit/source": "workspace:*",
     "@kit/store": "workspace:*",
+    "@kit/workshop": "workspace:*",
     "@kit/workflow": "workspace:*",
     "ai": "^7.0.173",
     "better-sqlite3": "^13.2.0",

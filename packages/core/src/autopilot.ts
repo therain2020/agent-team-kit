@@ -1,19 +1,7 @@
 import { z } from "zod";
+import { isCronExpression } from "./cron";
 
-const CRON_FIELD = /^(\*|(\d+)(-\d+)?)(\/\d+)?$/;
-
-export function isCronExpression(value: string): boolean {
-  const fields = value.trim().split(/\s+/);
-  if (fields.length !== 5) {
-    return false;
-  }
-  return fields.every((field) =>
-    field
-      .split(",")
-      .filter(Boolean)
-      .every((part) => CRON_FIELD.test(part)),
-  );
-}
+export { isCronExpression } from "./cron";
 
 export const autopilotScheduleSchema = z.object({
   id: z.string().min(1),

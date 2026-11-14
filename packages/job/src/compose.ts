@@ -1,10 +1,19 @@
 import path from "node:path";
-import type { AgentRole } from "@kit/core";
+import {
+  type AgentRole,
+  type AutopilotConfig,
+  isCronExpression,
+} from "@kit/core";
 import { createModelGateway, loadModelConfig } from "@kit/model";
 import { loadPack, rolePlanForAgents, validateRolePlan } from "@kit/pack";
 import { JobError } from "./types";
 
-export type ComposeKind = "mission" | "packRun" | "approvalPolicy";
+export type ComposeKind =
+  | "mission"
+  | "packRun"
+  | "approvalPolicy"
+  | "autopilot"
+  | "evolutionCycle";
 
 export interface ComposeInput {
   kind: ComposeKind;
@@ -49,9 +58,25 @@ export interface ApprovalPolicyValues {
   policies: PolicyRow[];
 }
 
+export type AutopilotValues = AutopilotConfig;
+
+export interface EvolutionCycleValues {
+  packDir: string;
+  agentId: string;
+  hypothesis: string;
+  stub: boolean;
+  autoApply: boolean;
+  force: boolean;
+}
+
 export interface ComposeResult {
   kind: ComposeKind;
-  values: MissionValues | PackRunValues | ApprovalPolicyValues;
+  values:
+    | MissionValues
+    | PackRunValues
+    | ApprovalPolicyValues
+    | AutopilotValues
+    | EvolutionCycleValues;
   rationale: string;
   warnings: string[];
   model: "live" | "heuristic";
@@ -92,6 +117,35 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
     roleRules: loaded.roleRules,
   };
 
+  if (input.kind === "autopilot") {
+    return composeAutopilot(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        workflows: loaded.workflows.map((workflow) => ({
+          id: workflow.id,
+          stages: workflow.stages.map((stage) => stage.id),
+        })),
+        current: loaded.autopilot ?? null,
+      },
+      input.env ?? process.env,
+    );
+  }
+  if (input.kind === "evolutionCycle") {
+    return composeEvolutionCycle(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        packDir: path.basename(loaded.dir),
+        agents: [...loaded.agents.entries()].map(([id, agent]) => ({
+          id,
+          role: agent.role,
+          model: agent.frontmatter.model,
+        })),
+      },
+      input.env ?? process.env,
+    );
+  }
   if (input.kind === "packRun") {
     return composePackRun(intent, facts, input.env ?? process.env);
   }
@@ -244,6 +298,320 @@ Rules: workflow must be one of the provided ids; prefer a stub run unless the in
     warnings: [...new Set(warnings)],
     model,
   };
+}
+
+interface AutopilotFacts {
+  pack: string;
+  workflows: Array<{ id: string; stages: string[] }>;
+  current: AutopilotConfig | null;
+}
+
+function defaultAutopilot(facts: AutopilotFacts): AutopilotConfig {
+  const current = facts.current;
+  const first = facts.workflows[0]?.id ?? "";
+  const schedules =
+    current && current.schedules.length > 0
+      ? current.schedules
+      : first
+        ? [
+            {
+              id: "daily-run",
+              workflow: first,
+              cron: "0 9 * * *",
+              mode: "DRY_RUN" as const,
+            },
+          ]
+        : [];
+  return {
+    version: 1,
+    enabled: current?.enabled ?? false,
+    timezone: current?.timezone ?? "UTC",
+    schedules,
+    iterations: current?.iterations ?? [],
+    approval: {
+      autoApprove: current?.approval?.autoApprove ?? {
+        enabled: false,
+        maxRisk: "low",
+        onTimeout: "wait",
+      },
+    },
+    ...(current?.evolution ? { evolution: current.evolution } : {}),
+  };
+}
+
+async function composeAutopilot(
+  intent: string,
+  facts: AutopilotFacts,
+  env: Record<string, string | undefined>,
+): Promise<ComposeResult> {
+  const fallback = defaultAutopilot(facts);
+  const warnings: string[] = [];
+  if (facts.workflows.length === 0) {
+    warnings.push("这个 Pack 没有工作流，无法生成自动运行计划。");
+  }
+  let values = fallback;
+  let rationale =
+    fallback.schedules.length > 0
+      ? "保留现有计划，默认以 dry-run 运行。"
+      : "默认每天 09:00 以 dry-run 试运行一次。";
+  let model: ComposeResult["model"] = "heuristic";
+
+  try {
+    const gateway = createModelGateway(loadModelConfig(env));
+    const response = await gateway.complete({
+      model: "deepseek-flash",
+      instructions: `You schedule an autonomous agent team.
+Return JSON only:
+{"schedules":[{"workflow":"<id>","cron":"<5-field cron>","mode":"DRY_RUN|LIVE","dailyRuns":1,"dailyCostCny":1}],"timezone":"<IANA timezone>","rationale":"<one sentence>","warnings":["<optional>"]}
+Rules:
+- workflow must be one of the provided workflow ids.
+- cron is a 5-field expression interpreted in the timezone; prefer off-peak hours.
+- default to mode DRY_RUN; use LIVE only when the intent explicitly asks to run for real.
+- dailyRuns must be 1-24 and dailyCostCny 0-20; omit them when unsure.
+- never enable the daemon or auto-approval; those stay human decisions.
+- do not invent workflows, budgets or facts.`,
+      input: JSON.stringify({
+        intent,
+        pack: facts.pack,
+        workflows: facts.workflows,
+        currentSchedules: fallback.schedules,
+        timezone: fallback.timezone,
+      }),
+    });
+    const parsed = parseJson(response.text);
+    if (parsed) {
+      const validated = validateAutopilotSchedules(
+        parsed.schedules,
+        facts,
+        fallback.schedules,
+        warnings,
+      );
+      const timezone = validateTimezone(parsed.timezone);
+      values = {
+        ...fallback,
+        schedules: validated.schedules,
+        ...(timezone ? { timezone } : {}),
+      };
+      if (validated.accepted) {
+        rationale =
+          typeof parsed.rationale === "string" && parsed.rationale.trim()
+            ? parsed.rationale.trim().slice(0, 500)
+            : rationale;
+        if (Array.isArray(parsed.warnings)) {
+          warnings.push(
+            ...parsed.warnings
+              .filter((item): item is string => typeof item === "string")
+              .map((item) => item.slice(0, 300))
+              .slice(0, 5),
+          );
+        }
+        model = "live";
+      } else {
+        warnings.push("AI 计划未通过校验，已使用默认计划。");
+      }
+    }
+  } catch {
+    warnings.push("AI 草稿不可用，已使用默认计划。");
+  }
+
+  return {
+    kind: "autopilot",
+    values,
+    rationale,
+    warnings: [...new Set(warnings)],
+    model,
+  };
+}
+
+function validateAutopilotSchedules(
+  raw: unknown,
+  facts: AutopilotFacts,
+  fallback: AutopilotConfig["schedules"],
+  warnings: string[],
+): { schedules: AutopilotConfig["schedules"]; accepted: boolean } {
+  if (!Array.isArray(raw)) {
+    return { schedules: fallback, accepted: false };
+  }
+  const workflowIds = new Set(facts.workflows.map((workflow) => workflow.id));
+  const schedules: AutopilotConfig["schedules"] = [];
+  const usedIds = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const workflow =
+      typeof record.workflow === "string" && workflowIds.has(record.workflow)
+        ? record.workflow
+        : null;
+    if (!workflow) {
+      warnings.push("AI 选的工作流不存在，已忽略该计划。");
+      continue;
+    }
+    const cron =
+      typeof record.cron === "string" && isCronExpression(record.cron.trim())
+        ? record.cron.trim().replace(/\s+/g, " ")
+        : null;
+    if (!cron) {
+      warnings.push(`计划 ${workflow} 的 cron 表达式无效，已忽略。`);
+      continue;
+    }
+    const baseId = slug(
+      typeof record.id === "string" && record.id.trim()
+        ? record.id
+        : `${workflow}-schedule`,
+    );
+    let id = baseId;
+    let suffix = 2;
+    while (usedIds.has(id)) {
+      id = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+    usedIds.add(id);
+    const dailyRuns = clampNumber(record.dailyRuns, 1, 24);
+    const dailyCostCny = clampNumber(record.dailyCostCny, 0, 20);
+    schedules.push({
+      id,
+      workflow,
+      cron,
+      mode: record.mode === "LIVE" ? "LIVE" : "DRY_RUN",
+      ...(dailyRuns !== undefined || dailyCostCny !== undefined
+        ? {
+            budget: {
+              ...(dailyRuns !== undefined ? { dailyRuns } : {}),
+              ...(dailyCostCny !== undefined ? { dailyCostCny } : {}),
+            },
+          }
+        : {}),
+    });
+  }
+  return schedules.length > 0
+    ? { schedules, accepted: true }
+    : { schedules: fallback, accepted: false };
+}
+
+function validateTimezone(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed === "UTC" || /^[A-Za-z]+\/[A-Za-z0-9_+-]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return undefined;
+}
+
+interface EvolutionFacts {
+  pack: string;
+  packDir: string;
+  agents: Array<{ id: string; role: AgentRole; model?: string }>;
+}
+
+async function composeEvolutionCycle(
+  intent: string,
+  facts: EvolutionFacts,
+  env: Record<string, string | undefined>,
+): Promise<ComposeResult> {
+  const employees = facts.agents.filter((agent) => agent.role !== "manager");
+  const pool = employees.length > 0 ? employees : facts.agents;
+  const fallbackAgent =
+    pool.find((agent) => intent.toLowerCase().includes(agent.id)) ?? pool[0];
+  const warnings: string[] = [];
+  if (!fallbackAgent) {
+    throw new JobError("invalid_pack", "pack has no evolvable agent", 400);
+  }
+  let agentId = fallbackAgent.id;
+  let hypothesis = `Improve ${agentId} so the next cycle addresses: ${intent}`;
+  let rationale =
+    "选择 Pack 的第一个非 Manager agent，用一句话假设驱动本轮演化。";
+  let model: ComposeResult["model"] = "heuristic";
+
+  try {
+    const gateway = createModelGateway(loadModelConfig(env));
+    const response = await gateway.complete({
+      model: "deepseek-flash",
+      instructions: `You propose one evolution cycle for a private agent team.
+Return JSON only:
+{"agentId":"<id>","hypothesis":"<one sentence>","rationale":"<one sentence>","warnings":["<optional>"]}
+Rules:
+- agentId must be one of the provided agent ids; prefer a non-manager agent.
+- the hypothesis must be checkable and limited to role instructions; never change tools, permissions, models or files.
+- do not invent failure signals, evidence or scores.
+- keep hypothesis and rationale under 300 characters.`,
+      input: JSON.stringify({
+        intent,
+        pack: facts.pack,
+        agents: facts.agents,
+      }),
+    });
+    const parsed = parseJson(response.text);
+    if (parsed) {
+      const byId = new Map(facts.agents.map((agent) => [agent.id, agent]));
+      const chosen =
+        typeof parsed.agentId === "string" && byId.has(parsed.agentId)
+          ? parsed.agentId
+          : null;
+      const text =
+        typeof parsed.hypothesis === "string" && parsed.hypothesis.trim()
+          ? parsed.hypothesis.trim().slice(0, 500)
+          : null;
+      if (chosen && text) {
+        agentId = chosen;
+        hypothesis = text;
+        rationale =
+          typeof parsed.rationale === "string" && parsed.rationale.trim()
+            ? parsed.rationale.trim().slice(0, 500)
+            : rationale;
+        if (Array.isArray(parsed.warnings)) {
+          warnings.push(
+            ...parsed.warnings
+              .filter((item): item is string => typeof item === "string")
+              .map((item) => item.slice(0, 300))
+              .slice(0, 5),
+          );
+        }
+        model = "live";
+      }
+    }
+  } catch {
+    warnings.push("AI 草稿不可用，已使用启发式假设。");
+  }
+
+  return {
+    kind: "evolutionCycle",
+    values: {
+      packDir: facts.packDir,
+      agentId,
+      hypothesis: hypothesis.slice(0, 500),
+      stub: true,
+      autoApply: false,
+      force: true,
+    },
+    rationale,
+    warnings: [...new Set(warnings)],
+    model,
+  };
+}
+
+function clampNumber(
+  value: unknown,
+  min: number,
+  max: number,
+): number | undefined {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+  return Math.min(max, Math.max(min, Math.round(parsed * 100) / 100));
+}
+
+function slug(value: string): string {
+  const cleaned = value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+  return cleaned || "schedule";
 }
 
 interface PolicyFacts {
