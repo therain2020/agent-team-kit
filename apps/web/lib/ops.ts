@@ -3,11 +3,14 @@ import {
   type AlertRecord,
   type AlertStatus,
   type AlertTier,
+  type AutonomyLevel,
+  type AutonomyPresetRecord,
   DEFAULT_WORKSPACE_ID,
   type OnCallPolicy,
   type OpsGate,
   ackAlert,
   emitAlert,
+  getActiveAutonomyPreset,
   getOpsGate,
   getOpsPolicy,
   listAlerts,
@@ -15,21 +18,38 @@ import {
 } from "@kit/ops";
 import { ensureStoreSchema, getStore } from "./store";
 
+export interface OpsAutonomyView {
+  level: AutonomyLevel;
+  preset: AutonomyPresetRecord | null;
+  liveAllowed: boolean;
+}
+
 export interface OpsConsoleData {
   policy: OnCallPolicy;
   gate: OpsGate;
   alerts: AlertRecord[];
+  autonomy: OpsAutonomyView;
 }
 
 export async function loadOpsConsole(): Promise<OpsConsoleData> {
   await ensureStoreSchema();
   const store = getStore();
-  const [policy, gate, alerts] = await Promise.all([
+  const [policy, gate, alerts, preset] = await Promise.all([
     getOpsPolicy(store, DEFAULT_WORKSPACE_ID),
     getOpsGate(store, new Date(), DEFAULT_WORKSPACE_ID),
     listAlerts(store, { workspaceId: DEFAULT_WORKSPACE_ID, limit: 50 }),
+    getActiveAutonomyPreset(store, DEFAULT_WORKSPACE_ID),
   ]);
-  return { policy, gate, alerts };
+  return {
+    policy,
+    gate,
+    alerts,
+    autonomy: {
+      level: preset ? preset.level : "manual",
+      preset,
+      liveAllowed: process.env.KIT_UI_ALLOW_LIVE === "1" || preset !== null,
+    },
+  };
 }
 
 export async function loadOpsAlerts(filter: {

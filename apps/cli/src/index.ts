@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { registerApprove } from "./commands/approve";
+import { registerAutonomy } from "./commands/autonomy";
 import { registerBootstrap } from "./commands/bootstrap";
 import { registerDemo } from "./commands/demo";
 import { registerDev } from "./commands/dev";
@@ -72,6 +73,7 @@ registerKillSwitch(program);
 registerIterate(program);
 registerSignals(program);
 registerWorkshop(program);
+registerAutonomy(program);
 
 await program.parseAsync().catch((error: unknown) => {
   console.error(`✖ ${error instanceof Error ? error.message : String(error)}`);
