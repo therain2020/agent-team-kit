@@ -1,3 +1,4 @@
+export const PG_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS events (
   event_id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
@@ -88,3 +89,97 @@ CREATE TABLE IF NOT EXISTS autopilot_state (
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
+`;
+
+export const SQLITE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS events (
+  event_id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  occurred_at TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  trace_id TEXT NOT NULL,
+  payload_ref TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS runs (
+  run_id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  workflow_id TEXT NOT NULL,
+  workflow_version TEXT NOT NULL,
+  run_mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stages (
+  stage_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  checkpoint_id TEXT,
+  error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS manifests (
+  manifest_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  producer TEXT NOT NULL,
+  input_refs TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT NOT NULL,
+  run_mode TEXT NOT NULL,
+  cost TEXT NOT NULL,
+  eval_refs TEXT NOT NULL DEFAULT '[]',
+  approval_refs TEXT NOT NULL DEFAULT '[]',
+  sensitivity TEXT NOT NULL,
+  retention_class TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS blobs (
+  blob_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  storage_key TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (workspace_id, sha256)
+);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  artifact_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL,
+  blob_id TEXT NOT NULL,
+  manifest_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  supersedes TEXT,
+  superseded_by TEXT,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (artifact_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS autopilot_state (
+  workspace_id TEXT NOT NULL,
+  pack_dir TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  last_tick_at TEXT,
+  next_runs TEXT NOT NULL DEFAULT '{}',
+  day TEXT,
+  runs_today INTEGER NOT NULL DEFAULT 0,
+  spent_today REAL NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, pack_dir)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
+`;

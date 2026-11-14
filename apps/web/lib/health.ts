@@ -38,7 +38,7 @@ export async function getHealth(): Promise<HealthSnapshot> {
 
   let db: HealthSnapshot["db"] = "error";
   try {
-    await store.sql`select 1 as ok`;
+    await store.ping();
     db = "ok";
   } catch (error) {
     errors.push(`db: ${messageOf(error)}`);

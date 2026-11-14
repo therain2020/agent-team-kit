@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 async function localConfig() {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "kit-pglite-"));
+  const dir = await mkdtemp(path.join(os.tmpdir(), "kit-sqlite-"));
   dirs.push(dir);
   return loadStoreConfig({
     KIT_RUNTIME_MODE: "local",
@@ -67,10 +67,10 @@ function stage(): Stage {
   };
 }
 
-describe("pglite embedded store", () => {
-  it("creates the schema and round-trips runs, artifacts, and raw SQL", async () => {
+describe("sqlite embedded store", () => {
+  it("creates the schema and round-trips runs, artifacts, and autopilot state", async () => {
     const config = await localConfig();
-    expect(config.driver).toBe("pglite");
+    expect(config.driver).toBe("sqlite");
     const store = await initStore(config);
     closers.push(() => store.close());
 
@@ -84,7 +84,7 @@ describe("pglite embedded store", () => {
 
     const published = await store.artifactService.publish({
       workspaceId: "default",
-      content: new TextEncoder().encode("hello embedded pg"),
+      content: new TextEncoder().encode("hello embedded sqlite"),
       producer: {
         agentId: "echo",
         agentVersion: "1.0.0",
@@ -112,10 +112,27 @@ describe("pglite embedded store", () => {
     expect(artifacts).toHaveLength(1);
     const manifest = await store.manifests.get(published.artifact.manifestId);
     expect(manifest?.producer.agentId).toBe("echo");
+    expect(manifest?.cost).toEqual({ currency: "CNY", amount: 0, tokens: 0 });
 
-    const health = await store.sql<Array<{ ok: number }>>`select 1 as ok`;
-    expect(health[0]?.ok).toBe(1);
-  }, 120_000);
+    await store.autopilotState.insertIfMissing({
+      workspaceId: "default",
+      packDir: "minimal",
+      enabled: true,
+      lastTickAt: null,
+      nextRuns: { daily: "2026-11-16T00:00:00.000Z" },
+      day: "2026-11-15",
+      runsToday: 2,
+      spentToday: 0.15,
+      lastError: null,
+      updatedAt: new Date().toISOString(),
+    });
+    const state = await store.autopilotState.get("default", "minimal");
+    expect(state?.enabled).toBe(true);
+    expect(state?.spentToday).toBeCloseTo(0.15);
+    expect(state?.nextRuns.daily).toBe("2026-11-16T00:00:00.000Z");
+
+    await store.ping();
+  }, 60_000);
 
   it("keeps data across close and reopen", async () => {
     const config = await localConfig();
@@ -128,5 +145,5 @@ describe("pglite embedded store", () => {
     closers.push(() => second.close());
     const runs = await second.runs.list({ limit: 5 });
     expect(runs.map((item) => item.runId)).toEqual(["run_local_1"]);
-  }, 120_000);
+  }, 60_000);
 });

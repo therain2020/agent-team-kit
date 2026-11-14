@@ -1,4 +1,4 @@
-import path from "node:path";
+﻿import path from "node:path";
 import { eventEnvelopeSchema, newId } from "@kit/core";
 import { buildPackRun, loadPack, simulatePack } from "@kit/pack";
 import { initStore } from "@kit/store";
@@ -154,7 +154,7 @@ export function registerPack(program: Command): void {
           );
         } finally {
           await connection.close();
-          await store.sql.end();
+          await store.close();
         }
       },
     );

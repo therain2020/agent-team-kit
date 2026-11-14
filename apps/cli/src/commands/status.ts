@@ -1,4 +1,4 @@
-import { initStore } from "@kit/store";
+﻿import { initStore } from "@kit/store";
 import type { Command } from "commander";
 
 export function registerStatus(program: Command): void {
@@ -56,7 +56,7 @@ export function registerStatus(program: Command): void {
           JSON.stringify({ run, stages, artifacts: details }, null, 2),
         );
       } finally {
-        await store.sql.end();
+        await store.close();
       }
     });
 }

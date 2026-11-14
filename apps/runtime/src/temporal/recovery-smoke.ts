@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+﻿import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { newId } from "@kit/core";
 import { initStore } from "@kit/store";
@@ -170,7 +170,7 @@ async function main(): Promise<void> {
 
   killWorker(worker);
   await connection.close();
-  await store.sql.end();
+  await store.close();
   process.exit(0);
 }
 

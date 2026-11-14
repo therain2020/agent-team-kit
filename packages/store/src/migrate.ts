@@ -1,15 +1,11 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import type { StoreDriver } from "./config";
+import { PG_SCHEMA_SQL, SQLITE_SCHEMA_SQL } from "./schema-text";
 
 export async function ensureSchema(
   exec: (statement: string) => Promise<void>,
+  driver: StoreDriver,
 ): Promise<void> {
-  const schemaPath = path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "schema.sql",
-  );
-  const schemaText = await readFile(schemaPath, "utf8");
+  const schemaText = driver === "sqlite" ? SQLITE_SCHEMA_SQL : PG_SCHEMA_SQL;
 
   const statements = schemaText
     .split(/;\s*(?:\r?\n|$)/)

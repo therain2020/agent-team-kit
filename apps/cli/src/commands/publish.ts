@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+﻿import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { bootstrapHome } from "@kit/bootstrap";
 import { initStore } from "@kit/store";
@@ -134,7 +134,7 @@ export function registerPublish(program: Command): void {
           }
         }
       } finally {
-        await store.sql.end();
+        await store.close();
       }
     });
 }

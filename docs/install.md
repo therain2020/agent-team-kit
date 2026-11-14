@@ -131,7 +131,11 @@ bun run kit manager brief <runId>
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `KIT_DB_URL` | `postgres://kit:kit@localhost:5432/kit` | Postgres |
+| `KIT_RUNTIME_MODE` | `scale` | `local` uses the embedded SQLite store (no Docker) |
+| `KIT_DB_DRIVER` | per mode | `sqlite` or `postgres` override |
+| `KIT_LOCAL_DB` | `~/.agent-team-kit/data/kit.db` | Local SQLite database file |
+| `KIT_HOME` | `~/.agent-team-kit` | Bootstrap profile, key and local data |
+| `KIT_DB_URL` | `postgres://kit:kit@localhost:5432/kit` | Postgres (Scale Mode) |
 | `KIT_BLOB_BACKEND` | `fs` | `fs` or `s3` |
 | `KIT_S3_*` | MinIO defaults | S3 endpoint/bucket/credentials |
 | `DEEPSEEK_API_KEY` | unset | Live model calls; otherwise stub |

@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ArtifactVersion,
   Blob,
   EventEnvelope,
@@ -10,9 +10,17 @@ import type {
   Stage,
   StageStatus,
 } from "@kit/core";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { Database } from "./db";
-import { events, artifacts, blobs, manifests, runs, stages } from "./schema";
+import {
+  events,
+  artifacts,
+  autopilotState,
+  blobs,
+  manifests,
+  runs,
+  stages,
+} from "./schema";
 
 export interface EventStore {
   insert(event: EventEnvelope): Promise<{ inserted: boolean }>;
@@ -51,7 +59,52 @@ export interface ManifestStore {
   get(manifestId: string): Promise<Manifest | null>;
 }
 
-function toEventRow(event: EventEnvelope) {
+export interface BlobRepository {
+  findById(blobId: string): Promise<Blob | null>;
+  find(workspaceId: string, sha256: string): Promise<Blob | null>;
+  insert(blob: Blob): Promise<boolean>;
+}
+
+export interface ArtifactStore {
+  createCommitted(manifest: Manifest, artifact: ArtifactVersion): Promise<void>;
+  putVersion(artifact: ArtifactVersion): Promise<void>;
+  commit(artifactId: string, version: number): Promise<void>;
+  findById(
+    artifactId: string,
+    version?: number,
+  ): Promise<ArtifactVersion | null>;
+  findCommittedByRunStage(
+    runId: string,
+    stageId: string,
+  ): Promise<ArtifactVersion | null>;
+  listByRun(runId: string): Promise<ArtifactVersion[]>;
+  listRecent(workspaceId: string, limit?: number): Promise<ArtifactVersion[]>;
+}
+
+export interface AutopilotStateRecord {
+  workspaceId: string;
+  packDir: string;
+  enabled: boolean;
+  lastTickAt: string | null;
+  nextRuns: Record<string, string>;
+  day: string | null;
+  runsToday: number;
+  spentToday: number;
+  lastError: string | null;
+  updatedAt: string;
+}
+
+export interface AutopilotStateStore {
+  get(
+    workspaceId: string,
+    packDir: string,
+  ): Promise<AutopilotStateRecord | null>;
+  list(workspaceId: string): Promise<AutopilotStateRecord[]>;
+  insertIfMissing(record: AutopilotStateRecord): Promise<void>;
+  update(record: AutopilotStateRecord): Promise<void>;
+}
+
+export function toEventRow(event: EventEnvelope) {
   return {
     eventId: event.eventId,
     type: event.type,
@@ -64,7 +117,7 @@ function toEventRow(event: EventEnvelope) {
   };
 }
 
-function fromEventRow(row: typeof events.$inferSelect): EventEnvelope {
+export function fromEventRow(row: typeof events.$inferSelect): EventEnvelope {
   return {
     eventId: row.eventId,
     type: row.type,
@@ -78,7 +131,7 @@ function fromEventRow(row: typeof events.$inferSelect): EventEnvelope {
   };
 }
 
-function toRunRow(run: Run) {
+export function toRunRow(run: Run) {
   return {
     runId: run.runId,
     eventId: run.eventId,
@@ -92,7 +145,7 @@ function toRunRow(run: Run) {
   };
 }
 
-function fromRunRow(row: typeof runs.$inferSelect): Run {
+export function fromRunRow(row: typeof runs.$inferSelect): Run {
   return {
     runId: row.runId,
     eventId: row.eventId,
@@ -106,7 +159,7 @@ function fromRunRow(row: typeof runs.$inferSelect): Run {
   };
 }
 
-function toStageRow(stage: Stage) {
+export function toStageRow(stage: Stage) {
   return {
     stageId: stage.stageId,
     runId: stage.runId,
@@ -119,7 +172,7 @@ function toStageRow(stage: Stage) {
   };
 }
 
-function fromStageRow(row: typeof stages.$inferSelect): Stage {
+export function fromStageRow(row: typeof stages.$inferSelect): Stage {
   return {
     stageId: row.stageId,
     runId: row.runId,
@@ -132,7 +185,7 @@ function fromStageRow(row: typeof stages.$inferSelect): Stage {
   };
 }
 
-function toManifestRow(manifest: Manifest) {
+export function toManifestRow(manifest: Manifest) {
   return {
     manifestId: manifest.manifestId,
     workspaceId: manifest.workspaceId,
@@ -150,7 +203,7 @@ function toManifestRow(manifest: Manifest) {
   };
 }
 
-function fromManifestRow(row: typeof manifests.$inferSelect): Manifest {
+export function fromManifestRow(row: typeof manifests.$inferSelect): Manifest {
   return {
     manifestId: row.manifestId,
     workspaceId: row.workspaceId,
@@ -168,7 +221,7 @@ function fromManifestRow(row: typeof manifests.$inferSelect): Manifest {
   };
 }
 
-function toBlobRow(blob: Blob) {
+export function toBlobRow(blob: Blob) {
   return {
     blobId: blob.blobId,
     workspaceId: blob.workspaceId,
@@ -179,7 +232,7 @@ function toBlobRow(blob: Blob) {
   };
 }
 
-function fromBlobRow(row: typeof blobs.$inferSelect): Blob {
+export function fromBlobRow(row: typeof blobs.$inferSelect): Blob {
   return {
     blobId: row.blobId,
     workspaceId: row.workspaceId,
@@ -190,7 +243,7 @@ function fromBlobRow(row: typeof blobs.$inferSelect): Blob {
   };
 }
 
-function toArtifactRow(artifact: ArtifactVersion) {
+export function toArtifactRow(artifact: ArtifactVersion) {
   return {
     artifactId: artifact.artifactId,
     version: artifact.version,
@@ -204,7 +257,9 @@ function toArtifactRow(artifact: ArtifactVersion) {
   };
 }
 
-function fromArtifactRow(row: typeof artifacts.$inferSelect): ArtifactVersion {
+export function fromArtifactRow(
+  row: typeof artifacts.$inferSelect,
+): ArtifactVersion {
   return {
     artifactId: row.artifactId,
     version: row.version,
@@ -351,7 +406,7 @@ export class PostgresManifestStore implements ManifestStore {
   }
 }
 
-export class PostgresBlobRepository {
+export class PostgresBlobRepository implements BlobRepository {
   constructor(private readonly db: Database) {}
 
   async findById(blobId: string): Promise<Blob | null> {
@@ -385,7 +440,7 @@ export class PostgresBlobRepository {
   }
 }
 
-export class PostgresArtifactStore {
+export class PostgresArtifactStore implements ArtifactStore {
   constructor(private readonly db: Database) {}
 
   async createCommitted(
@@ -485,5 +540,95 @@ export class PostgresArtifactStore {
       .limit(limit);
 
     return rows.map((row) => fromArtifactRow(row.artifact));
+  }
+}
+
+export function toAutopilotRow(record: AutopilotStateRecord) {
+  return {
+    workspaceId: record.workspaceId,
+    packDir: record.packDir,
+    enabled: record.enabled,
+    lastTickAt: record.lastTickAt,
+    nextRuns: record.nextRuns,
+    day: record.day,
+    runsToday: record.runsToday,
+    spentToday: String(record.spentToday),
+    lastError: record.lastError,
+    updatedAt: record.updatedAt,
+  };
+}
+
+export function fromAutopilotRow(
+  row: typeof autopilotState.$inferSelect,
+): AutopilotStateRecord {
+  return {
+    workspaceId: row.workspaceId,
+    packDir: row.packDir,
+    enabled: Boolean(row.enabled),
+    lastTickAt: row.lastTickAt ?? null,
+    nextRuns: row.nextRuns ?? {},
+    day: row.day ?? null,
+    runsToday: Number(row.runsToday ?? 0),
+    spentToday: Number(row.spentToday ?? 0),
+    lastError: row.lastError ?? null,
+    updatedAt: row.updatedAt,
+  };
+}
+
+export class PostgresAutopilotStateStore implements AutopilotStateStore {
+  constructor(private readonly db: Database) {}
+
+  async get(
+    workspaceId: string,
+    packDir: string,
+  ): Promise<AutopilotStateRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(autopilotState)
+      .where(
+        and(
+          eq(autopilotState.workspaceId, workspaceId),
+          eq(autopilotState.packDir, packDir),
+        ),
+      )
+      .limit(1);
+    return row ? fromAutopilotRow(row) : null;
+  }
+
+  async list(workspaceId: string): Promise<AutopilotStateRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(autopilotState)
+      .where(eq(autopilotState.workspaceId, workspaceId))
+      .orderBy(asc(autopilotState.packDir));
+    return rows.map(fromAutopilotRow);
+  }
+
+  async insertIfMissing(record: AutopilotStateRecord): Promise<void> {
+    await this.db
+      .insert(autopilotState)
+      .values(toAutopilotRow(record))
+      .onConflictDoNothing();
+  }
+
+  async update(record: AutopilotStateRecord): Promise<void> {
+    await this.db
+      .update(autopilotState)
+      .set({
+        enabled: record.enabled,
+        lastTickAt: record.lastTickAt,
+        nextRuns: record.nextRuns,
+        day: record.day,
+        runsToday: record.runsToday,
+        spentToday: String(record.spentToday),
+        lastError: record.lastError,
+        updatedAt: record.updatedAt,
+      })
+      .where(
+        and(
+          eq(autopilotState.workspaceId, record.workspaceId),
+          eq(autopilotState.packDir, record.packDir),
+        ),
+      );
   }
 }

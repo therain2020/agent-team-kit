@@ -1,4 +1,4 @@
-import path from "node:path";
+﻿import path from "node:path";
 import { NatsEventQueue } from "@kit/queue";
 import { initStore } from "@kit/store";
 import { createTemporalClient } from "@kit/workflow";
@@ -68,7 +68,7 @@ async function shutdown(): Promise<void> {
   await stop();
   await queue.close();
   await temporal.connection.close();
-  await store.sql.end();
+  await store.close();
   process.exit(0);
 }
 

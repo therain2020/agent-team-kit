@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+﻿import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { initStore } from "@kit/store";
@@ -121,7 +121,7 @@ async function loadWrites(runId: string): Promise<Map<string, string>> {
       [...writes.entries()].map(([file, value]) => [file, value.content]),
     );
   } finally {
-    await store.sql.end();
+    await store.close();
   }
 }
 

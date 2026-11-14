@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+﻿import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -85,7 +85,7 @@ export async function runAutopilotTick(
     for (const pack of packs) {
       try {
         const state = await ensureState(
-          store.sql,
+          store.autopilotState,
           WORKSPACE_ID,
           pack.dirName,
           pack.config.enabled,
@@ -93,7 +93,7 @@ export async function runAutopilotTick(
         );
         if (!state.enabled) {
           state.lastTickAt = now.toISOString();
-          await saveState(store.sql, state);
+          await saveState(store.autopilotState, state);
           continue;
         }
         result.enabled += 1;
@@ -146,7 +146,7 @@ export async function runAutopilotTick(
         });
 
         state.lastTickAt = now.toISOString();
-        await saveState(store.sql, state);
+        await saveState(store.autopilotState, state);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         result.errors.push(`${pack.dirName}: ${message}`);
@@ -156,7 +156,7 @@ export async function runAutopilotTick(
     if (temporal) {
       await temporal.connection.close();
     }
-    await store.sql.end();
+    await store.close();
   }
 
   return result;

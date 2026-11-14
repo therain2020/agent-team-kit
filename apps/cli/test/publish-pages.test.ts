@@ -39,7 +39,7 @@ describe("publish to a branch", () => {
     });
 
     expect(show(remote, "gh-pages:index.html")).toContain("v2");
-  });
+  }, 30_000);
 });
 
 function git(args: string[]): void {

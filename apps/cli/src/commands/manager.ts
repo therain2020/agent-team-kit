@@ -1,4 +1,4 @@
-import { askManager, buildManagerBrief, recordDecision } from "@kit/manager";
+﻿import { askManager, buildManagerBrief, recordDecision } from "@kit/manager";
 import { initStore } from "@kit/store";
 import type { Command } from "commander";
 
@@ -23,7 +23,7 @@ export function registerManager(program: Command): void {
         console.error(`✖ brief failed: ${message}`);
         process.exitCode = 1;
       } finally {
-        await store.sql.end();
+        await store.close();
       }
     });
 
@@ -41,7 +41,7 @@ export function registerManager(program: Command): void {
         console.error(`✖ ask failed: ${message}`);
         process.exitCode = 1;
       } finally {
-        await store.sql.end();
+        await store.close();
       }
     });
 
@@ -68,7 +68,7 @@ export function registerManager(program: Command): void {
           console.error(`✖ decision failed: ${message}`);
           process.exitCode = 1;
         } finally {
-          await store.sql.end();
+          await store.close();
         }
       },
     );
