@@ -89,6 +89,32 @@ The current process still needs the operator to start it; the recovery kernel
 that watches `kit up` and rolls back to the last-known-good tag is the next
 slice before 1.0.
 
+### Recovery kernel (kitd)
+
+The recovery kernel deliberately lives **outside the repository** at
+`%USERPROFILE%\.agent-team-kit`, so a bad self-change cannot remove the
+ability to recover.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-kitd.ps1
+```
+
+| Command | What it does |
+|---|---|
+| `kitd status` | supervisor + gateway (+ web) health |
+| `kitd check` | one health check; writes the external audit JSONL |
+| `kitd snapshot` | tag `lkg-0.9.0-preview` and create an external git bundle |
+| `kitd rollback -DryRun` | show the preserved branch + reset plan |
+| `kitd rollback` | preserve `recovery/<timestamp>`, reset to LKG, reinstall, restart |
+| `kitd watch` | health loop; 3 failures -> rollback; `KILL` file stops the system |
+| `kitd install-task` | optional Windows logon scheduled task |
+
+Audit: `%USERPROFILE%\.agent-team-kit\audit\kitd.jsonl`.
+Kill switch: `%USERPROFILE%\.agent-team-kit\KILL`.
+Rollback refuses a dirty working tree; it first creates a `recovery/<timestamp>`
+branch so the bad state is not lost. The current v1 is PowerShell/Windows; a
+POSIX service wrapper is a later slice.
+
 ### Task-centric self-iteration
 
 ```bash

@@ -154,6 +154,21 @@ bun run kit manager brief <runId>
 Postgres 5432 · MinIO 9000/9001 · NATS 4222 · Temporal 7233 · Temporal UI 8080 ·
 OTel collector 4317/4318 · Jaeger 16686 (OTLP 4319) · Manager Console 3000.
 
+## Recovery kernel (kitd)
+
+Install the watchdog outside the repository:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-kitd.ps1
+```
+
+It lives at `%USERPROFILE%\.agent-team-kit`, keeps an external git bundle and
+audit JSONL, and can roll back to the `lkg-0.9.0-preview` tag after three failed
+health checks. `kitd status`, `kitd snapshot`, `kitd rollback -DryRun`,
+`kitd watch` (kill switch: `%USERPROFILE%\.agent-team-kit\KILL`) and
+`kitd install-task` are available. A real rollback refuses a dirty working
+tree and preserves the bad state on a `recovery/<timestamp>` branch first.
+
 ## Stop
 
 ```bash

@@ -36,7 +36,11 @@
   Windows ACL failure that blocked DSH's `pwsh` tool; a live smoke ran
   `node -e "console.log(6*7)"` and returned `42` with no file changes. The
   external Verifier still runs `typecheck`/`lint`/`test` independently.
-- Tests: 74 passing (coder sandbox/diff, coder stage, gateway signatures and
+- Recovery kernel v1 (`scripts/kitd.ps1` + installer): installed outside the
+  repository at `%USERPROFILE%\.agent-team-kit`; external LKG bundle, audit
+  JSONL, kill switch, health checks and guarded rollback. Verified
+  `status`/`check`/`snapshot`/`rollback -DryRun` with the live supervisor.
+- Tests: 75 passing (coder sandbox/diff, coder stage, gateway signatures and
   normalization, router matching, iteration plan/risk, autopilot iterations,
   plus the existing suite).
 
