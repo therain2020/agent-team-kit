@@ -1,5 +1,6 @@
 "use client";
 
+import { ActivityFeed } from "@/components/activity/activity-feed";
 import { PendingChanges } from "@/components/iterations/pending-changes";
 import { PageHeader } from "@/components/kit/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +14,7 @@ import type {
 } from "@/lib/iteration-types";
 import { cn } from "@/lib/utils";
 import {
+  Activity,
   ArrowLeft,
   ChevronDown,
   CircleDot,
@@ -287,6 +289,14 @@ export function IterationDetailView({
                 </Button>
               ) : null}
               <Button size="sm" variant="outline" asChild>
+                <Link
+                  href={`/activity?runId=${encodeURIComponent(iterationId)}&from=iteration`}
+                >
+                  <Activity className="size-3.5" />
+                  Open in activity
+                </Link>
+              </Button>
+              <Button size="sm" variant="outline" asChild>
                 <Link href="/iterations">
                   <ArrowLeft className="size-3.5" />
                   All iterations
@@ -390,6 +400,20 @@ export function IterationDetailView({
         </div>
       ) : null}
       <div ref={bottomRef} />
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-xs uppercase tracking-wider text-zinc-500">
+            Team activity
+          </CardTitle>
+          <p className="text-[11px] text-muted-foreground">
+            Team-level events for this iteration. The turn timeline above keeps
+            the finer coder stream.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <ActivityFeed runId={iterationId} maxHeight="28rem" />
+        </CardContent>
+      </Card>
     </div>
   );
 }

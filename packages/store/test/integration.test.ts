@@ -108,4 +108,14 @@ describe.skipIf(!enabled)("store integration", () => {
     expect(found?.eventId).toBe(event.eventId);
     expect(found?.workspaceId).toBe(workspaceId);
   });
+
+  it("serializes json parameters for raw SQL", async () => {
+    if (store.driver !== "postgres") {
+      return;
+    }
+    const rows = await store.sql<Array<{ v: unknown }>>`
+      SELECT ${store.sql.json({ a: 1 })}::jsonb AS v
+    `;
+    expect(rows[0]?.v).toEqual({ a: 1 });
+  });
 });

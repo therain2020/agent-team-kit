@@ -1254,7 +1254,8 @@
     "allAgents": "All agents",
     "allKinds": "All kinds",
     "events": "{count} events",
-    "missing": "Event stream unavailable."
+    "missing": "Event stream unavailable.",
+    "backToIteration": "Back to iteration"
   },
   "autopilotPlan": {
     "button": "Plan",

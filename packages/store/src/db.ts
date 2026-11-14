@@ -79,8 +79,9 @@ function createPostgres(url: string): DbHandle {
         client.notify(channel, payload),
       listen: (channel: string, callback: (payload: string) => void) =>
         client.listen(channel, (payload) => callback(payload)),
-      json: (value: unknown) =>
-        (client.json as (input: unknown) => unknown)(value),
+      // drizzle replaces postgres.js's json serializers (114/3802) with a
+      // pass-through, so raw SQL must hand it a JSON string, as SQLite does.
+      json: (value: unknown) => JSON.stringify(value),
       reserve: () => client.reserve() as unknown as Promise<SqlClient>,
     },
   );

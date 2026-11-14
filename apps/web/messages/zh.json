@@ -1254,7 +1254,8 @@
     "allAgents": "全部成员",
     "allKinds": "全部类型",
     "events": "{count} 条事件",
-    "missing": "无法连接活动流。"
+    "missing": "无法连接活动流。",
+    "backToIteration": "返回迭代详情"
   },
   "autopilotPlan": {
     "button": "计划",
