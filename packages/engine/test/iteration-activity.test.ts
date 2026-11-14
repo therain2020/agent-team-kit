@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   type IterationActivityContext,
   coderEventToActivity,
-} from "../src/temporal/iteration-activities";
+} from "../src/iteration-activities";
 
 const context: IterationActivityContext = {
   workspaceId: "default",
