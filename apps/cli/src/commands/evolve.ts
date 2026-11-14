@@ -3,6 +3,7 @@ import {
   StoreEvolutionRepository,
   canaryStatus,
   compareVariants,
+  defaultCyclesRoot,
   evaluateCanary,
   initVariant,
   loadEvolutionCycles,
@@ -12,6 +13,7 @@ import {
   runEvolutionCycle,
   scoreVariant,
   startCanary,
+  verifyEvalSnapshot,
 } from "@kit/evolution";
 import { initStore, loadStoreConfig } from "@kit/store";
 import type { Command } from "commander";
@@ -218,6 +220,17 @@ export function registerEvolve(program: Command): void {
     )
     .option("--force", "run even without archive failure signals", false)
     .option("--budget <cny>", "cycle budget in CNY")
+    .option("--cycles-root <dir>", "external root for frozen eval snapshots")
+    .option("--hidden-evals <dir>", "hidden eval directory to freeze")
+    .option(
+      "--approve-evaluator-change",
+      "approve a changed evaluator for this cycle",
+      false,
+    )
+    .option(
+      "--approval-ref <id>",
+      "approval reference for the evaluator change",
+    )
     .action(
       async (
         packDir: string,
@@ -229,6 +242,10 @@ export function registerEvolve(program: Command): void {
           autoApply: boolean;
           force: boolean;
           budget?: string;
+          cyclesRoot?: string;
+          hiddenEvals?: string;
+          approveEvaluatorChange: boolean;
+          approvalRef?: string;
         },
       ) => {
         try {
@@ -242,6 +259,16 @@ export function registerEvolve(program: Command): void {
               autoApply: options.autoApply,
               force: options.force,
               budgetCny: options.budget ? Number(options.budget) : undefined,
+              cyclesRoot: options.cyclesRoot,
+              ...(options.hiddenEvals
+                ? { hiddenEvalsDir: options.hiddenEvals }
+                : {}),
+              ...(options.approveEvaluatorChange
+                ? { allowEvaluatorChange: true }
+                : {}),
+              ...(options.approvalRef
+                ? { evaluatorApprovalRef: options.approvalRef }
+                : {}),
               repo,
             }),
           );
@@ -269,6 +296,28 @@ export function registerEvolve(program: Command): void {
           2,
         ),
       );
+    });
+
+  const snapshot = evolve
+    .command("snapshot")
+    .description("Inspect frozen eval snapshots");
+
+  snapshot
+    .command("verify <cycleId>")
+    .description("Verify a frozen eval snapshot against its manifest")
+    .option("--cycles-root <dir>", "external root for frozen eval snapshots")
+    .action(async (cycleId: string, options: { cyclesRoot?: string }) => {
+      try {
+        const cyclesRoot = options.cyclesRoot ?? defaultCyclesRoot();
+        const dir = path.join(cyclesRoot, cycleId, "eval");
+        const verification = await verifyEvalSnapshot(dir);
+        console.log(JSON.stringify({ cycleId, dir, ...verification }, null, 2));
+        if (!verification.ok) {
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        reportError("snapshot verify", error);
+      }
     });
 
   evolve
