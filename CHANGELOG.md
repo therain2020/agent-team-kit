@@ -11,6 +11,16 @@
   a failed branch stops new scheduling while in-flight work settles, artifact
   order stays deterministic, and concurrent approvals keep the run paused until
   the last decision. Temporal's approval signal now queues by `requestId`.
+- AI-first configuration for autonomy: `/autopilot` lists every valid pack and
+  drafts a schedule from one line of intent (cron, budgets, timezone,
+  auto-approval, daemon switch). Drafts are reviewed then saved through
+  `PUT /api/packs/[dir]/autopilot`, which requires `confirmRisk` for LIVE,
+  auto-approval or a running daemon and rejects `maxRisk: high`.
+- Evolution cycles start from one line of intent: the composer picks an agent
+  and proposes a checkable hypothesis; `runEvolutionCycle` records and feeds
+  that hypothesis to the meta-agent. Evidence stays operator-provided.
+- `@kit/core/cron` exposes `isCronExpression` without node-only imports so the
+  composer can validate cron expressions in the browser.
 
 ## 0.9.0 — 2026-11-14
 

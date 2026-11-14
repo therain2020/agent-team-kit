@@ -347,7 +347,9 @@ export function PackStudio({
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ content: autopilotRaw }),
+          // The raw editor is an explicit expert save; the API still blocks
+          // high-risk auto-approval and requires this flag for LIVE/enabled.
+          body: JSON.stringify({ content: autopilotRaw, confirmRisk: true }),
         },
       );
       const payload = (await response.json()) as { error?: string };
