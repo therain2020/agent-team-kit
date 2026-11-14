@@ -5,6 +5,7 @@ import {
   manifestSchema,
   runModeSchema,
   teamPackSchema,
+  workflowStageSchema,
 } from "../src/index";
 
 const at = "2026-11-14T00:00:00.000Z";
@@ -97,6 +98,42 @@ describe("artifact contracts", () => {
       createdAt: at,
     };
     expect(artifactVersionSchema.safeParse(artifact).success).toBe(false);
+  });
+});
+
+describe("workflow stages", () => {
+  it("parses a coder stage", () => {
+    const parsed = workflowStageSchema.parse({
+      id: "build",
+      type: "coder",
+      coder: "dsh",
+      goal: "fix the bug",
+      acceptance: "tests pass",
+      inputs: ["findings"],
+      outputs: ["patch"],
+      timeout: "20m",
+    });
+    expect(parsed.coder).toBe("dsh");
+  });
+
+  it("rejects a coder stage without coder", () => {
+    const result = workflowStageSchema.safeParse({
+      id: "build",
+      type: "coder",
+      inputs: ["findings"],
+      outputs: ["patch"],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an agent stage without agent", () => {
+    const result = workflowStageSchema.safeParse({
+      id: "write",
+      type: "agent",
+      inputs: ["findings"],
+      outputs: ["draft"],
+    });
+    expect(result.success).toBe(false);
   });
 });
 

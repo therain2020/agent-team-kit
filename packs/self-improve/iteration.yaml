@@ -1,0 +1,33 @@
+apiVersion: agentteam/v1
+kind: IterationPack
+
+planner:
+  model: deepseek-pro
+  maxTasks: 4
+
+domains:
+  cyber:
+    workflow: security-audit
+    coder: dsh
+    agent: patcher
+    riskCeiling: high
+    verification: [typecheck, lint, test]
+    instructions: |
+      You are the builder for a cyber task. Find one concrete, verifiable
+      security weakness in this repository, fix it with the smallest safe
+      change, and explain the evidence. Do not attack third-party systems.
+  ux:
+    workflow: ux-improvement
+    coder: dsh
+    agent: frontend-builder
+    riskCeiling: medium
+    verification: [typecheck, lint, test]
+    instructions: |
+      You are the builder for a UX task. Find one concrete usability or
+      clarity problem in the Manager Console task flow, make the smallest
+      improvement, and keep the existing visual language.
+
+autoApply:
+  low: true
+  medium: false
+  high: false

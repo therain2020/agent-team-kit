@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { initTelemetry, shutdownTelemetry } from "@kit/telemetry";
 import { NativeConnection, Worker } from "@temporalio/worker";
 import * as activities from "./activities";
+import * as iterationActivities from "./iteration-activities";
 import * as packActivities from "./pack-activities";
 
 initTelemetry({ serviceName: "kit-worker" });
@@ -17,7 +18,7 @@ const worker = await Worker.create({
   namespace,
   taskQueue,
   workflowsPath: fileURLToPath(new URL("./workflows.ts", import.meta.url)),
-  activities: { ...activities, ...packActivities },
+  activities: { ...activities, ...packActivities, ...iterationActivities },
 });
 
 console.log(

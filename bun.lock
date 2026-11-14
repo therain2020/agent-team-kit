@@ -19,6 +19,7 @@
         "kit": "./src/index.ts",
       },
       "dependencies": {
+        "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
         "@kit/evolution": "workspace:*",
         "@kit/manager": "workspace:*",
@@ -34,11 +35,20 @@
         "yaml": "^2.6.1",
       },
     },
+    "apps/gateway": {
+      "name": "@kit/gateway",
+      "version": "0.9.0",
+      "dependencies": {
+        "@kit/core": "workspace:*",
+        "@kit/queue": "workspace:*",
+      },
+    },
     "apps/runtime": {
       "name": "@kit/runtime",
       "version": "1.0.0",
       "dependencies": {
         "@kit/autopilot": "workspace:*",
+        "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
         "@kit/model": "workspace:*",
         "@kit/pack": "workspace:*",
@@ -112,6 +122,10 @@
         "@kit/store": "workspace:*",
         "@kit/workflow": "workspace:*",
       },
+    },
+    "packages/coder": {
+      "name": "@kit/coder",
+      "version": "0.9.0",
     },
     "packages/core": {
       "name": "@kit/core",
@@ -481,9 +495,13 @@
 
     "@kit/cli": ["@kit/cli@workspace:apps/cli"],
 
+    "@kit/coder": ["@kit/coder@workspace:packages/coder"],
+
     "@kit/core": ["@kit/core@workspace:packages/core"],
 
     "@kit/evolution": ["@kit/evolution@workspace:packages/evolution"],
+
+    "@kit/gateway": ["@kit/gateway@workspace:apps/gateway"],
 
     "@kit/manager": ["@kit/manager@workspace:packages/manager"],
 

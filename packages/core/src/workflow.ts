@@ -30,20 +30,40 @@ export const stageApprovalSchema = z.object({
 
 export type StageApproval = z.infer<typeof stageApprovalSchema>;
 
-export const workflowStageSchema = z.object({
-  id: z.string().min(1),
-  type: z.enum(["workflow", "agent"]),
-  agent: z.string().min(1).optional(),
-  inputs: z.array(z.string().min(1)).min(1),
-  outputs: z.array(z.string().min(1)).min(1),
-  timeout: z.string().min(1).optional(),
-  retry: retryPolicySchema.optional(),
-  gate: z.string().min(1).optional(),
-  includeInitialInput: z.boolean().optional(),
-  inputFrom: z.string().min(1).optional(),
-  revisionAgent: z.string().min(1).optional(),
-  approval: stageApprovalSchema.optional(),
-});
+export const workflowStageSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.enum(["workflow", "agent", "coder"]),
+    agent: z.string().min(1).optional(),
+    coder: z.enum(["dsh", "codex", "opencode", "command"]).optional(),
+    goal: z.string().min(1).optional(),
+    acceptance: z.string().min(1).optional(),
+    inputs: z.array(z.string().min(1)).min(1),
+    outputs: z.array(z.string().min(1)).min(1),
+    timeout: z.string().min(1).optional(),
+    retry: retryPolicySchema.optional(),
+    gate: z.string().min(1).optional(),
+    includeInitialInput: z.boolean().optional(),
+    inputFrom: z.string().min(1).optional(),
+    revisionAgent: z.string().min(1).optional(),
+    approval: stageApprovalSchema.optional(),
+  })
+  .superRefine((stage, ctx) => {
+    if (stage.type === "agent" && !stage.agent) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agent stage requires agent",
+        path: ["agent"],
+      });
+    }
+    if (stage.type === "coder" && !stage.coder) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "coder stage requires coder",
+        path: ["coder"],
+      });
+    }
+  });
 
 export const deliverySchema = z.object({
   channel: z.enum(["im", "email", "local_file"]),

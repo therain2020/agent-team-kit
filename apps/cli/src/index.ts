@@ -2,8 +2,10 @@
 import { Command } from "commander";
 import { registerApprove } from "./commands/approve";
 import { registerDev } from "./commands/dev";
+import { registerEvent } from "./commands/event";
 import { registerEvolve } from "./commands/evolve";
 import { registerInit } from "./commands/init";
+import { registerIterate } from "./commands/iterate";
 import { registerManager } from "./commands/manager";
 import { registerModel } from "./commands/model";
 import { registerPack } from "./commands/pack";
@@ -11,6 +13,7 @@ import { registerPatch } from "./commands/patch";
 import { registerRun } from "./commands/run";
 import { registerSource } from "./commands/source";
 import { registerStatus } from "./commands/status";
+import { registerUp } from "./commands/up";
 
 const program = new Command();
 
@@ -27,5 +30,8 @@ registerManager(program);
 registerApprove(program);
 registerEvolve(program);
 registerDev(program);
+registerEvent(program);
+registerUp(program);
+registerIterate(program);
 
 program.parse();

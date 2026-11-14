@@ -14,8 +14,9 @@ const RUN_BUDGET_CNY = 5;
 
 export interface SimulationStage {
   id: string;
-  type: "workflow" | "agent";
+  type: "workflow" | "agent" | "coder";
   agent?: string;
+  coder?: string;
   model?: string;
   estimatedInputTokens: number;
   estimatedOutputTokens: number;
@@ -42,10 +43,13 @@ export function simulatePack(loaded: LoadedPack): SimulationReport {
 
   const workflows = loaded.workflows.map((workflow) => {
     const stages = workflow.stages.map((stage): SimulationStage => {
-      if (stage.type === "workflow") {
+      if (stage.type === "workflow" || stage.type === "coder") {
         return {
           id: stage.id,
           type: stage.type,
+          ...(stage.type === "coder" && stage.coder
+            ? { coder: stage.coder }
+            : {}),
           estimatedInputTokens: 0,
           estimatedOutputTokens: 0,
           estimatedCostCny: 0,

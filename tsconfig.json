@@ -4,6 +4,7 @@
     "baseUrl": ".",
     "paths": {
       "@kit/core": ["./packages/core/src/index.ts"],
+      "@kit/coder": ["./packages/coder/src/index.ts"],
       "@kit/store": ["./packages/store/src/index.ts"],
       "@kit/queue": ["./packages/queue/src/index.ts"],
       "@kit/workflow": ["./packages/workflow/src/index.ts"],

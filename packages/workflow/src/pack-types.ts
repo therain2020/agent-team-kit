@@ -27,11 +27,15 @@ export interface PackApprovalSpec {
 export interface PackStageSpec {
   stageId: string;
   stageName: string;
-  type: "workflow" | "agent";
+  type: "workflow" | "agent" | "coder";
   agentId?: string;
+  coder?: "dsh" | "codex" | "opencode" | "command";
+  goal?: string;
+  acceptance?: string;
   modelAlias?: string;
   instructions?: string;
   tools?: string[];
+  timeoutMs?: number;
   gate?: StageGate;
   includeInitialInput?: boolean;
   inputFromStageId?: string;

@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { type CoderResult, runCoderTask } from "@kit/coder";
 import { newId } from "@kit/core";
 import {
   type ModelMessage,
@@ -155,6 +156,7 @@ async function executePackStageInner(
   let costAmount = 0;
   let tokens = 0;
   let modelId = "none";
+  let coderFailure: string | undefined;
 
   if (input.type === "agent") {
     const modelAlias = input.modelAlias ?? "deepseek-flash";
@@ -190,6 +192,25 @@ async function executePackStageInner(
       tokens = response.usage.inputTokens + response.usage.outputTokens;
     }
     modelId = modelAlias;
+  } else if (input.type === "coder") {
+    const heartbeat = setInterval(() => {
+      try {
+        Context.current().heartbeat();
+      } catch {
+        // not inside an activity context
+      }
+    }, 30_000);
+    try {
+      const coder = await runCoderStage(store, input, draftText);
+      text = coder.text;
+      tokens = coder.tokens;
+      modelId = input.coder ?? "dsh";
+      coderFailure = coder.ok
+        ? undefined
+        : (coder.error ?? coder.summary ?? "coder failed");
+    } finally {
+      clearInterval(heartbeat);
+    }
   }
 
   Context.current().heartbeat();
@@ -213,6 +234,13 @@ async function executePackStageInner(
     sensitivity: "internal",
     retentionClass: "artifact_365d",
   });
+
+  if (coderFailure) {
+    await store.stages.updateStatus(input.stageId, "failed", {
+      finishedAt: new Date().toISOString(),
+    });
+    throw new Error(`coder stage failed: ${coderFailure}`);
+  }
 
   await store.stages.updateStatus(input.stageId, "succeeded", {
     finishedAt: new Date().toISOString(),
@@ -252,6 +280,173 @@ export async function failPackRun(input: {
     "failed",
     new Date().toISOString(),
   );
+}
+
+async function runCoderStage(
+  store: Store,
+  input: PackStageExecutionInput,
+  draftText: string,
+): Promise<{
+  text: string;
+  tokens: number;
+  ok: boolean;
+  summary: string;
+  error?: string;
+}> {
+  const coder = input.coder ?? "dsh";
+  const repoRoot = resolveRepoRoot();
+  const slug = input.stageId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const sandboxRoot = path.join(
+    repoRoot,
+    ".tmp",
+    "workspaces",
+    input.runId,
+    slug,
+  );
+  await mkdir(path.dirname(sandboxRoot), { recursive: true });
+
+  const goal =
+    input.goal ??
+    `Complete stage "${input.stageName}" in this repository with the smallest correct change.`;
+  const acceptance =
+    input.acceptance ??
+    "The stage is implemented, relevant checks pass, and the diff is minimal.";
+  const context = [
+    input.evidenceText ? `Evidence set:\n${input.evidenceText}` : "",
+    draftText ? `Previous stage output:\n${draftText}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  let result: CoderResult;
+  try {
+    result = await runCoderTask({
+      coder,
+      runId: input.runId,
+      taskId: input.stageId,
+      goal,
+      acceptance,
+      instructions: input.instructions ?? "",
+      context,
+      repoRoot,
+      sandboxRoot,
+      timeoutMs: input.timeoutMs ?? 25 * 60 * 1000,
+      installDeps: process.env.KIT_CODER_INSTALL !== "0",
+      keepSandbox: process.env.KIT_CODER_KEEP === "1",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result = {
+      coder,
+      ok: false,
+      exitCode: null,
+      summary: message,
+      transcript: "",
+      durationMs: 0,
+      changedFiles: [],
+      diff: "",
+      error: message,
+      sandbox: { mode: "copy", baselineSha: "", setupLog: "" },
+    };
+  }
+
+  await publishCoderArtifacts(store, input, result);
+  const text = renderCoderReport(input, result);
+  return {
+    text,
+    tokens: result.tokens ?? 0,
+    ok: result.ok,
+    summary: result.summary,
+    ...(result.error ? { error: result.error } : {}),
+  };
+}
+
+async function publishCoderArtifacts(
+  store: Store,
+  input: PackStageExecutionInput,
+  result: CoderResult,
+): Promise<void> {
+  const publish = async (suffix: string, content: string, modelId: string) => {
+    await store.artifactService.publish({
+      workspaceId: input.workspaceId,
+      content: new TextEncoder().encode(content),
+      producer: {
+        agentId: input.agentId ?? `coder:${result.coder}`,
+        agentVersion: "0.9.0",
+        promptHash: hash(`coder:${result.coder}`),
+        modelId,
+      },
+      inputs: input.inputArtifactId
+        ? [{ artifactId: input.inputArtifactId, version: 1 }]
+        : [],
+      runId: input.runId,
+      stageId: `${input.stageId}:coder:${suffix}`,
+      runMode: input.runMode,
+      cost: {
+        currency: "CNY",
+        amount: 0,
+        tokens: suffix === "result" ? (result.tokens ?? 0) : 0,
+      },
+      sensitivity: "internal",
+      retentionClass: "artifact_365d",
+    });
+  };
+
+  await publish(
+    "result",
+    JSON.stringify(
+      {
+        coder: result.coder,
+        ok: result.ok,
+        exitCode: result.exitCode,
+        durationMs: result.durationMs,
+        tokens: result.tokens ?? 0,
+        summary: result.summary,
+        error: result.error,
+        changedFiles: result.changedFiles,
+        sandbox: result.sandbox,
+      },
+      null,
+      2,
+    ),
+    result.coder,
+  );
+  await publish(
+    "transcript",
+    result.transcript || "(empty transcript)",
+    "none",
+  );
+  await publish("diff", result.diff || "(no diff)", "none");
+}
+
+function renderCoderReport(
+  input: PackStageExecutionInput,
+  result: CoderResult,
+): string {
+  const files =
+    result.changedFiles.length > 0
+      ? result.changedFiles.join("\n- ")
+      : "(none)";
+  const sandbox = result.sandbox.baselineSha
+    ? `${result.sandbox.mode} @ ${result.sandbox.baselineSha.slice(0, 12)}`
+    : `${result.sandbox.mode} (no baseline)`;
+  return `# Coder stage: ${input.stageName}
+
+- coder: ${result.coder}
+- status: ${result.ok ? "ok" : "failed"}
+- duration: ${Math.round(result.durationMs / 1000)}s
+- tokens: ${result.tokens ?? 0}
+- sandbox: ${sandbox}
+${result.error ? `- error: ${result.error}\n` : ""}${result.timedOut ? "- timed out: true\n" : ""}
+## Changed files
+- ${files}
+
+## Summary
+${result.summary || "(no summary)"}
+
+## Setup
+${result.sandbox.setupLog || "(none)"}
+`;
 }
 
 async function runAgentWithTools(input: {

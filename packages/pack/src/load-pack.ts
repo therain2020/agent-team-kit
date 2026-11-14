@@ -6,12 +6,14 @@ import {
   type AgentRole,
   type AgentSpec,
   type AutopilotConfig,
+  type IterationConfig,
   type Policy,
   type SkillFrontmatter,
   type TeamPack,
   type WorkflowDefinition,
   agentFrontmatterSchema,
   autopilotSchema,
+  iterationConfigSchema,
   policySchema,
   rubricSetSchema,
   skillFrontmatterSchema,
@@ -35,6 +37,7 @@ export interface LoadedPack {
   workflows: WorkflowDefinition[];
   policies: Policy[];
   autopilot?: AutopilotConfig;
+  iteration?: IterationConfig;
   roleRules: RoleRules;
   warnings: string[];
 }
@@ -269,6 +272,19 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
         );
       }
 
+      if (stage.type === "coder") {
+        if (!stage.coder) {
+          errors.push(
+            `${workflowFile}: stage ${stage.id} is a coder stage without coder`,
+          );
+        }
+        if (stage.agent && !agents.has(stage.agent)) {
+          errors.push(
+            `${workflowFile}: stage ${stage.id} references unknown agent for instructions: ${stage.agent}`,
+          );
+        }
+      }
+
       if (stage.gate) {
         const [gateFileRaw, gateKey] = stage.gate.split("#");
         const gateFile = gateFileRaw ?? "";
@@ -392,6 +408,41 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     }
   }
 
+  let iteration: IterationConfig | undefined;
+  const iterationPath = path.join(dir, "iteration.yaml");
+  if (existsSync(iterationPath)) {
+    const text = await readFile(iterationPath, "utf8");
+    scanSecrets(text, "iteration.yaml", errors);
+    try {
+      const parsedIteration = iterationConfigSchema.safeParse(parse(text));
+      if (!parsedIteration.success) {
+        errors.push(
+          ...parsedIteration.error.issues.map(
+            (issue) =>
+              `iteration.yaml: ${issue.path.join(".")}: ${issue.message}`,
+          ),
+        );
+      } else {
+        iteration = parsedIteration.data;
+        for (const [domain, config] of Object.entries(iteration.domains)) {
+          if (!workflowIds.has(config.workflow)) {
+            errors.push(
+              `iteration.yaml: domain ${domain} references unknown workflow: ${config.workflow}`,
+            );
+          }
+          if (config.agent && !agents.has(config.agent)) {
+            errors.push(
+              `iteration.yaml: domain ${domain} references unknown agent: ${config.agent}`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`iteration.yaml: parse error: ${message}`);
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, dir, errors };
   }
@@ -404,7 +455,8 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     skills,
     workflows,
     policies,
-    autopilot,
+    ...(autopilot ? { autopilot } : {}),
+    ...(iteration ? { iteration } : {}),
     roleRules: getRoleRules(pack),
     warnings,
   };

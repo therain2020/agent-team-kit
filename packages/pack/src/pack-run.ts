@@ -52,26 +52,50 @@ export async function buildPackRun(
       type: stage.type,
     };
 
-    if (stage.type === "agent") {
-      if (!stage.agent) {
+    if (stage.type === "agent" || stage.type === "coder") {
+      if (stage.type === "agent" && !stage.agent) {
         throw new Error(
           `workflow ${workflow.id}: stage ${stage.id} has no agent`,
         );
       }
-      const agent = loaded.agents.get(stage.agent);
-      if (!agent) {
-        throw new Error(`unknown agent: ${stage.agent}`);
+      if (stage.type === "coder" && !stage.coder) {
+        throw new Error(
+          `workflow ${workflow.id}: stage ${stage.id} has no coder`,
+        );
       }
 
-      const text = await readFile(
-        path.join(loaded.dir, agent.spec.file),
-        "utf8",
-      );
+      if (stage.type === "coder") {
+        stageSpec.coder = stage.coder;
+        stageSpec.goal = stage.goal;
+        stageSpec.acceptance = stage.acceptance;
+        stageSpec.timeoutMs = stage.timeout
+          ? parseDurationMs(stage.timeout)
+          : undefined;
+      }
 
-      stageSpec.agentId = stage.agent;
-      stageSpec.modelAlias = agent.frontmatter.model;
-      stageSpec.instructions = stripFrontmatter(text);
-      stageSpec.tools = agent.spec.tools;
+      const agentId = stage.agent;
+      if (agentId) {
+        const agent = loaded.agents.get(agentId);
+        if (!agent) {
+          throw new Error(`unknown agent: ${agentId}`);
+        }
+        const text = await readFile(
+          path.join(loaded.dir, agent.spec.file),
+          "utf8",
+        );
+        stageSpec.agentId = agentId;
+        stageSpec.instructions = stripFrontmatter(text);
+        if (stage.type === "agent") {
+          stageSpec.modelAlias = agent.frontmatter.model;
+          stageSpec.tools = agent.spec.tools;
+          stageSpec.timeoutMs = stage.timeout
+            ? parseDurationMs(stage.timeout)
+            : undefined;
+        }
+      } else if (stage.type === "coder") {
+        stageSpec.agentId = "coder";
+        stageSpec.instructions = `Implement the stage "${stage.id}" in this repository.`;
+      }
     }
 
     if (stage.includeInitialInput) {
