@@ -48,6 +48,11 @@ const BY_NAME = new Map(TOOLS.map((tool) => [tool.definition.name, tool]));
 
 export const KNOWN_TOOLS = [...BY_NAME.keys()];
 
+export const KNOWN_TOOL_DEFINITIONS = TOOLS.map((tool) => ({
+  name: tool.definition.name,
+  description: tool.definition.description,
+}));
+
 function findTool(name: string, extra: Tool[] = []): Tool | null {
   return (
     BY_NAME.get(name) ??
