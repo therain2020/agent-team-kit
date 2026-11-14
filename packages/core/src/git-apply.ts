@@ -201,7 +201,15 @@ export async function applyPatchToRepo(
           { headBefore, baseDrifted, commitSha },
         );
       }
-      const revert = await runGit(repoRoot, ["revert", "--no-edit", commitSha]);
+      const revert = await runGit(repoRoot, [
+        "-c",
+        "user.name=kit",
+        "-c",
+        "user.email=kit@localhost",
+        "revert",
+        "--no-edit",
+        commitSha,
+      ]);
       return result(
         revert.exitCode === 0 ? "reverted" : "blocked",
         revert.exitCode === 0
