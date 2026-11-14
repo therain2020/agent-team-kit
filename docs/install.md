@@ -161,6 +161,7 @@ bun run kit manager brief <runId>
 | `KIT_MODEL_MODE` | auto | `stub` to force deterministic responses |
 | `KIT_TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend |
 | `KIT_TASK_QUEUE` | `kit-demo` | Worker task queue |
+| `KIT_PACK_CONCURRENCY` | `4` | Max parallel DAG branches per pack run (clamped to 1–16) |
 | `NEXT_PUBLIC_TEMPORAL_UI_URL` | `http://localhost:8080` | Deep links from the console |
 | `NEXT_PUBLIC_JAEGER_UI_URL` | `http://localhost:16686` | Trace deep links |
 | `KIT_APPROVAL_TOKEN` | unset | Enables the external approval API |
