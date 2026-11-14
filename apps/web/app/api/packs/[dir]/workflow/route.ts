@@ -1,11 +1,13 @@
 import { sameOriginError } from "@/lib/http";
 import { resolvePackDir } from "@/lib/paths";
 import {
+  type StageEdge,
   type StagePosition,
   createWorkflow,
   deleteWorkflow,
   listWorkflows,
   renameWorkflow,
+  setStageEdges,
   setStagePositions,
   writeWorkflowFile,
 } from "@kit/pack";
@@ -84,6 +86,7 @@ export async function PUT(
     file?: unknown;
     content?: unknown;
     positions?: unknown;
+    edges?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -105,10 +108,18 @@ export async function PUT(
       await writeWorkflowFile(packDir, body.file, body.content);
       return NextResponse.json({ ok: true });
     }
+    if (Array.isArray(body.edges)) {
+      const edges = parseEdges(body.edges);
+      if (!edges) {
+        return NextResponse.json({ error: "invalid edges" }, { status: 400 });
+      }
+      const content = await setStageEdges(packDir, body.file, edges);
+      return NextResponse.json({ ok: true, content });
+    }
     const positions = parsePositions(body.positions);
     if (!positions) {
       return NextResponse.json(
-        { error: "content or positions are required" },
+        { error: "content, positions or edges are required" },
         { status: 400 },
       );
     }
@@ -194,6 +205,24 @@ export async function DELETE(
 async function packDirFrom(params: Promise<{ dir: string }>) {
   const { dir } = await params;
   return resolvePackDir(decodeURIComponent(dir));
+}
+
+function parseEdges(value: unknown[]): StageEdge[] | null {
+  if (value.length > 512) {
+    return null;
+  }
+  const edges: StageEdge[] = [];
+  for (const raw of value) {
+    if (typeof raw !== "object" || raw === null) {
+      return null;
+    }
+    const { from, to } = raw as { from?: unknown; to?: unknown };
+    if (typeof from !== "string" || typeof to !== "string") {
+      return null;
+    }
+    edges.push({ from, to });
+  }
+  return edges;
 }
 
 function parsePositions(value: unknown): Record<string, StagePosition> | null {

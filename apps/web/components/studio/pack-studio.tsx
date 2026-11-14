@@ -894,7 +894,10 @@ export function PackStudio({
                 dirName={data.dirName}
                 file={currentWorkflow.file}
                 stages={currentWorkflow.stages}
-                onSaved={(content) => setWorkflowRaw(content)}
+                onSaved={(content) => {
+                  setWorkflowRaw(content);
+                  router.refresh();
+                }}
               />
             ) : null}
             <Textarea
