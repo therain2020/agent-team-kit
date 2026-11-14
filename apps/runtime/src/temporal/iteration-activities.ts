@@ -69,7 +69,7 @@ export async function planIteration(
   let costCny = 0;
 
   if (input.stub) {
-    plan = stubPlan(input.goal, maxTasks, iteration.domains);
+    plan = stubPlan(input.goal, iteration.domains);
   } else {
     const gateway = createModelGateway();
     const context = await buildRepoContext(repoRoot);
@@ -108,13 +108,13 @@ ${context}`,
     costCny = response.usage.costCny ?? 0;
   }
 
-  plan.tasks = plan.tasks.slice(0, maxTasks);
   if (input.domain) {
     plan.tasks = plan.tasks.filter((task) => task.domain === input.domain);
     if (plan.tasks.length === 0) {
       throw new Error(`planner produced no tasks for domain: ${input.domain}`);
     }
   }
+  plan.tasks = plan.tasks.slice(0, maxTasks);
   for (const task of plan.tasks) {
     if (!iteration.domains[task.domain]) {
       throw new Error(`planner selected unknown domain: ${task.domain}`);
@@ -828,11 +828,7 @@ export async function buildRepoContext(repoRoot: string): Promise<string> {
     .slice(0, 12_000);
 }
 
-function stubPlan(
-  goal: string,
-  maxTasks: number,
-  domains: IterationConfig["domains"],
-): TaskPlan {
+function stubPlan(goal: string, domains: IterationConfig["domains"]): TaskPlan {
   const tasks: IterationTask[] = [];
   if (domains.cyber) {
     tasks.push({
@@ -888,7 +884,7 @@ function stubPlan(
   return taskPlanSchema.parse({
     goal,
     summary: "Deterministic stub plan (KIT_MODEL_MODE=stub or --stub).",
-    tasks: tasks.slice(0, maxTasks),
+    tasks,
   });
 }
 

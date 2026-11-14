@@ -144,7 +144,7 @@ export async function createSandbox(
       };
     },
     async cleanup(): Promise<void> {
-      if (input.keep || process.env.KIT_CODER_KEEP === "1") {
+      if (input.keep) {
         return;
       }
       if (mode === "worktree") {

@@ -102,7 +102,11 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
       continue;
     }
 
-    const agentPath = path.join(dir, agent.file);
+    const agentPath = resolvePackPath(dir, agent.file);
+    if (!agentPath) {
+      errors.push(`agent file escapes the pack: ${agent.file}`);
+      continue;
+    }
     if (!existsSync(agentPath)) {
       errors.push(`agent file missing: ${agent.file}`);
       continue;
@@ -161,8 +165,13 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     });
   }
 
-  if (pack.manager && !existsSync(path.join(dir, pack.manager.agent))) {
-    errors.push(`manager agent file missing: ${pack.manager.agent}`);
+  if (pack.manager) {
+    const managerPath = resolvePackPath(dir, pack.manager.agent);
+    if (!managerPath) {
+      errors.push(`manager file escapes the pack: ${pack.manager.agent}`);
+    } else if (!existsSync(managerPath)) {
+      errors.push(`manager agent file missing: ${pack.manager.agent}`);
+    }
   }
 
   const skills = new Map<string, SkillFrontmatter>();
@@ -173,7 +182,14 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
         continue;
       }
 
-      const skillPath = path.join(dir, "skills", skill, "SKILL.md");
+      const skillPath = resolvePackPath(
+        dir,
+        path.join("skills", skill, "SKILL.md"),
+      );
+      if (!skillPath) {
+        errors.push(`skill escapes the pack: ${skill}`);
+        continue;
+      }
       if (!existsSync(skillPath)) {
         errors.push(`skill missing: skills/${skill}/SKILL.md`);
         continue;
@@ -213,7 +229,11 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
   const workflowIds = new Set<string>();
 
   for (const workflowFile of pack.workflows) {
-    const workflowPath = path.join(dir, workflowFile);
+    const workflowPath = resolvePackPath(dir, workflowFile);
+    if (!workflowPath) {
+      errors.push(`${workflowFile}: file escapes the pack`);
+      continue;
+    }
     if (!existsSync(workflowPath)) {
       errors.push(`workflow file missing: ${workflowFile}`);
       continue;
@@ -288,9 +308,13 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
       if (stage.gate) {
         const [gateFileRaw, gateKey] = stage.gate.split("#");
         const gateFile = gateFileRaw ?? "";
-        const gatePath = path.join(dir, gateFile);
+        const gatePath = resolvePackPath(dir, gateFile);
 
-        if (!existsSync(gatePath)) {
+        if (!gatePath) {
+          errors.push(
+            `${workflowFile}: stage ${stage.id} gate file escapes the pack: ${gateFile}`,
+          );
+        } else if (!existsSync(gatePath)) {
           errors.push(
             `${workflowFile}: stage ${stage.id} gate file missing: ${gateFile}`,
           );
@@ -333,7 +357,11 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
   const policies: Policy[] = [];
 
   for (const policyFile of pack.policies) {
-    const policyPath = path.join(dir, policyFile);
+    const policyPath = resolvePackPath(dir, policyFile);
+    if (!policyPath) {
+      errors.push(`policy file escapes the pack: ${policyFile}`);
+      continue;
+    }
     if (!existsSync(policyPath)) {
       errors.push(`policy file missing: ${policyFile}`);
       continue;
@@ -364,8 +392,13 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     policies.push(parsedPolicy.data);
   }
 
-  if (pack.evals?.rubrics && !existsSync(path.join(dir, pack.evals.rubrics))) {
-    errors.push(`evals rubric file missing: ${pack.evals.rubrics}`);
+  if (pack.evals?.rubrics) {
+    const rubricPath = resolvePackPath(dir, pack.evals.rubrics);
+    if (!rubricPath) {
+      errors.push(`evals rubric file escapes the pack: ${pack.evals.rubrics}`);
+    } else if (!existsSync(rubricPath)) {
+      errors.push(`evals rubric file missing: ${pack.evals.rubrics}`);
+    }
   }
 
   let autopilot: AutopilotConfig | undefined;
@@ -460,6 +493,12 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     roleRules: getRoleRules(pack),
     warnings,
   };
+}
+
+function resolvePackPath(dir: string, relative: string): string | null {
+  const root = path.resolve(dir);
+  const target = path.resolve(root, relative);
+  return target.startsWith(`${root}${path.sep}`) ? target : null;
 }
 
 function parseFrontmatter(text: string): unknown {

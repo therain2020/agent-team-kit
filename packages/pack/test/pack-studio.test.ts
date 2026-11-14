@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -120,5 +120,33 @@ describe("pack studio", () => {
     await expect(
       readPackFile(path.join(root, "safe-team"), "../team.yaml"),
     ).rejects.toThrow();
+  });
+
+  it("rejects pack files that escape the pack directory", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "kit-studio-"));
+    roots.push(root);
+    await createPack({
+      root,
+      dirName: "escape-team",
+      name: "Escape Team",
+      template: "minimal",
+    });
+    const dir = path.join(root, "escape-team");
+    const teamPath = path.join(dir, "team.yaml");
+    const team = await readFile(teamPath, "utf8");
+    const tampered = team.replace("agents/worker.md", "../outside.md");
+    expect(tampered).not.toBe(team);
+    await writeFile(teamPath, tampered, "utf8");
+    await writeFile(
+      path.join(root, "outside.md"),
+      "---\nname: worker\ndescription: escaped\nmodel: deepseek-flash\n---\n\nescaped body\n",
+      "utf8",
+    );
+
+    const loaded = await loadPack(dir);
+    expect(loaded.ok).toBe(false);
+    if (!loaded.ok) {
+      expect(loaded.errors.join("\n")).toContain("escapes the pack");
+    }
   });
 });
