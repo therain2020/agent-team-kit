@@ -25,6 +25,7 @@ import {
   newId,
   taskPlanSchema,
 } from "@kit/core";
+import { assertKillSwitchClear } from "@kit/engine";
 import {
   allowedByApplyMode,
   appendCoderEvent,
@@ -77,6 +78,16 @@ export async function planIteration(
   input: IterationInput,
 ): Promise<PlannedIteration> {
   const store = await getStore();
+  await assertKillSwitchClear(
+    store,
+    {
+      workspaceId: input.workspaceId,
+      agentId: "planner",
+      stageId: `${input.iterationId}:plan`,
+      stageName: "plan",
+    },
+    "run",
+  );
   const repoRoot = resolveRepoRoot(input.repoRoot);
   const loaded = await loadPack(input.packDir);
   if (!loaded.ok) {
@@ -98,6 +109,16 @@ export async function planIteration(
   if (input.stub) {
     plan = stubPlan(input.goal, iteration.domains);
   } else {
+    await assertKillSwitchClear(
+      store,
+      {
+        workspaceId: input.workspaceId,
+        agentId: "planner",
+        stageId: `${input.iterationId}:plan`,
+        stageName: "plan",
+      },
+      "model",
+    );
     const gateway = createModelGateway();
     const context = await buildRepoContext(repoRoot);
     const domains = Object.entries(iteration.domains)
@@ -180,6 +201,16 @@ export async function runIterationCoder(
   }
 
   const coder = (input.coderOverride ?? domain.coder) as CoderId;
+  await assertKillSwitchClear(
+    store,
+    {
+      workspaceId: input.workspaceId,
+      agentId: domain.agent,
+      stageId: `${input.iterationId}:${input.task.id}:coder`,
+      stageName: input.task.id,
+    },
+    "tool",
+  );
   const instructions = await loadInstructions(loaded, domain.agent);
   await updateRun(store, input.iterationId, {
     status: "running",
@@ -386,6 +417,16 @@ export async function verifyIterationTask(
       input.coderSummary,
     );
   }
+  await assertKillSwitchClear(
+    store,
+    {
+      workspaceId: input.workspaceId,
+      agentId: "verifier",
+      stageId: `${input.iterationId}:${input.task.id}:verify`,
+      stageName: input.task.id,
+    },
+    "tool",
+  );
   if (!input.sandboxDir || !existsSync(input.sandboxDir)) {
     return await failVerification(
       store,
@@ -606,6 +647,16 @@ export async function applyIterationTask(
   input: ApplyTaskActivityInput,
 ): Promise<IterationApplyResult> {
   const store = await getStore();
+  await assertKillSwitchClear(
+    store,
+    {
+      workspaceId: input.workspaceId,
+      agentId: "policy:autonomy",
+      stageId: `${input.iterationId}:${input.task.id}:apply`,
+      stageName: input.task.id,
+    },
+    "tool",
+  );
   const repoRoot = resolveRepoRoot(input.repoRoot);
   const ticketId = newId("tkt");
   let headBefore = "";
