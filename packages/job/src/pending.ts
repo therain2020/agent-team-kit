@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   appendEvent,
   applyDiffToRepo,
@@ -96,15 +97,17 @@ export async function applyPendingChange(
       workspace_id: string;
       run_mode: "DRY_RUN" | "LIVE";
       goal: string;
+      repo_root: string | null;
     }>
   >`
-    SELECT workspace_id, run_mode, goal FROM iteration_runs
+    SELECT workspace_id, run_mode, goal, repo_root FROM iteration_runs
     WHERE iteration_id = ${ticket.iteration_id} LIMIT 1
   `;
   const run = runRows[0];
   if (!run) {
     throw new JobError("run_not_found", "iteration run not found", 404);
   }
+  const repoRoot = run.repo_root ? path.resolve(run.repo_root) : input.repoRoot;
 
   const diff = await readArtifactText(store, ticket.patch_artifact_id);
   if (!diff || diff === "(no diff)" || diff.includes("[truncated at")) {
@@ -112,7 +115,7 @@ export async function applyPendingChange(
   }
 
   const applied = await applyDiffToRepo({
-    repoRoot: input.repoRoot,
+    repoRoot,
     iterationId: ticket.iteration_id,
     taskId: ticket.task_id,
     ticketId,

@@ -43,6 +43,30 @@ interface ApprovalDraft {
   maxRunCostCny: string;
 }
 
+interface PolicyApproval {
+  mode: "required" | "auto" | "never";
+  position: "before" | "after";
+  riskClass: "low" | "medium" | "high";
+  ttl: string;
+  autoApproveWhen?: { maxRunCostCny: number };
+}
+
+interface PolicyRow {
+  file: string;
+  stageId: string;
+  stageType: string;
+  agent?: string;
+  approval: PolicyApproval | null;
+  reason: string;
+}
+
+interface PolicyResult {
+  policies: PolicyRow[];
+  rationale: string;
+  warnings: string[];
+  model: "live" | "heuristic";
+}
+
 export function PackStudio({
   data,
   initialAgentId,
@@ -72,6 +96,12 @@ export function PackStudio({
   const [approvalDrafts, setApprovalDrafts] = useState<
     Record<string, ApprovalDraft>
   >(() => buildApprovalDrafts(data));
+  const [policyIntent, setPolicyIntent] = useState("");
+  const [policy, setPolicy] = useState<PolicyResult | null>(null);
+  const [policyBusy, setPolicyBusy] = useState<"draft" | "apply" | null>(null);
+  const [policyExcluded, setPolicyExcluded] = useState<Record<string, boolean>>(
+    {},
+  );
   const [newAgent, setNewAgent] = useState({
     id: "",
     description: "",
@@ -383,6 +413,99 @@ export function PackStudio({
       toast.error(text);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function generatePolicy() {
+    if (!policyIntent.trim()) {
+      toast.error(t("policyHint"));
+      return;
+    }
+    setPolicyBusy("draft");
+    setError(null);
+    try {
+      const response = await fetch("/api/compose", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "approvalPolicy",
+          intent: policyIntent.trim(),
+          packDir: data.dirName,
+        }),
+      });
+      const payload = (await response.json()) as {
+        values?: { policies?: PolicyRow[] };
+        rationale?: string;
+        warnings?: string[];
+        model?: "live" | "heuristic";
+        error?: string;
+      };
+      if (!response.ok || !payload.values?.policies) {
+        throw new Error(payload.error ?? "failed to generate policy");
+      }
+      setPolicy({
+        policies: payload.values.policies,
+        rationale: payload.rationale ?? "",
+        warnings: payload.warnings ?? [],
+        model: payload.model === "live" ? "live" : "heuristic",
+      });
+      setPolicyExcluded({});
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setPolicyBusy(null);
+    }
+  }
+
+  async function applyPolicy() {
+    if (!policy) {
+      return;
+    }
+    const selected = policy.policies.filter(
+      (row) => !policyExcluded[`${row.file}:${row.stageId}`],
+    );
+    if (selected.length === 0) {
+      toast.error(t("policyHint"));
+      return;
+    }
+    setPolicyBusy("apply");
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/packs/${encodeURIComponent(data.dirName)}/approval`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            approvals: selected.map((row) => ({
+              file: row.file,
+              stageId: row.stageId,
+              approval: row.approval,
+            })),
+          }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error ?? "apply failed");
+      }
+      setApprovalDrafts((current) => {
+        const next = { ...current };
+        for (const row of selected) {
+          next[`${row.file}:${row.stageId}`] = draftFromPolicy(row);
+        }
+        return next;
+      });
+      toast.success(t("policyApplied"));
+      router.refresh();
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setPolicyBusy(null);
     }
   }
 
@@ -785,147 +908,261 @@ export function PackStudio({
 
       {tab === "approvals" ? (
         <div className="space-y-4">
-          <p className="rounded-lg border border-border bg-card px-4 py-3 text-[11px] text-zinc-400">
-            {t("approvalIntro")}
-          </p>
-          {data.workflows.map((workflow) => (
-            <div
-              key={workflow.file}
-              className="rounded-lg border border-border bg-card p-4"
-            >
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="font-mono text-xs text-zinc-200">
-                  {workflow.id}
+          <div className="space-y-3 rounded-lg border border-border bg-card p-4">
+            <div className="flex items-start gap-2">
+              <Sparkles className="mt-0.5 size-4 text-emerald-300" />
+              <div>
+                <h3 className="text-sm font-medium text-zinc-100">
+                  {t("policyTitle")}
                 </h3>
-                <span className="font-mono text-[10px] text-zinc-600">
-                  {workflow.file}
-                </span>
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  {t("policyHint")}
+                </p>
               </div>
+            </div>
+            <Textarea
+              value={policyIntent}
+              onChange={(event) => setPolicyIntent(event.target.value)}
+              placeholder={t("policyPlaceholder")}
+              className="min-h-16 text-xs"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => void generatePolicy()}
+                disabled={policyBusy !== null}
+              >
+                <Sparkles className="size-3.5" />
+                {policyBusy === "draft"
+                  ? t("policyGenerating")
+                  : t("policyGenerate")}
+              </Button>
+              {policy ? (
+                <Button
+                  size="sm"
+                  onClick={() => void applyPolicy()}
+                  disabled={policyBusy !== null}
+                >
+                  <CheckCircle2 className="size-3.5" />
+                  {policyBusy === "apply"
+                    ? t("policyApplying")
+                    : t("policyApply")}
+                </Button>
+              ) : null}
+              {policy ? (
+                <Badge
+                  variant={policy.model === "live" ? "success" : "outline"}
+                >
+                  {policy.model === "live"
+                    ? t("policyAi")
+                    : t("policyHeuristic")}
+                </Badge>
+              ) : null}
+            </div>
+            {policy ? (
               <div className="space-y-2">
-                {workflow.stages.map((stage) => {
-                  const key = `${workflow.file}:${stage.id}`;
-                  const draft = approvalDrafts[key] ?? emptyDraft(stage);
-                  return (
-                    <div
-                      key={key}
-                      className="grid gap-2 rounded-md border border-border px-3 py-2 lg:grid-cols-[minmax(0,1.2fr)_repeat(4,minmax(0,0.7fr))_auto] lg:items-end"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Lock
-                          className={cn(
-                            "size-3.5",
-                            draft.enabled ? "text-amber-300" : "text-zinc-600",
-                          )}
-                        />
-                        <div>
-                          <p className="font-mono text-[11px] text-zinc-200">
-                            {stage.id}
-                          </p>
-                          <p className="text-[10px] text-zinc-600">
-                            {stage.type}
-                            {stage.agent ? ` · ${stage.agent}` : ""}
-                          </p>
-                        </div>
-                      </div>
-                      <label className="flex items-center gap-1.5 text-[10px] text-zinc-400">
+                <p className="text-[11px] text-zinc-400">{policy.rationale}</p>
+                {policy.warnings.length > 0 ? (
+                  <ul className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+                    {policy.warnings.map((warning) => (
+                      <li key={warning}>· {warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="space-y-1">
+                  {policy.policies.map((row) => {
+                    const key = `${row.file}:${row.stageId}`;
+                    const checked = !policyExcluded[key];
+                    return (
+                      <label
+                        key={key}
+                        className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border px-2.5 py-1.5 text-[10px]"
+                      >
                         <input
                           type="checkbox"
-                          checked={draft.enabled}
-                          onChange={(event) =>
-                            updateDraft(key, { enabled: event.target.checked })
+                          checked={checked}
+                          onChange={() =>
+                            setPolicyExcluded((current) => ({
+                              ...current,
+                              [key]: checked,
+                            }))
                           }
                           className="size-3.5 accent-emerald-500"
                         />
-                        {t("approvalOn")}
+                        <span className="font-mono text-zinc-300">
+                          {row.file} · {row.stageId}
+                        </span>
+                        <span className="ml-auto text-zinc-400">
+                          {describePolicy(row.approval, t)}
+                        </span>
+                        <span className="w-full text-zinc-600">
+                          {row.reason}
+                        </span>
                       </label>
-                      <select
-                        value={draft.mode}
-                        disabled={!draft.enabled}
-                        onChange={(event) =>
-                          updateDraft(key, {
-                            mode: event.target.value as ApprovalDraft["mode"],
-                          })
-                        }
-                        className="h-7 rounded border border-border bg-zinc-950 px-1.5 text-[10px] text-zinc-300"
-                      >
-                        <option value="required">{t("modeRequired")}</option>
-                        <option value="auto">{t("modeAuto")}</option>
-                        <option value="never">{t("modeNever")}</option>
-                      </select>
-                      <select
-                        value={draft.position}
-                        disabled={!draft.enabled}
-                        onChange={(event) =>
-                          updateDraft(key, {
-                            position: event.target
-                              .value as ApprovalDraft["position"],
-                          })
-                        }
-                        className="h-7 rounded border border-border bg-zinc-950 px-1.5 text-[10px] text-zinc-300"
-                      >
-                        <option value="after">{t("positionAfter")}</option>
-                        <option value="before">{t("positionBefore")}</option>
-                      </select>
-                      <select
-                        value={draft.riskClass}
-                        disabled={!draft.enabled}
-                        onChange={(event) =>
-                          updateDraft(key, {
-                            riskClass: event.target
-                              .value as ApprovalDraft["riskClass"],
-                          })
-                        }
-                        className="h-7 rounded border border-border bg-zinc-950 px-1.5 text-[10px] text-zinc-300"
-                      >
-                        <option value="low">{t("riskLow")}</option>
-                        <option value="medium">{t("riskMedium")}</option>
-                        <option value="high">{t("riskHigh")}</option>
-                      </select>
-                      <div className="flex items-end gap-1.5">
-                        <div className="flex-1 text-[10px] text-zinc-500">
-                          <span aria-hidden="true">TTL</span>
-                          <Input
-                            value={draft.ttl}
-                            disabled={!draft.enabled}
-                            aria-label="TTL"
-                            onChange={(event) =>
-                              updateDraft(key, { ttl: event.target.value })
-                            }
-                            className="mt-0.5 h-7 font-mono text-[10px]"
-                          />
-                        </div>
-                        {draft.mode === "auto" ? (
-                          <div className="flex-1 text-[10px] text-zinc-500">
-                            <span aria-hidden="true">{t("maxCost")}</span>
-                            <Input
-                              value={draft.maxRunCostCny}
-                              disabled={!draft.enabled}
-                              aria-label={t("maxCost")}
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <details className="rounded-lg border border-border bg-card">
+            <summary className="cursor-pointer px-4 py-3 text-xs text-zinc-400">
+              {t("policyAdvanced")}
+            </summary>
+            <div className="space-y-4 px-4 pb-4">
+              <p className="rounded-lg border border-border bg-zinc-950/40 px-4 py-3 text-[11px] text-zinc-400">
+                {t("approvalIntro")}
+              </p>
+              {data.workflows.map((workflow) => (
+                <div
+                  key={workflow.file}
+                  className="rounded-lg border border-border bg-card p-4"
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="font-mono text-xs text-zinc-200">
+                      {workflow.id}
+                    </h3>
+                    <span className="font-mono text-[10px] text-zinc-600">
+                      {workflow.file}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {workflow.stages.map((stage) => {
+                      const key = `${workflow.file}:${stage.id}`;
+                      const draft = approvalDrafts[key] ?? emptyDraft(stage);
+                      return (
+                        <div
+                          key={key}
+                          className="grid gap-2 rounded-md border border-border px-3 py-2 lg:grid-cols-[minmax(0,1.2fr)_repeat(4,minmax(0,0.7fr))_auto] lg:items-end"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Lock
+                              className={cn(
+                                "size-3.5",
+                                draft.enabled
+                                  ? "text-amber-300"
+                                  : "text-zinc-600",
+                              )}
+                            />
+                            <div>
+                              <p className="font-mono text-[11px] text-zinc-200">
+                                {stage.id}
+                              </p>
+                              <p className="text-[10px] text-zinc-600">
+                                {stage.type}
+                                {stage.agent ? ` · ${stage.agent}` : ""}
+                              </p>
+                            </div>
+                          </div>
+                          <label className="flex items-center gap-1.5 text-[10px] text-zinc-400">
+                            <input
+                              type="checkbox"
+                              checked={draft.enabled}
                               onChange={(event) =>
                                 updateDraft(key, {
-                                  maxRunCostCny: event.target.value,
+                                  enabled: event.target.checked,
                                 })
                               }
-                              placeholder="0.5"
-                              className="mt-0.5 h-7 font-mono text-[10px]"
+                              className="size-3.5 accent-emerald-500"
                             />
+                            {t("approvalOn")}
+                          </label>
+                          <select
+                            value={draft.mode}
+                            disabled={!draft.enabled}
+                            onChange={(event) =>
+                              updateDraft(key, {
+                                mode: event.target
+                                  .value as ApprovalDraft["mode"],
+                              })
+                            }
+                            className="h-7 rounded border border-border bg-zinc-950 px-1.5 text-[10px] text-zinc-300"
+                          >
+                            <option value="required">
+                              {t("modeRequired")}
+                            </option>
+                            <option value="auto">{t("modeAuto")}</option>
+                            <option value="never">{t("modeNever")}</option>
+                          </select>
+                          <select
+                            value={draft.position}
+                            disabled={!draft.enabled}
+                            onChange={(event) =>
+                              updateDraft(key, {
+                                position: event.target
+                                  .value as ApprovalDraft["position"],
+                              })
+                            }
+                            className="h-7 rounded border border-border bg-zinc-950 px-1.5 text-[10px] text-zinc-300"
+                          >
+                            <option value="after">{t("positionAfter")}</option>
+                            <option value="before">
+                              {t("positionBefore")}
+                            </option>
+                          </select>
+                          <select
+                            value={draft.riskClass}
+                            disabled={!draft.enabled}
+                            onChange={(event) =>
+                              updateDraft(key, {
+                                riskClass: event.target
+                                  .value as ApprovalDraft["riskClass"],
+                              })
+                            }
+                            className="h-7 rounded border border-border bg-zinc-950 px-1.5 text-[10px] text-zinc-300"
+                          >
+                            <option value="low">{t("riskLow")}</option>
+                            <option value="medium">{t("riskMedium")}</option>
+                            <option value="high">{t("riskHigh")}</option>
+                          </select>
+                          <div className="flex items-end gap-1.5">
+                            <div className="flex-1 text-[10px] text-zinc-500">
+                              <span aria-hidden="true">TTL</span>
+                              <Input
+                                value={draft.ttl}
+                                disabled={!draft.enabled}
+                                aria-label="TTL"
+                                onChange={(event) =>
+                                  updateDraft(key, { ttl: event.target.value })
+                                }
+                                className="mt-0.5 h-7 font-mono text-[10px]"
+                              />
+                            </div>
+                            {draft.mode === "auto" ? (
+                              <div className="flex-1 text-[10px] text-zinc-500">
+                                <span aria-hidden="true">{t("maxCost")}</span>
+                                <Input
+                                  value={draft.maxRunCostCny}
+                                  disabled={!draft.enabled}
+                                  aria-label={t("maxCost")}
+                                  onChange={(event) =>
+                                    updateDraft(key, {
+                                      maxRunCostCny: event.target.value,
+                                    })
+                                  }
+                                  placeholder="0.5"
+                                  className="mt-0.5 h-7 font-mono text-[10px]"
+                                />
+                              </div>
+                            ) : null}
                           </div>
-                        ) : null}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={saving}
-                        onClick={() => saveApproval(workflow, stage)}
-                      >
-                        {t("save")}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={saving}
+                            onClick={() => saveApproval(workflow, stage)}
+                          >
+                            {t("save")}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          </details>
         </div>
       ) : null}
 
@@ -1037,4 +1274,46 @@ function emptyDraft(stage: StudioStage): ApprovalDraft {
         ? String(stage.approval.autoApproveWhen.maxRunCostCny)
         : "",
   };
+}
+
+function draftFromPolicy(row: PolicyRow): ApprovalDraft {
+  return {
+    enabled: row.approval !== null,
+    mode: row.approval?.mode ?? "required",
+    position: row.approval?.position ?? "after",
+    riskClass: row.approval?.riskClass ?? "medium",
+    ttl: row.approval?.ttl ?? "72h",
+    maxRunCostCny:
+      row.approval?.autoApproveWhen?.maxRunCostCny !== undefined
+        ? String(row.approval.autoApproveWhen.maxRunCostCny)
+        : "",
+  };
+}
+
+function describePolicy(
+  approval: PolicyApproval | null,
+  t: ReturnType<typeof useTranslations>,
+): string {
+  if (!approval) {
+    return t("policyNoGate");
+  }
+  const position =
+    approval.position === "before" ? t("positionBefore") : t("positionAfter");
+  const risk =
+    approval.riskClass === "high"
+      ? t("riskHigh")
+      : approval.riskClass === "low"
+        ? t("riskLow")
+        : t("riskMedium");
+  const cap =
+    approval.autoApproveWhen?.maxRunCostCny !== undefined
+      ? ` ≤ ¥${approval.autoApproveWhen.maxRunCostCny}`
+      : "";
+  const mode =
+    approval.mode === "required"
+      ? t("modeRequired")
+      : approval.mode === "auto"
+        ? `${t("modeAuto")}${cap}`
+        : t("modeNever");
+  return `${mode} · ${position} · ${risk} · ${approval.ttl}`;
 }

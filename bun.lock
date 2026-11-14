@@ -203,6 +203,7 @@
         "@kit/core": "workspace:*",
         "@kit/engine": "workspace:*",
         "@kit/iteration": "workspace:*",
+        "@kit/model": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/store": "workspace:*",
         "@kit/workflow": "workspace:*",

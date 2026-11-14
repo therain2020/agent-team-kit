@@ -4,6 +4,8 @@ export interface IterationInput {
   iterationId: string;
   /** Temporal workflow id used to start this iteration (dedupe-aware). */
   workflowId?: string;
+  /** Target repository the iteration operates on (absolute path). */
+  repoRoot?: string;
   workspaceId: string;
   packDir: string;
   goal: string;
@@ -30,6 +32,7 @@ export interface RunCoderActivityInput {
   iterationId: string;
   workspaceId: string;
   packDir: string;
+  repoRoot?: string;
   task: IterationTask;
   attempt: number;
   feedback: string;
@@ -98,6 +101,7 @@ export interface IterationRiskResult {
 export interface ApplyTaskActivityInput {
   iterationId: string;
   workspaceId: string;
+  repoRoot?: string;
   task: IterationTask;
   risk: "low" | "medium" | "high";
   forbidden: boolean;

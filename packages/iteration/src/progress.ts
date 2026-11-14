@@ -44,17 +44,20 @@ export async function startIteration(
   const now = new Date().toISOString();
   await store.sql`
     INSERT INTO iteration_runs (
-      iteration_id, workflow_id, workspace_id, goal, acceptance, run_mode,
-      apply_mode, status, phase, plan_artifact_id, started_at, updated_at
+      iteration_id, workflow_id, workspace_id, repo_root, goal, acceptance,
+      run_mode, apply_mode, status, phase, plan_artifact_id, started_at,
+      updated_at
     ) VALUES (
       ${input.iterationId},
       ${input.workflowId ?? `iteration-${input.iterationId}`},
-      ${input.workspaceId}, ${input.goal}, ${input.acceptance ?? null},
+      ${input.workspaceId}, ${input.repoRoot ?? null}, ${input.goal},
+      ${input.acceptance ?? null},
       ${input.runMode}, ${input.applyMode}, 'running', 'planned',
       ${planArtifactId}, ${now}, ${now}
     )
     ON CONFLICT (iteration_id) DO UPDATE SET
       workflow_id = EXCLUDED.workflow_id,
+      repo_root = COALESCE(EXCLUDED.repo_root, iteration_runs.repo_root),
       goal = EXCLUDED.goal,
       acceptance = EXCLUDED.acceptance,
       run_mode = EXCLUDED.run_mode,

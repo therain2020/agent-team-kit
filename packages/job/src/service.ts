@@ -20,6 +20,7 @@ import {
   createTemporalClient,
   taskQueue,
 } from "@kit/workflow";
+import { type ProjectTarget, resolveProject } from "./projects";
 import {
   type JobApplyMode,
   JobError,
@@ -55,7 +56,15 @@ export async function startJob(
     );
   }
   if (input.kind === "iteration") {
-    return await startIterationJob(store, input, runMode, packDir, loaded);
+    const project = await resolveProject(options.repoRoot, input.projectId);
+    return await startIterationJob(
+      store,
+      input,
+      runMode,
+      packDir,
+      loaded,
+      project,
+    );
   }
   return await startPackRunJob(store, input, runMode, packDir, loaded);
 }
@@ -386,6 +395,7 @@ async function startIterationJob(
   runMode: JobRunMode,
   packDir: string,
   loaded: Awaited<ReturnType<typeof loadPack>>,
+  project: ProjectTarget,
 ): Promise<StartJobResult> {
   if (!loaded.ok) {
     throw new JobError("invalid_pack", "invalid pack");
@@ -431,6 +441,7 @@ async function startIterationJob(
         runMode,
         applyMode,
         pack: loaded.pack.metadata.name,
+        project: projectRef(project),
       };
     }
   }
@@ -439,6 +450,7 @@ async function startIterationJob(
     iterationId,
     workflowId,
     workspaceId: "default",
+    repoRoot: project.path,
     packDir,
     goal: input.goal.trim(),
     ...(input.acceptance ? { acceptance: input.acceptance } : {}),
@@ -456,12 +468,12 @@ async function startIterationJob(
   const now = new Date().toISOString();
   await store.sql`
     INSERT INTO iteration_runs (
-      iteration_id, workflow_id, workspace_id, goal, acceptance, run_mode,
-      apply_mode, status, phase, started_at, updated_at
+      iteration_id, workflow_id, workspace_id, repo_root, goal, acceptance,
+      run_mode, apply_mode, status, phase, started_at, updated_at
     ) VALUES (
-      ${iterationId}, ${workflowId}, 'default', ${iterationInput.goal},
-      ${iterationInput.acceptance ?? null}, ${runMode}, ${applyMode},
-      'running', 'queued', ${now}, ${now}
+      ${iterationId}, ${workflowId}, 'default', ${project.path},
+      ${iterationInput.goal}, ${iterationInput.acceptance ?? null},
+      ${runMode}, ${applyMode}, 'running', 'queued', ${now}, ${now}
     )
     ON CONFLICT (iteration_id) DO NOTHING
   `;
@@ -484,6 +496,7 @@ async function startIterationJob(
       runMode,
       applyMode,
       pack: loaded.pack.metadata.name,
+      project: projectRef(project),
     };
   } catch (error) {
     await store.sql`
@@ -652,6 +665,14 @@ function resolvePackDir(
     }
   }
   return resolved;
+}
+
+function projectRef(project: ProjectTarget): {
+  id: string;
+  name: string;
+  path: string;
+} {
+  return { id: project.id, name: project.name, path: project.path };
 }
 
 function stringList(value: unknown): string[] {

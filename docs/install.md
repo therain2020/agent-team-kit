@@ -153,6 +153,7 @@ bun run kit manager brief <runId>
 | `KIT_DB_DRIVER` | per mode | `sqlite` or `postgres` override |
 | `KIT_LOCAL_DB` | `~/.agent-team-kit/data/kit.db` | Local SQLite database file |
 | `KIT_HOME` | `~/.agent-team-kit` | Bootstrap profile, key and local data |
+| `KIT_PROJECTS_ROOT` | parent of the Kit repo | Folder scanned for git projects in the console project picker |
 | `KIT_DB_URL` | `postgres://kit:kit@localhost:5432/kit` | Postgres (Scale Mode) |
 | `KIT_BLOB_BACKEND` | `fs` | `fs` or `s3` |
 | `KIT_S3_*` | MinIO defaults | S3 endpoint/bucket/credentials |

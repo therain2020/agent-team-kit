@@ -106,6 +106,7 @@ async function runIterationWorkflow(
           iterationId: input.iterationId,
           workspaceId: input.workspaceId,
           packDir: input.packDir,
+          ...(input.repoRoot ? { repoRoot: input.repoRoot } : {}),
           task,
           attempt,
           feedback,
@@ -162,6 +163,7 @@ async function runIterationWorkflow(
         const result = await apply.applyIterationTask({
           iterationId: input.iterationId,
           workspaceId: input.workspaceId,
+          ...(input.repoRoot ? { repoRoot: input.repoRoot } : {}),
           task,
           risk: risk.risk,
           forbidden: risk.forbidden,

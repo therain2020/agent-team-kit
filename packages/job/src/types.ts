@@ -18,6 +18,8 @@ export interface StartJobInput {
   goal?: string;
   acceptance?: string;
   packDir: string;
+  /** Project id from the projects registry; iterations operate on its repo. */
+  projectId?: string;
   workflow?: string;
   domain?: string;
   runMode?: JobRunMode;
@@ -45,6 +47,7 @@ export interface StartJobResult {
   workflow?: string;
   requestId?: string;
   mission?: unknown;
+  project?: { id: string; name: string; path: string };
 }
 
 export interface JobSummary {

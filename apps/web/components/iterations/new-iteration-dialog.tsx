@@ -1,5 +1,6 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,12 +13,39 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Play } from "lucide-react";
+import { ArrowLeft, Play, RefreshCw, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
-const DOMAINS = ["", "cyber", "ux", "perf", "docs"];
+interface Project {
+  id: string;
+  name: string;
+  path: string;
+  source: "kit" | "workspace";
+  checks: string[];
+}
+
+interface Draft {
+  kind: "iteration";
+  projectId: string;
+  packDir: string;
+  domain: string;
+  maxTasks: number;
+  acceptance: string;
+  applyMode: "none" | "low" | "low-medium";
+  runMode: "DRY_RUN";
+}
+
+interface DraftResponse {
+  draft: Draft;
+  rationale: string;
+  warnings: string[];
+  project: Project;
+  model: "live" | "heuristic";
+}
+
+const DOMAINS = ["cyber", "ux", "perf", "docs"];
 
 export function NewIterationDialog({
   defaultOpen = false,
@@ -28,40 +56,108 @@ export function NewIterationDialog({
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(defaultOpen);
+  const [step, setStep] = useState<"goal" | "review">("goal");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [liveAllowed, setLiveAllowed] = useState(false);
+  const [projectId, setProjectId] = useState("self");
   const [goal, setGoal] = useState("");
-  const [acceptance, setAcceptance] = useState("");
-  const [pack, setPack] = useState("self-improve");
-  const [domain, setDomain] = useState("");
+  const [draft, setDraft] = useState<DraftResponse | null>(null);
+  const [domain, setDomain] = useState("cyber");
   const [maxTasks, setMaxTasks] = useState("2");
+  const [acceptance, setAcceptance] = useState("");
   const [applyMode, setApplyMode] = useState<"none" | "low" | "low-medium">(
     "low",
   );
   const [live, setLive] = useState(false);
-  const [stub, setStub] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<"draft" | "start" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function start() {
+  const loadProjects = useCallback(async () => {
+    setProjectsError(null);
+    try {
+      const response = await fetch("/api/projects", { cache: "no-store" });
+      const payload = (await response.json()) as {
+        projects?: Project[];
+        liveAllowed?: boolean;
+        error?: string;
+      };
+      if (!response.ok || !payload.projects) {
+        throw new Error(payload.error ?? `HTTP ${response.status}`);
+      }
+      setProjects(payload.projects);
+      setLiveAllowed(payload.liveAllowed === true);
+      setProjectId((current) =>
+        payload.projects?.some((project) => project.id === current)
+          ? current
+          : (payload.projects?.[0]?.id ?? "self"),
+      );
+    } catch (cause) {
+      setProjectsError(
+        cause instanceof Error ? cause.message : "failed to list projects",
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      void loadProjects();
+    }
+  }, [open, loadProjects]);
+
+  const generate = async () => {
     setError(null);
     if (!goal.trim()) {
-      setError("A goal is required.");
+      setError("先描述你想完成的目标。");
       return;
     }
-    setPending(true);
+    setPending("draft");
+    try {
+      const response = await fetch("/api/jobs/draft", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ goal: goal.trim(), projectId }),
+      });
+      const payload = (await response.json()) as DraftResponse & {
+        error?: string;
+      };
+      if (!response.ok || !payload.draft) {
+        throw new Error(payload.error ?? `HTTP ${response.status}`);
+      }
+      setDraft(payload);
+      setDomain(payload.draft.domain);
+      setMaxTasks(String(payload.draft.maxTasks));
+      setAcceptance(payload.draft.acceptance);
+      setApplyMode(payload.draft.applyMode);
+      setLive(false);
+      setStep("review");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "生成方案失败");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const start = async () => {
+    if (!draft) {
+      return;
+    }
+    setError(null);
+    setPending("start");
     try {
       const response = await fetch("/api/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           kind: "iteration",
-          packDir: pack.trim(),
-          goal,
-          ...(acceptance.trim() ? { acceptance } : {}),
-          ...(domain ? { domain } : {}),
-          maxTasks: Number(maxTasks) || 2,
+          projectId: draft.project.id,
+          packDir: draft.draft.packDir,
+          goal: goal.trim(),
+          acceptance: acceptance.trim() || undefined,
+          domain,
+          maxTasks: Number(maxTasks) || 1,
+          applyMode,
           runMode: live ? "LIVE" : "DRY_RUN",
-          ...(live ? { applyMode } : {}),
-          stub,
         }),
       });
       const payload = (await response.json()) as {
@@ -69,203 +165,307 @@ export function NewIterationDialog({
         error?: string;
       };
       if (!response.ok || !payload.jobId) {
-        setError(payload.error ?? `HTTP ${response.status}`);
-        return;
+        throw new Error(payload.error ?? `HTTP ${response.status}`);
       }
-      toast.success(`Iteration ${payload.jobId} started`);
-      setOpen(false);
-      router.push(`/iterations/${encodeURIComponent(payload.jobId)}`);
-    } catch (startError) {
-      setError(
-        startError instanceof Error ? startError.message : "failed to start",
+      toast.success(
+        `Iteration ${payload.jobId} started on ${draft.project.name}`,
       );
+      setOpen(false);
+      reset();
+      router.push(`/iterations/${encodeURIComponent(payload.jobId)}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "启动失败");
     } finally {
-      setPending(false);
+      setPending(null);
     }
-  }
+  };
+
+  const reset = () => {
+    setStep("goal");
+    setDraft(null);
+    setError(null);
+    setLive(false);
+  };
+
+  const selectedProject = projects.find((project) => project.id === projectId);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) {
+          reset();
+        }
+      }}
+    >
       <DialogTrigger asChild>
         <Button size="sm">
           <Play className="size-3.5" />
           {triggerLabel}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>New iteration</DialogTitle>
           <DialogDescription>
-            Plan tasks, delegate to an external coder, verify and apply. DRY_RUN
-            is the default; LIVE requires KIT_UI_ALLOW_LIVE=1.
+            {step === "goal"
+              ? "选择要操作的项目，用一句话说明目标；AI 会生成执行方案供你确认。"
+              : "检查 AI 生成的方案，按需修改后批准执行。只有点击批准才会启动。"}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label
-              htmlFor="iteration-goal"
-              className="text-xs font-medium text-zinc-300"
-            >
-              Goal
-            </label>
-            <Textarea
-              id="iteration-goal"
-              value={goal}
-              onChange={(event) => setGoal(event.target.value)}
-              placeholder="Find one security weakness and one UX problem, fix them, verify."
-              className="min-h-20 text-xs"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label
-              htmlFor="iteration-acceptance"
-              className="text-xs font-medium text-zinc-300"
-            >
-              Acceptance (optional)
-            </label>
-            <Textarea
-              id="iteration-acceptance"
-              value={acceptance}
-              onChange={(event) => setAcceptance(event.target.value)}
-              placeholder="Small verified changes; high-risk changes stay pending."
-              className="min-h-16 text-xs"
-            />
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
+        {step === "goal" ? (
+          <div className="space-y-4">
             <div className="space-y-1.5">
               <label
-                htmlFor="iteration-pack"
+                htmlFor="iteration-project"
                 className="text-xs font-medium text-zinc-300"
               >
-                Pack
-              </label>
-              <Input
-                id="iteration-pack"
-                value={pack}
-                onChange={(event) => setPack(event.target.value)}
-                className="h-9 text-xs"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label
-                htmlFor="iteration-domain"
-                className="text-xs font-medium text-zinc-300"
-              >
-                Domain
+                操作项目
               </label>
               <select
-                id="iteration-domain"
-                value={domain}
-                onChange={(event) => setDomain(event.target.value)}
+                id="iteration-project"
+                value={projectId}
+                onChange={(event) => setProjectId(event.target.value)}
                 className="h-9 w-full rounded-md border border-border bg-zinc-950 px-2 text-xs text-zinc-200 outline-none focus:border-ring"
               >
-                {DOMAINS.map((item) => (
-                  <option key={item || "all"} value={item}>
-                    {item || "planner decides"}
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                    {project.source === "kit" ? " (Kit repository)" : ""}
                   </option>
                 ))}
               </select>
+              {selectedProject ? (
+                <p className="font-mono text-[10px] text-zinc-500">
+                  {selectedProject.path}
+                  {selectedProject.checks.length > 0
+                    ? ` · checks: ${selectedProject.checks.join(", ")}`
+                    : " · no verification scripts"}
+                </p>
+              ) : null}
+              {projectsError ? (
+                <p className="text-[11px] text-red-300">
+                  无法加载项目列表：{projectsError}
+                </p>
+              ) : null}
             </div>
+
             <div className="space-y-1.5">
               <label
-                htmlFor="iteration-max-tasks"
+                htmlFor="iteration-goal"
                 className="text-xs font-medium text-zinc-300"
               >
-                Max tasks
+                目标
               </label>
-              <Input
-                id="iteration-max-tasks"
-                type="number"
-                min={1}
-                max={20}
-                value={maxTasks}
-                onChange={(event) => setMaxTasks(event.target.value)}
-                className="h-9 text-xs"
+              <Textarea
+                id="iteration-goal"
+                value={goal}
+                onChange={(event) => setGoal(event.target.value)}
+                placeholder="例如：尝试找到系统的安全漏洞并修复它"
+                className="min-h-24 text-sm"
               />
             </div>
+
+            {error ? <ErrorLine message={error} /> : null}
+          </div>
+        ) : draft ? (
+          <div className="space-y-4">
+            <div className="rounded-md border border-border bg-zinc-950/50 px-3 py-2.5">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-300">
+                <Badge variant="violet">{draft.project.name}</Badge>
+                <span className="font-mono text-[10px] text-zinc-500">
+                  {draft.project.path}
+                </span>
+                <Badge variant={draft.model === "live" ? "success" : "outline"}>
+                  {draft.model === "live"
+                    ? "AI proposal"
+                    : "heuristic proposal"}
+                </Badge>
+              </div>
+              <p className="mt-2 text-sm text-zinc-200">{goal}</p>
+              <p className="mt-1 text-[11px] text-zinc-400">
+                {draft.rationale}
+              </p>
+            </div>
+
+            {draft.warnings.length > 0 ? (
+              <ul className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+                {draft.warnings.map((warning) => (
+                  <li key={warning}>· {warning}</li>
+                ))}
+              </ul>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="review-domain"
+                  className="text-xs font-medium text-zinc-300"
+                >
+                  领域
+                </label>
+                <select
+                  id="review-domain"
+                  value={domain}
+                  onChange={(event) => setDomain(event.target.value)}
+                  className="h-9 w-full rounded-md border border-border bg-zinc-950 px-2 text-xs text-zinc-200 outline-none focus:border-ring"
+                >
+                  {(DOMAINS.includes(domain)
+                    ? DOMAINS
+                    : [domain, ...DOMAINS]
+                  ).map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="review-tasks"
+                  className="text-xs font-medium text-zinc-300"
+                >
+                  任务数
+                </label>
+                <Input
+                  id="review-tasks"
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={maxTasks}
+                  onChange={(event) => setMaxTasks(event.target.value)}
+                  className="h-9 text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="review-apply"
+                  className="text-xs font-medium text-zinc-300"
+                >
+                  自动落地
+                </label>
+                <select
+                  id="review-apply"
+                  value={applyMode}
+                  onChange={(event) =>
+                    setApplyMode(
+                      event.target.value as "none" | "low" | "low-medium",
+                    )
+                  }
+                  disabled={!live}
+                  className="h-9 w-full rounded-md border border-border bg-zinc-950 px-2 text-xs text-zinc-200 outline-none focus:border-ring disabled:opacity-50"
+                >
+                  <option value="none">none</option>
+                  <option value="low">low</option>
+                  <option value="low-medium">low-medium</option>
+                </select>
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               <label
-                htmlFor="iteration-apply"
+                htmlFor="review-acceptance"
                 className="text-xs font-medium text-zinc-300"
               >
-                Auto-apply (LIVE only)
+                完成标准
               </label>
-              <select
-                id="iteration-apply"
-                value={applyMode}
-                onChange={(event) =>
-                  setApplyMode(
-                    event.target.value as "none" | "low" | "low-medium",
-                  )
-                }
-                className="h-9 w-full rounded-md border border-border bg-zinc-950 px-2 text-xs text-zinc-200 outline-none focus:border-ring"
-              >
-                <option value="none">none</option>
-                <option value="low">low</option>
-                <option value="low-medium">low-medium</option>
-              </select>
+              <Textarea
+                id="review-acceptance"
+                value={acceptance}
+                onChange={(event) => setAcceptance(event.target.value)}
+                className="min-h-16 text-xs"
+              />
             </div>
-          </div>
 
-          <div className="grid gap-2 sm:grid-cols-2">
             <label className="flex items-start gap-2 rounded-md border border-border px-3 py-2">
               <input
                 type="checkbox"
                 checked={live}
+                disabled={!liveAllowed}
                 onChange={(event) => setLive(event.target.checked)}
-                className="mt-0.5 size-3.5 accent-emerald-500"
+                className="mt-0.5 size-3.5 accent-emerald-500 disabled:opacity-50"
               />
               <span>
                 <span className="block text-xs font-medium text-zinc-300">
-                  LIVE
+                  LIVE 执行
                 </span>
                 <span className="block text-[10px] text-zinc-500">
-                  Writes commits when auto-apply allows it.
+                  {liveAllowed
+                    ? "允许按自动落地策略提交改动；高风险仍会进入待审批。"
+                    : "服务端未开启 LIVE（需要 KIT_UI_ALLOW_LIVE=1）。"}
                 </span>
               </span>
             </label>
-            <label className="flex items-start gap-2 rounded-md border border-border px-3 py-2">
-              <input
-                type="checkbox"
-                checked={stub}
-                onChange={(event) => setStub(event.target.checked)}
-                className="mt-0.5 size-3.5 accent-emerald-500"
-              />
-              <span>
-                <span className="block text-xs font-medium text-zinc-300">
-                  Stub planner
-                </span>
-                <span className="block text-[10px] text-zinc-500">
-                  Deterministic plan; the coder still runs.
-                </span>
-              </span>
-            </label>
-          </div>
 
-          {error ? (
-            <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-300">
-              {error}
-            </div>
-          ) : null}
-        </div>
+            {error ? <ErrorLine message={error} /> : null}
+          </div>
+        ) : null}
 
         <DialogFooter>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setOpen(false)}
-            disabled={pending}
-          >
-            Cancel
-          </Button>
-          <Button size="sm" onClick={() => void start()} disabled={pending}>
-            {pending ? "Starting…" : "Start iteration"}
-          </Button>
+          {step === "goal" ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setOpen(false)}
+                disabled={pending !== null}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void generate()}
+                disabled={pending !== null || projects.length === 0}
+              >
+                <Sparkles className="size-3.5" />
+                {pending === "draft" ? "Generating…" : "Generate proposal"}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setStep("goal");
+                  setError(null);
+                }}
+                disabled={pending !== null}
+              >
+                <ArrowLeft className="size-3.5" />
+                Back
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void generate()}
+                disabled={pending !== null}
+              >
+                <RefreshCw className="size-3.5" />
+                Regenerate
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void start()}
+                disabled={pending !== null}
+              >
+                <Play className="size-3.5" />
+                {pending === "start" ? "Starting…" : "Approve & start"}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ErrorLine({ message }: { message: string }) {
+  return (
+    <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-300">
+      {message}
+    </div>
   );
 }

@@ -77,7 +77,7 @@ export async function planIteration(
   input: IterationInput,
 ): Promise<PlannedIteration> {
   const store = await getStore();
-  const repoRoot = resolveRepoRoot();
+  const repoRoot = resolveRepoRoot(input.repoRoot);
   const loaded = await loadPack(input.packDir);
   if (!loaded.ok) {
     throw new Error(`invalid iteration pack: ${loaded.errors.join("; ")}`);
@@ -168,7 +168,7 @@ export async function runIterationCoder(
   input: RunCoderActivityInput,
 ): Promise<IterationCoderResult> {
   const store = await getStore();
-  const repoRoot = resolveRepoRoot();
+  const repoRoot = resolveRepoRoot(input.repoRoot);
   const loaded = await loadPack(input.packDir);
   if (!loaded.ok) {
     throw new Error(`invalid iteration pack: ${loaded.errors.join("; ")}`);
@@ -416,6 +416,8 @@ export async function verifyIterationTask(
   }
 
   const checks: IterationVerificationResult["checks"] = [];
+  const scripts = await readPackageScripts(input.sandboxDir);
+  let executed = 0;
   const heartbeat = setInterval(() => {
     try {
       Context.current().heartbeat();
@@ -440,6 +442,7 @@ export async function verifyIterationTask(
           },
         );
         const high = /"severity"\s*:\s*"high"/i.test(scan.content);
+        executed += 1;
         checks.push({
           name,
           exitCode: scan.isError || high ? 1 : 0,
@@ -459,12 +462,31 @@ export async function verifyIterationTask(
         });
         continue;
       }
+      if (!scripts) {
+        checks.push({
+          name,
+          exitCode: 0,
+          timedOut: false,
+          output: "skipped: target project has no package.json",
+        });
+        continue;
+      }
+      if (!scripts.has(script)) {
+        checks.push({
+          name,
+          exitCode: 0,
+          timedOut: false,
+          output: `skipped: package.json has no "${script}" script`,
+        });
+        continue;
+      }
       const bun = commandOnPath("bun") ?? "bun";
       const result = await runProcess(bun, ["run", script], {
         cwd: input.sandboxDir,
         timeoutMs: 20 * 60 * 1000,
         maxOutputBytes: 200_000,
       });
+      executed += 1;
       checks.push({
         name,
         exitCode: result.exitCode,
@@ -477,6 +499,15 @@ export async function verifyIterationTask(
     }
   } finally {
     clearInterval(heartbeat);
+  }
+
+  if (executed === 0) {
+    return await failVerification(
+      store,
+      input,
+      "no verification commands",
+      `the target project cannot run any of: ${domain.verification.join(", ")}`,
+    );
   }
 
   const failed = checks.filter(
@@ -575,7 +606,7 @@ export async function applyIterationTask(
   input: ApplyTaskActivityInput,
 ): Promise<IterationApplyResult> {
   const store = await getStore();
-  const repoRoot = resolveRepoRoot();
+  const repoRoot = resolveRepoRoot(input.repoRoot);
   const ticketId = newId("tkt");
   let headBefore = "";
   let baseDrifted = false;
@@ -1254,6 +1285,16 @@ async function failVerification(
   };
 }
 
+async function readPackageScripts(dir: string): Promise<Set<string> | null> {
+  try {
+    const raw = await readFile(path.join(dir, "package.json"), "utf8");
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> };
+    return new Set(Object.keys(parsed.scripts ?? {}));
+  } catch {
+    return null;
+  }
+}
+
 function scriptFor(check: string): string | null {
   switch (check) {
     case "typecheck":
@@ -1279,7 +1320,10 @@ async function runGit(cwd: string, args: string[]) {
   });
 }
 
-function resolveRepoRoot(): string {
+function resolveRepoRoot(override?: string): string {
+  if (override) {
+    return path.resolve(override);
+  }
   const cwd = process.cwd();
   if (
     path.basename(cwd) === "runtime" &&

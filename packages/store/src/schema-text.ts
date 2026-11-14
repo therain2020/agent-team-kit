@@ -105,6 +105,8 @@ CREATE TABLE IF NOT EXISTS run_requests (
 ALTER TABLE autopilot_state
   ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
 
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS repo_root TEXT;
+
 CREATE TABLE IF NOT EXISTS evolution_variants (
   variant_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -205,6 +207,7 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   iteration_id TEXT PRIMARY KEY,
   workflow_id TEXT,
   workspace_id TEXT NOT NULL DEFAULT 'default',
+  repo_root TEXT,
   goal TEXT NOT NULL,
   acceptance TEXT,
   run_mode TEXT NOT NULL,
@@ -503,6 +506,7 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   iteration_id TEXT PRIMARY KEY,
   workflow_id TEXT,
   workspace_id TEXT NOT NULL DEFAULT 'default',
+  repo_root TEXT,
   goal TEXT NOT NULL,
   acceptance TEXT,
   run_mode TEXT NOT NULL,
@@ -583,6 +587,8 @@ CREATE TABLE IF NOT EXISTS iteration_turns (
 );
 
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE iteration_runs ADD COLUMN repo_root TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
