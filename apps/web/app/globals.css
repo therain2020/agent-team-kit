@@ -190,10 +190,28 @@
   }
 }
 
+@keyframes factory-belt {
+  to {
+    background-position: -20px 0;
+  }
+}
+
+.factory-belt {
+  background-image: repeating-linear-gradient(
+    90deg,
+    #18181b 0,
+    #18181b 18px,
+    #27272a 18px,
+    #27272a 20px
+  );
+  animation: factory-belt 1.6s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pixel-bob-idle,
   .office-blink,
-  .office-screen {
+  .office-screen,
+  .factory-belt {
     animation: none !important;
   }
 }

@@ -1,3 +1,4 @@
+import { newId } from "@kit/core";
 import {
   findApprovalRequest,
   findDecisionForRequest,
@@ -12,6 +13,7 @@ export type DecisionOutcome =
       requestId: string;
       decision: "approve" | "abort";
       duplicate: boolean;
+      batchId: string;
     }
   | {
       ok: false;
@@ -28,6 +30,7 @@ export async function decideApproval(input: {
   decision: "approve" | "abort";
   note: string;
   actor: string;
+  batchId?: string;
 }): Promise<DecisionOutcome> {
   const store = await getStore();
   const run = await store.runs.get(input.runId);
@@ -66,12 +69,16 @@ export async function decideApproval(input: {
     input.runId,
     input.requestId,
   );
+  const batchId = input.batchId ?? newId("batch");
   if (!existing) {
     await recordDecision(store, input.runId, input.decision, input.note, {
       requestId: input.requestId,
       actor: input.actor,
+      batchId,
+      riskClass: approval.riskClass,
     });
   }
+  const effectiveBatchId = existing?.batchId ?? batchId;
 
   if (store.driver === "sqlite") {
     // Local runs poll decision records instead of receiving Temporal signals.
@@ -80,6 +87,7 @@ export async function decideApproval(input: {
       requestId: input.requestId,
       decision: input.decision,
       duplicate: Boolean(existing),
+      batchId: effectiveBatchId,
     };
   }
 
@@ -110,5 +118,6 @@ export async function decideApproval(input: {
     requestId: input.requestId,
     decision: input.decision,
     duplicate: Boolean(existing),
+    batchId: effectiveBatchId,
   };
 }
