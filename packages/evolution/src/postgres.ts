@@ -77,6 +77,10 @@ interface CycleRow {
   rationale: string;
   auto_applied: boolean;
   error: string | null;
+  eval_snapshot_path: string | null;
+  eval_snapshot_hash: string | null;
+  evaluator_hash: string | null;
+  evaluator_approval_ref: string | null;
   created_at: Date | string;
 }
 
@@ -87,6 +91,7 @@ interface StateRow {
   canary_percent: number | null;
   canary_since: Date | string | null;
   canary_reason: string | null;
+  canary_eval_snapshot_path: string | null;
   version: number;
 }
 
@@ -287,6 +292,9 @@ export class StoreEvolutionRepository implements EvolutionRepository {
           status: row.canary_status as "active" | "rolled_back" | "promoted",
           since: toIso(row.canary_since) ?? new Date().toISOString(),
           ...(row.canary_reason ? { reason: row.canary_reason } : {}),
+          ...(row.canary_eval_snapshot_path
+            ? { evalSnapshotPath: row.canary_eval_snapshot_path }
+            : {}),
         };
       }
     }
@@ -322,11 +330,12 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         INSERT INTO evolution_state (
           workspace_id, pack_dir, champion_variant_id, canary_variant_id,
           canary_status, canary_percent, canary_since, canary_reason,
-          version, updated_at
+          canary_eval_snapshot_path, version, updated_at
         ) VALUES (
           ${this.workspaceId}, '', ${championId}, ${canaryId},
           ${canary?.status ?? null}, ${canary?.percent ?? null},
-          ${canary?.since ?? null}, ${canary?.reason ?? null}, 0, ${now}
+          ${canary?.since ?? null}, ${canary?.reason ?? null},
+          ${canary?.evalSnapshotPath ?? null}, 0, ${now}
         )
         ON CONFLICT (workspace_id, pack_dir) DO UPDATE SET
           champion_variant_id = EXCLUDED.champion_variant_id,
@@ -335,6 +344,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
           canary_percent = EXCLUDED.canary_percent,
           canary_since = EXCLUDED.canary_since,
           canary_reason = EXCLUDED.canary_reason,
+          canary_eval_snapshot_path = EXCLUDED.canary_eval_snapshot_path,
           version = evolution_state.version + 1,
           updated_at = EXCLUDED.updated_at
       `;
@@ -348,6 +358,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         canary_percent = ${canary?.percent ?? null},
         canary_since = ${canary?.since ?? null},
         canary_reason = ${canary?.reason ?? null},
+        canary_eval_snapshot_path = ${canary?.evalSnapshotPath ?? null},
         version = version + 1,
         updated_at = ${now}
       WHERE workspace_id = ${this.workspaceId}
@@ -494,7 +505,9 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         cycle_id, workspace_id, pack_dir, agent_id, hypothesis, signals,
         baseline_variant_id, candidate_variant_id, baseline_name, candidate_name,
         baseline_pass, candidate_pass, baseline_score, candidate_score,
-        cost_cny, decision, rationale, auto_applied, error, created_at
+        cost_cny, decision, rationale, auto_applied, error,
+        eval_snapshot_path, eval_snapshot_hash, evaluator_hash,
+        evaluator_approval_ref, created_at
       ) VALUES (
         ${record.cycleId}, ${this.workspaceId}, ${record.packDir}, ${record.agentId},
         ${record.hypothesis}, ${this.store.sql.json(record.signals)},
@@ -502,7 +515,9 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         ${record.candidateName}, ${record.baselinePass}, ${record.candidatePass},
         ${record.baselineScore}, ${record.candidateScore}, ${record.costCny},
         ${record.decision}, ${record.rationale}, ${record.autoApplied},
-        ${record.error ?? null}, ${record.createdAt}
+        ${record.error ?? null}, ${record.evalSnapshotPath ?? null},
+        ${record.evalSnapshotHash ?? null}, ${record.evaluatorHash ?? null},
+        ${record.evaluatorApprovalRef ?? null}, ${record.createdAt}
       )
       ON CONFLICT (cycle_id) DO NOTHING
     `;
@@ -711,6 +726,16 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
     autoApplied: Boolean(row.auto_applied),
     createdAt: toIso(row.created_at) ?? new Date().toISOString(),
     ...(row.error ? { error: row.error } : {}),
+    ...(row.eval_snapshot_path
+      ? { evalSnapshotPath: row.eval_snapshot_path }
+      : {}),
+    ...(row.eval_snapshot_hash
+      ? { evalSnapshotHash: row.eval_snapshot_hash }
+      : {}),
+    ...(row.evaluator_hash ? { evaluatorHash: row.evaluator_hash } : {}),
+    ...(row.evaluator_approval_ref
+      ? { evaluatorApprovalRef: row.evaluator_approval_ref }
+      : {}),
   };
 }
 

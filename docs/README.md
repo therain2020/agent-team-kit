@@ -86,6 +86,8 @@
   approvals, evolution, task-centric roles and controlled tools.
 - [pack-authoring.md](./pack-authoring.md) — Pack layout, roles, tools,
   validation, stages, approvals, autonomy.
+- [evolution-governance.md](./evolution-governance.md) — frozen eval snapshots,
+  evaluator change approval, snapshot verification.
 - `packs/self-improve/` — Cyber and UX squads for this repo.
 - `examples/sources/` — publish a declarative source to the market.
 

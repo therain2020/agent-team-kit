@@ -16,6 +16,7 @@ export interface CanaryState {
     status: "active" | "rolled_back" | "promoted";
     since: string;
     reason?: string;
+    evalSnapshotPath?: string;
   };
 }
 
@@ -30,6 +31,7 @@ export async function startCanary(
   percent: number,
   statePath = DEFAULT_STATE,
   repo?: EvolutionRepository,
+  evalDir?: string,
 ): Promise<CanaryState> {
   if (!Number.isFinite(percent) || percent <= 0 || percent >= 100) {
     throw new Error("percent must be between 1 and 99");
@@ -47,6 +49,7 @@ export async function startCanary(
       percent,
       status: "active",
       since: new Date().toISOString(),
+      ...(evalDir ? { evalSnapshotPath: path.resolve(evalDir) } : {}),
     },
   };
 
@@ -69,6 +72,7 @@ export async function evaluateCanary(
     archive?: string;
     statePath?: string;
     repo?: EvolutionRepository;
+    evalDir?: string;
   } = {},
 ): Promise<{
   state: CanaryState;
@@ -88,6 +92,7 @@ export async function evaluateCanary(
 
   const champion: EvolutionRecord[] = [];
   const variant: EvolutionRecord[] = [];
+  const evalDir = options.evalDir ?? state.canary.evalSnapshotPath;
 
   for (const input of inputs) {
     champion.push(
@@ -100,6 +105,7 @@ export async function evaluateCanary(
           stub: options.stub,
           archive: options.archive,
           ...(options.repo ? { repo: options.repo } : {}),
+          ...(evalDir ? { evalDir } : {}),
         },
       ),
     );
@@ -113,6 +119,7 @@ export async function evaluateCanary(
           stub: options.stub,
           archive: options.archive,
           ...(options.repo ? { repo: options.repo } : {}),
+          ...(evalDir ? { evalDir } : {}),
         },
       ),
     );
