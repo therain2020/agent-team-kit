@@ -257,7 +257,8 @@
     "allRuns": "全部运行",
     "backendDownTitle": "后端未启动",
     "backendDownDescription": "控制台无法连接 Postgres。运行 bun run kit up 后刷新。团队与 Studio 仍可使用。",
-    "openPacks": "打开团队"
+    "openPacks": "打开团队",
+    "expiresIn": "{time}后过期"
   },
   "runs": {
     "title": "运行",
