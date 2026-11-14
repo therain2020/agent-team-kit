@@ -1,4 +1,9 @@
-import type { Producer } from "@kit/core";
+import type {
+  DegradationTrigger,
+  ExitCriteria,
+  Producer,
+  QualityFloor,
+} from "@kit/core";
 import {
   integer,
   primaryKey,
@@ -96,6 +101,45 @@ export const runRequests = sqliteTable("run_requests", {
   error: text("error"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+});
+
+export const degradationState = sqliteTable(
+  "degradation_state",
+  {
+    scope: text("scope").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    modeId: text("mode_id").notNull(),
+    kind: text("kind").notNull(),
+    triggers: text("triggers", { mode: "json" })
+      .$type<DegradationTrigger[]>()
+      .notNull(),
+    behavior: text("behavior").notNull(),
+    qualityFloor: text("quality_floor", { mode: "json" })
+      .$type<QualityFloor>()
+      .notNull(),
+    exitCriteria: text("exit_criteria", { mode: "json" })
+      .$type<ExitCriteria>()
+      .notNull(),
+    status: text("status").notNull(),
+    enteredAt: text("entered_at").notNull(),
+    enteredBy: text("entered_by").notNull(),
+    exitedAt: text("exited_at"),
+    exitReason: text("exit_reason"),
+  },
+  (table) => [primaryKey({ columns: [table.scope, table.workspaceId] })],
+);
+
+export const degradationAudit = sqliteTable("degradation_audit", {
+  auditId: text("audit_id").primaryKey(),
+  occurredAt: text("occurred_at").notNull(),
+  actor: text("actor").notNull(),
+  action: text("action").notNull(),
+  scope: text("scope").notNull(),
+  workspaceId: text("workspace_id").notNull(),
+  modeId: text("mode_id").notNull(),
+  detail: text("detail", { mode: "json" })
+    .$type<Record<string, unknown>>()
+    .notNull(),
 });
 
 export const autopilotState = sqliteTable(

@@ -2,7 +2,8 @@ import { newId } from "@kit/core";
 import { findDecisionForRequest } from "@kit/manager";
 import type { initStore } from "@kit/store";
 import type { PackRunInput, PackRunResult } from "@kit/workflow";
-import * as activities from "./pack-activities";
+import { createDegradationGuard, guardedActivities } from "./degradation-guard";
+import * as packActivities from "./pack-activities";
 import { type ApprovalOutcome, runPackPipeline } from "./pack-pipeline";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
@@ -18,7 +19,10 @@ export async function runPackWorkflowLocal(
   options: LocalRunnerOptions,
 ): Promise<PackRunResult> {
   return runPackPipeline(input, {
-    activities,
+    activities: guardedActivities(
+      createDegradationGuard(options.store),
+      packActivities,
+    ),
     waitForApproval: (requestId, timeoutMs) =>
       waitForDecision(options, input.runId, requestId, timeoutMs),
   });

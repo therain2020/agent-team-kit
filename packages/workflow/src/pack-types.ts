@@ -43,6 +43,7 @@ export interface PackStageSpec {
   position?: { x: number; y: number };
   revision?: RevisionSpec;
   approval?: PackApprovalSpec;
+  failureMode?: "fail_open" | "fail_closed";
 }
 
 export interface PackRunInput {
