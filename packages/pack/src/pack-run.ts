@@ -88,6 +88,13 @@ export async function buildPackRun(
         if (stage.type === "agent") {
           stageSpec.modelAlias = agent.frontmatter.model;
           stageSpec.tools = agent.spec.tools;
+          const declaredTools = new Set(agent.spec.tools);
+          const packTools = loaded.toolPacks
+            .flatMap((toolPack) => toolPack.tools)
+            .filter((tool) => declaredTools.has(tool.name));
+          if (packTools.length > 0) {
+            stageSpec.packTools = packTools;
+          }
           stageSpec.timeoutMs = stage.timeout
             ? parseDurationMs(stage.timeout)
             : undefined;
