@@ -48,9 +48,14 @@
 - Medium-risk canary gate: `--apply low-medium` runs `typecheck`, `lint`,
   `test` and a production `web:build` after applying; failure reverts the
   commit. High-risk changes are never auto-applied.
-- Tests: 75 passing (coder sandbox/diff, coder stage, gateway signatures and
+- Apply hardening: changed files are formatted with Biome before commit and
+  `.gitattributes` enforces LF. The medium canary applied a UX patch and
+  auto-reverted it when post-apply lint detected CRLF damage — proof that the
+  gate catches sandbox-vs-main integration drift. A clean medium auto-apply is
+  still pending because the final UX rerun hit the DSH 10-minute timeout.
+- Tests: 79 passing (coder sandbox/diff, coder stage, gateway signatures and
   normalization, router matching, iteration plan/risk, autopilot iterations,
-  plus the existing suite).
+  signals, plus the existing suite).
 
 ## 1.0.0 — 2026-11-14 (not released)
 
