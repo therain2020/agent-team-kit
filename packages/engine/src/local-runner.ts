@@ -3,6 +3,7 @@ import { findDecisionForRequest } from "@kit/manager";
 import type { initStore } from "@kit/store";
 import type { PackRunInput, PackRunResult } from "@kit/workflow";
 import { createDegradationGuard, guardedActivities } from "./degradation-guard";
+import { assertKillSwitchClear } from "./kill-switch";
 import * as packActivities from "./pack-activities";
 import { type ApprovalOutcome, runPackPipeline } from "./pack-pipeline";
 
@@ -65,6 +66,7 @@ export async function enqueueLocalRun(
   input: PackRunInput,
   store: Store,
 ): Promise<{ requestId: string }> {
+  await assertKillSwitchClear(store, { workspaceId: input.workspaceId }, "run");
   const now = new Date().toISOString();
   const requestId = newId("rrq");
   await store.runRequests.enqueue({

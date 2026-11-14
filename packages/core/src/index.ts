@@ -6,6 +6,7 @@ export * from "./fs-lock";
 export * from "./git-apply";
 export * from "./ids";
 export * from "./iteration";
+export * from "./kill-switch";
 export * from "./pack";
 export * from "./policy";
 export * from "./rubric";

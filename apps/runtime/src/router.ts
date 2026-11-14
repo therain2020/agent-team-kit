@@ -1,7 +1,12 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import { type EventEnvelope, isExecutionBlocked, newId } from "@kit/core";
+import {
+  type EventEnvelope,
+  isExecutionBlocked,
+  newId,
+  resolveKillSwitch,
+} from "@kit/core";
 import { activeModeForWorkspace, auditBlockedExecution } from "@kit/engine";
 import {
   type CanaryState,
@@ -125,6 +130,10 @@ export class EventRouter {
     }
     const since = startOfUtcDay(new Date()).toISOString();
     const usage = new Map<string, BudgetUsage>();
+    const blockingSwitch = resolveKillSwitch(
+      await this.store.killSwitches.listActive(),
+      { workspaceId: event.workspaceId },
+    );
 
     for (const pack of packs) {
       let estimates: ReturnType<typeof simulatePack> | undefined;
@@ -142,6 +151,16 @@ export class EventRouter {
         }
 
         const packName = pack.pack.metadata.name;
+        if (blockingSwitch) {
+          result.skipped.push({
+            pack: packName,
+            workflow: workflow.id,
+            reason: `kill switch ${blockingSwitch.scope}/${
+              blockingSwitch.target || "*"
+            }`,
+          });
+          continue;
+        }
         if (readOnly) {
           result.skipped.push({
             pack: packName,

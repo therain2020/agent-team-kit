@@ -6,7 +6,7 @@ import {
   missionAssignmentSchema,
   newId,
 } from "@kit/core";
-import { enqueueLocalRun } from "@kit/engine";
+import { assertKillSwitchClear, enqueueLocalRun } from "@kit/engine";
 import {
   buildPackRun,
   loadPack,
@@ -42,6 +42,7 @@ export async function startJob(
   input: StartJobInput,
   options: JobServiceOptions,
 ): Promise<StartJobResult> {
+  await assertKillSwitchClear(store, { workspaceId: "default" }, "run");
   const runMode: JobRunMode = input.runMode ?? "DRY_RUN";
   const packDir = resolvePackDir(
     options.repoRoot,

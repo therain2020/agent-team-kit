@@ -88,6 +88,8 @@
   validation, stages, approvals, autonomy.
 - [evolution-governance.md](./evolution-governance.md) — frozen eval snapshots,
   evaluator change approval, snapshot verification.
+- [kill-switch.md](./kill-switch.md) — four-level kill switch, audit, console,
+  CLI and drill runbook.
 - `packs/self-improve/` — Cyber and UX squads for this repo.
 - `examples/sources/` — publish a declarative source to the market.
 - `examples/workshop/` — publish a declarative workshop item.

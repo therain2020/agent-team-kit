@@ -10,6 +10,7 @@ import {
   PostgresDegradationStore,
   PostgresEventStore,
   PostgresManagerSessionStore,
+  PostgresKillSwitchStore,
   PostgresManifestStore,
   PostgresRunRequestStore,
   PostgresRunStore,
@@ -22,6 +23,7 @@ import {
   SqliteDegradationStore,
   SqliteEventStore,
   SqliteManagerSessionStore,
+  SqliteKillSwitchStore,
   SqliteManifestStore,
   SqliteRunRequestStore,
   SqliteRunStore,
@@ -50,6 +52,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
           runRequests: new PostgresRunRequestStore(handle.db),
           degradation: new PostgresDegradationStore(handle.db),
           managerSessions: new PostgresManagerSessionStore(handle.db),
+          killSwitches: new PostgresKillSwitchStore(handle.db),
         }
       : {
           events: new SqliteEventStore(handle.db),
@@ -62,6 +65,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
           runRequests: new SqliteRunRequestStore(handle.db),
           degradation: new SqliteDegradationStore(handle.db),
           managerSessions: new SqliteManagerSessionStore(handle.db),
+          killSwitches: new SqliteKillSwitchStore(handle.db),
         };
 
   const { blobs, artifactStore } = repositories;
