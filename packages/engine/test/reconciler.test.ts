@@ -4,6 +4,7 @@ import {
   type EngineRunStatus,
   type ReconcileRunRow,
   decideReconciliations,
+  probeErrorStatus,
   reconcileLocalTarget,
   reconcileTarget,
 } from "../src/reconciler";
@@ -39,6 +40,10 @@ describe("reconcileTarget", () => {
 
   it("maps engine cancellation to cancelled", () => {
     expect(reconcileTarget("cancelled")).toBe("cancelled");
+  });
+
+  it("maps a missing workflow to failed", () => {
+    expect(reconcileTarget("missing")).toBe("failed");
   });
 
   it("leaves live and unknown engines alone", () => {
@@ -86,6 +91,30 @@ describe("decideReconciliations", () => {
       probe(new Error("temporal down")),
     );
     expect(unreachable).toHaveLength(0);
+  });
+});
+
+describe("probeErrorStatus", () => {
+  it("treats a missing workflow as deterministic failure evidence", () => {
+    const notFound = new Error("workflow not found");
+    notFound.name = "WorkflowNotFoundError";
+    expect(probeErrorStatus(notFound)).toBe("missing");
+
+    const grpcNotFound = Object.assign(new Error("not found"), {
+      cause: { code: 5 },
+    });
+    expect(probeErrorStatus(grpcNotFound)).toBe("missing");
+  });
+
+  it("keeps transient probe errors unknown", () => {
+    expect(probeErrorStatus(new Error("connection refused"))).toBe("unknown");
+    expect(
+      probeErrorStatus(
+        Object.assign(new Error("unavailable"), {
+          cause: { code: 14 },
+        }),
+      ),
+    ).toBe("unknown");
   });
 });
 

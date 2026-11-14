@@ -3,6 +3,7 @@ import {
   type EngineRunStatus,
   createDegradationGuard,
   guardedActivities,
+  probeErrorStatus,
   reconcileIterationRuns,
   setActivityHeartbeat,
 } from "@kit/engine";
@@ -71,8 +72,8 @@ const reconcileProbe = {
         .getHandle(workflowId)
         .describe();
       return mapEngineStatus(description.status.name);
-    } catch {
-      return "unknown";
+    } catch (error) {
+      return probeErrorStatus(error);
     }
   },
 };
