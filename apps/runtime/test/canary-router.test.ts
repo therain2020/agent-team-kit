@@ -59,7 +59,10 @@ function routerFor(
     runId: string,
   ) => Promise<RunVariantSelection | null>,
 ): EventRouter {
-  const store = { runs: { list: async () => [] } };
+  const store = {
+    runs: { list: async () => [] },
+    degradation: { listActive: async () => [] },
+  };
   const temporal = {
     client: {
       workflow: {
