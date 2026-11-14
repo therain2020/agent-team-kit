@@ -1,13 +1,17 @@
 ﻿import path from "node:path";
+import { StoreEvolutionRepository } from "@kit/evolution";
 import { NatsEventQueue } from "@kit/queue";
 import { initStore } from "@kit/store";
 import { createTemporalClient } from "@kit/workflow";
 import { EventIngestor } from "./ingestor";
-import { EventRouter } from "./router";
+import { EventRouter, EvolutionRunVariantSelector } from "./router";
 
 const natsUrl = process.env.KIT_NATS_URL ?? "nats://localhost:4222";
 const stream = process.env.KIT_NATS_STREAM ?? "KIT_EVENTS";
 const subject = process.env.KIT_NATS_SUBJECT ?? "kit.events.>";
+
+const repoRoot = resolveRepoRoot();
+const workspaceId = process.env.KIT_WORKSPACE_ID ?? "default";
 
 const store = await initStore();
 const queue = new NatsEventQueue({
@@ -19,7 +23,17 @@ const queue = new NatsEventQueue({
 await queue.connect();
 
 const temporal = await createTemporalClient();
-const router = new EventRouter(store, temporal, resolveRepoRoot());
+const evolutionRepo = new StoreEvolutionRepository(store, {
+  workspaceId,
+  variantsRoot: path.join(repoRoot, "variants"),
+});
+const router = new EventRouter(
+  store,
+  temporal,
+  repoRoot,
+  new EvolutionRunVariantSelector(evolutionRepo),
+  workspaceId,
+);
 const ingestor = new EventIngestor(store.events);
 
 const stop = await queue.subscribe(subject, async (message) => {
@@ -35,7 +49,10 @@ const stop = await queue.subscribe(subject, async (message) => {
     if (routed.started.length > 0) {
       console.log(
         `[runtime] routed ${result.eventType}: ${routed.started
-          .map((item) => `${item.pack}/${item.workflow}`)
+          .map(
+            (item) =>
+              `${item.pack}/${item.workflow}${item.variant ? ` (${item.variant})` : ""}`,
+          )
           .join(", ")}`,
       );
     }

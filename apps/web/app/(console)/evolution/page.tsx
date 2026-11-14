@@ -13,6 +13,7 @@ import {
   FlaskConical,
   GitCompare,
   GitPullRequestArrow,
+  History,
   Microscope,
   ShieldCheck,
   Sparkles,
@@ -26,21 +27,24 @@ export default async function EvolutionPage() {
   const t = await getTranslations("evolution");
   const common = await getTranslations("common");
   const locale = await getLocale();
-  const [{ state, variants, cycles }, packs] = await Promise.all([
+  const [{ state, variants, cycles, decisions }, packs] = await Promise.all([
     loadEvolutionData(),
     listPacks(),
   ]);
 
   const canary = state?.canary;
-  const canaryActive = canary?.status === "active";
+  const canaryActive =
+    canary?.status === "shadow" || canary?.status === "canary";
   const canaryStatusLabel = canary
-    ? canary.status === "active"
-      ? t("statusActive")
-      : canary.status === "promoted"
-        ? t("statusPromoted")
-        : canary.status === "rolled_back"
-          ? t("statusRolledBack")
-          : canary.status
+    ? canary.status === "shadow"
+      ? t("statusShadow")
+      : canary.status === "canary"
+        ? t("statusCanary")
+        : canary.status === "promoted"
+          ? t("statusPromoted")
+          : canary.status === "rolled_back"
+            ? t("statusRolledBack")
+            : canary.status
     : "";
   const champion = variants.find((variant) => variant.isChampion);
   const championScore = champion?.averageScore ?? 0;
@@ -71,6 +75,7 @@ export default async function EvolutionPage() {
                   name: pack.name,
                 }))}
                 canaryActive={canaryActive}
+                canaryPercent={canary?.trafficPercent ?? 0}
               />
             ) : null}
           </div>
@@ -147,7 +152,7 @@ export default async function EvolutionPage() {
           value={
             canary
               ? t("canaryValue", {
-                  percent: canary.percent,
+                  percent: canary.trafficPercent,
                   status: canaryStatusLabel,
                 })
               : common("none")
@@ -155,7 +160,7 @@ export default async function EvolutionPage() {
           hint={
             canary?.since
               ? t("since", { time: timeAgo(canary.since, locale) })
-              : t("shadowOnly")
+              : t("noTraffic")
           }
         />
         <StatCard
@@ -181,11 +186,13 @@ export default async function EvolutionPage() {
           {canary ? (
             <Badge
               variant={
-                canary.status === "active"
+                canary.status === "canary"
                   ? "success"
                   : canary.status === "promoted"
                     ? "info"
-                    : "warning"
+                    : canary.status === "shadow"
+                      ? "violet"
+                      : "danger"
               }
             >
               {canaryStatusLabel}
@@ -219,10 +226,16 @@ export default async function EvolutionPage() {
                 <p>
                   {t("percent")}{" "}
                   <span className="font-mono text-zinc-200">
-                    {canary.percent}%
+                    {canary.trafficPercent}%
                   </span>{" "}
-                  <span className="text-zinc-600">{t("shadow")}</span>
+                  <span className="text-zinc-600">{t("liveTraffic")}</span>
                 </p>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-900">
+                <div
+                  className="h-full bg-violet-400"
+                  style={{ width: `${canary.trafficPercent}%` }}
+                />
               </div>
               {canary.reason ? (
                 <p className="rounded border border-border bg-zinc-950/50 px-2 py-1.5 text-[11px] text-amber-300/80">
@@ -233,6 +246,64 @@ export default async function EvolutionPage() {
             </>
           ) : (
             <p>{t("noCanary")}</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <History className="size-4 text-violet-400" />
+            {t("decisions")}
+          </CardTitle>
+          <Badge variant="outline">
+            {t("decisionCount", { count: decisions.length })}
+          </Badge>
+        </CardHeader>
+        <CardContent>
+          {decisions.length === 0 ? (
+            <p className="text-[11px] text-zinc-500">{t("noDecisions")}</p>
+          ) : (
+            <ul className="space-y-2">
+              {decisions.map((decision) => (
+                <li
+                  key={decision.decisionId}
+                  className="rounded-lg border border-border px-3 py-2"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant={
+                        decision.kind === "rollback"
+                          ? "danger"
+                          : decision.kind === "promote"
+                            ? "success"
+                            : decision.kind === "traffic_change"
+                              ? "violet"
+                              : "outline"
+                      }
+                    >
+                      {t(`kind.${decision.kind}`)}
+                    </Badge>
+                    <span className="font-mono text-[10px] text-zinc-500">
+                      {decision.agentId || "—"} · {decision.fromTrafficPercent}%
+                      → {decision.toTrafficPercent}%
+                    </span>
+                    <Badge variant="outline">
+                      {t(`trigger.${decision.trigger}`)}
+                    </Badge>
+                    <span className="ml-auto font-mono text-[10px] text-zinc-600">
+                      {timeAgo(decision.createdAt, locale)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[11px] text-zinc-300">
+                    {decision.reason}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[10px] text-zinc-600">
+                    {decision.actor} · {decision.variantId}
+                  </p>
+                </li>
+              ))}
+            </ul>
           )}
         </CardContent>
       </Card>

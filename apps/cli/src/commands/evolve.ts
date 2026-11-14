@@ -12,6 +12,7 @@ import {
   rollbackCanary,
   runEvolutionCycle,
   scoreVariant,
+  setCanaryTraffic,
   startCanary,
   verifyEvalSnapshot,
 } from "@kit/evolution";
@@ -130,10 +131,10 @@ export function registerEvolve(program: Command): void {
 
   canary
     .command("start")
-    .description("Register a canary variant against a champion")
+    .description("Register a canary variant (shadow by default)")
     .requiredOption("--baseline <dir>", "champion variant directory")
     .requiredOption("--variant <dir>", "canary variant directory")
-    .requiredOption("--percent <n>", "traffic percent", "20")
+    .option("--percent <n>", "traffic percent (0 stays in shadow)", "0")
     .action(
       async (options: {
         baseline: string;
@@ -142,13 +143,10 @@ export function registerEvolve(program: Command): void {
       }) => {
         try {
           const state = await withEvolutionRepo((repo) =>
-            startCanary(
-              options.baseline,
-              options.variant,
-              Number(options.percent),
-              undefined,
+            startCanary(options.baseline, options.variant, {
+              trafficPercent: Number(options.percent),
               repo,
-            ),
+            }),
           );
           console.log(JSON.stringify(state, null, 2));
         } catch (error) {
@@ -158,34 +156,52 @@ export function registerEvolve(program: Command): void {
     );
 
   canary
-    .command("evaluate")
-    .description(
-      "Shadow-evaluate champion and canary, auto-rollback on regression",
-    )
-    .requiredOption("--inputs <list>", "comma-separated input files")
-    .option("--stub", "deterministic stub instead of live models", false)
-    .action(async (options: { inputs: string; stub: boolean }) => {
+    .command("traffic")
+    .description("Set the live traffic percent for the active canary")
+    .requiredOption("--percent <n>", "traffic percent between 0 and 99")
+    .action(async (options: { percent: string }) => {
       try {
-        const inputs = options.inputs
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean);
-        const result = await withEvolutionRepo((repo) =>
-          evaluateCanary(inputs, { stub: options.stub, repo }),
+        const state = await withEvolutionRepo((repo) =>
+          setCanaryTraffic(Number(options.percent), { repo }),
         );
-        console.log(JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(state, null, 2));
       } catch (error) {
-        reportError("canary evaluate", error);
+        reportError("canary traffic", error);
       }
     });
+
+  canary
+    .command("evaluate")
+    .description("Evaluate champion and canary, auto-rollback on regression")
+    .requiredOption("--inputs <list>", "comma-separated input files")
+    .option("--stub", "deterministic stub instead of live models", false)
+    .option("--incident <text>", "force rollback for an incident")
+    .action(
+      async (options: { inputs: string; stub: boolean; incident?: string }) => {
+        try {
+          const inputs = options.inputs
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+          const result = await withEvolutionRepo((repo) =>
+            evaluateCanary(inputs, {
+              stub: options.stub,
+              repo,
+              ...(options.incident ? { incident: options.incident } : {}),
+            }),
+          );
+          console.log(JSON.stringify(result, null, 2));
+        } catch (error) {
+          reportError("canary evaluate", error);
+        }
+      },
+    );
 
   canary
     .command("status")
     .description("Show canary state")
     .action(async () => {
-      const state = await withEvolutionRepo((repo) =>
-        canaryStatus(undefined, repo),
-      );
+      const state = await withEvolutionRepo((repo) => canaryStatus({ repo }));
       console.log(JSON.stringify(state, null, 2));
     });
 
@@ -193,10 +209,16 @@ export function registerEvolve(program: Command): void {
     .command("rollback")
     .description("Manually roll back the canary")
     .option("--reason <text>", "rollback reason", "manual rollback")
-    .action(async (options: { reason: string }) => {
+    .option("--trigger <kind>", "manual | incident", "manual")
+    .action(async (options: { reason: string; trigger: string }) => {
       try {
         const state = await withEvolutionRepo((repo) =>
-          rollbackCanary(options.reason, undefined, repo),
+          rollbackCanary(options.reason, {
+            repo,
+            ...(options.trigger === "incident"
+              ? { trigger: "incident" as const }
+              : {}),
+          }),
         );
         console.log(JSON.stringify(state, null, 2));
       } catch (error) {

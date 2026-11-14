@@ -10,8 +10,12 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { newId } from "@kit/core";
-import { type initStore, withStoreLock } from "@kit/store";
-import type { CanaryState } from "./canary";
+import { type SqlClient, type initStore, withStoreLock } from "@kit/store";
+import {
+  type CanaryState,
+  type EvolutionDecisionRecord,
+  normalizeCanaryStatus,
+} from "./canary";
 import type { EvolutionCycleRecord } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
 import type {
@@ -95,9 +99,25 @@ interface StateRow {
   version: number;
 }
 
+interface DecisionRow {
+  decision_id: string;
+  workspace_id: string;
+  kind: string;
+  variant_id: string;
+  agent_id: string;
+  from_status: string | null;
+  to_status: string;
+  from_traffic_percent: number | string | null;
+  to_traffic_percent: number | string | null;
+  trigger_kind: string;
+  reason: string;
+  actor: string;
+  created_at: Date | string;
+}
+
 export class StoreEvolutionRepository implements EvolutionRepository {
   readonly kind: "postgres" | "sqlite";
-  private readonly workspaceId: string;
+  readonly workspaceId: string;
   private readonly variantsRoot: string;
   private readonly archivePath: string;
   private readonly cyclesPath: string;
@@ -263,6 +283,38 @@ export class StoreEvolutionRepository implements EvolutionRepository {
     return rows.map(mapCycle);
   }
 
+  async appendDecision(record: EvolutionDecisionRecord): Promise<void> {
+    await this.ensureReady();
+    await this.appendDecisionInternal(record);
+  }
+
+  async listDecisions(limit = 20): Promise<EvolutionDecisionRecord[]> {
+    await this.ensureReady();
+    const rows = await this.store.sql<DecisionRow[]>`
+      SELECT * FROM evolution_decisions
+      WHERE workspace_id = ${this.workspaceId}
+      ORDER BY created_at DESC, decision_id DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(mapDecision);
+  }
+
+  async setStateWithDecision(
+    state: CanaryState,
+    decision: EvolutionDecisionRecord,
+    expectedVersion?: number,
+  ): Promise<boolean> {
+    await this.ensureReady();
+    return await this.store.sql.begin(async (tx) => {
+      const ok = await this.setStateInternal(state, expectedVersion, tx);
+      if (!ok) {
+        return false;
+      }
+      await this.appendDecisionInternal(decision, tx);
+      return true;
+    });
+  }
+
   async getState(): Promise<StoredCanaryState | null> {
     await this.ensureReady();
     const rows = await this.store.sql<StateRow[]>`
@@ -279,6 +331,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
       return null;
     }
     const state: CanaryState = {
+      workspaceId: this.workspaceId,
       champion: { path: champion.dir },
     };
     if (row.canary_variant_id && row.canary_status) {
@@ -288,8 +341,8 @@ export class StoreEvolutionRepository implements EvolutionRepository {
           path: canary.dir,
           variantId: canary.meta.id,
           agentId: canary.meta.agentId,
-          percent: row.canary_percent ?? 20,
-          status: row.canary_status as "active" | "rolled_back" | "promoted",
+          trafficPercent: row.canary_percent ?? 0,
+          status: normalizeCanaryStatus(row.canary_status) ?? "shadow",
           since: toIso(row.canary_since) ?? new Date().toISOString(),
           ...(row.canary_reason ? { reason: row.canary_reason } : {}),
           ...(row.canary_eval_snapshot_path
@@ -312,13 +365,14 @@ export class StoreEvolutionRepository implements EvolutionRepository {
   private async setStateInternal(
     state: CanaryState,
     expectedVersion?: number,
+    sql: SqlClient = this.store.sql,
   ): Promise<boolean> {
-    const championId = await this.variantIdByDir(state.champion.path);
+    const championId = await this.variantIdByDir(state.champion.path, sql);
     if (!championId) {
       throw new Error(`unknown champion path: ${state.champion.path}`);
     }
     const canaryId = state.canary
-      ? await this.variantIdByDir(state.canary.path)
+      ? await this.variantIdByDir(state.canary.path, sql)
       : null;
     if (state.canary && !canaryId) {
       throw new Error(`unknown canary path: ${state.canary.path}`);
@@ -326,14 +380,14 @@ export class StoreEvolutionRepository implements EvolutionRepository {
     const now = new Date().toISOString();
     const canary = state.canary;
     if (expectedVersion === undefined) {
-      await this.store.sql`
+      await sql`
         INSERT INTO evolution_state (
           workspace_id, pack_dir, champion_variant_id, canary_variant_id,
           canary_status, canary_percent, canary_since, canary_reason,
           canary_eval_snapshot_path, version, updated_at
         ) VALUES (
           ${this.workspaceId}, '', ${championId}, ${canaryId},
-          ${canary?.status ?? null}, ${canary?.percent ?? null},
+          ${canary?.status ?? null}, ${canary?.trafficPercent ?? null},
           ${canary?.since ?? null}, ${canary?.reason ?? null},
           ${canary?.evalSnapshotPath ?? null}, 0, ${now}
         )
@@ -350,12 +404,12 @@ export class StoreEvolutionRepository implements EvolutionRepository {
       `;
       return true;
     }
-    const rows = await this.store.sql<Array<{ version: number }>>`
+    const rows = await sql<Array<{ version: number }>>`
       UPDATE evolution_state SET
         champion_variant_id = ${championId},
         canary_variant_id = ${canaryId},
         canary_status = ${canary?.status ?? null},
-        canary_percent = ${canary?.percent ?? null},
+        canary_percent = ${canary?.trafficPercent ?? null},
         canary_since = ${canary?.since ?? null},
         canary_reason = ${canary?.reason ?? null},
         canary_eval_snapshot_path = ${canary?.evalSnapshotPath ?? null},
@@ -491,6 +545,26 @@ export class StoreEvolutionRepository implements EvolutionRepository {
     `;
   }
 
+  private async appendDecisionInternal(
+    record: EvolutionDecisionRecord,
+    sql: SqlClient = this.store.sql,
+  ): Promise<void> {
+    await sql`
+      INSERT INTO evolution_decisions (
+        decision_id, workspace_id, kind, variant_id, agent_id, from_status,
+        to_status, from_traffic_percent, to_traffic_percent, trigger_kind,
+        reason, actor, created_at
+      ) VALUES (
+        ${record.decisionId}, ${this.workspaceId}, ${record.kind},
+        ${record.variantId}, ${record.agentId}, ${record.fromStatus},
+        ${record.toStatus}, ${record.fromTrafficPercent},
+        ${record.toTrafficPercent}, ${record.trigger}, ${record.reason},
+        ${record.actor}, ${record.createdAt}
+      )
+      ON CONFLICT (decision_id) DO NOTHING
+    `;
+  }
+
   private async appendCycleInternal(
     record: EvolutionCycleRecord,
   ): Promise<void> {
@@ -533,8 +607,11 @@ export class StoreEvolutionRepository implements EvolutionRepository {
     return rows[0]?.variant_id ?? null;
   }
 
-  private async variantIdByDir(dir: string): Promise<string | null> {
-    const rows = await this.store.sql<Array<{ variant_id: string }>>`
+  private async variantIdByDir(
+    dir: string,
+    sql: SqlClient = this.store.sql,
+  ): Promise<string | null> {
+    const rows = await sql<Array<{ variant_id: string }>>`
       SELECT variant_id FROM evolution_variants
       WHERE workspace_id = ${this.workspaceId}
         AND dir_path = ${path.resolve(dir)}
@@ -695,6 +772,24 @@ function mapScore(row: ScoreRow): EvolutionRecord {
     costCny: Number(row.cost_cny),
     tokens: Number(row.tokens),
     draftChars: Number(row.draft_chars),
+  };
+}
+
+function mapDecision(row: DecisionRow): EvolutionDecisionRecord {
+  return {
+    decisionId: row.decision_id,
+    workspaceId: row.workspace_id,
+    kind: row.kind as EvolutionDecisionRecord["kind"],
+    variantId: row.variant_id,
+    agentId: row.agent_id,
+    fromStatus: normalizeCanaryStatus(row.from_status),
+    toStatus: normalizeCanaryStatus(row.to_status) ?? "shadow",
+    fromTrafficPercent: Number(row.from_traffic_percent ?? 0),
+    toTrafficPercent: Number(row.to_traffic_percent ?? 0),
+    trigger: row.trigger_kind as EvolutionDecisionRecord["trigger"],
+    reason: row.reason,
+    actor: row.actor,
+    createdAt: toIso(row.created_at) ?? new Date().toISOString(),
   };
 }
 

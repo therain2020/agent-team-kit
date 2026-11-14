@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Beaker, Rocket, RotateCcw, ShieldCheck } from "lucide-react";
+import { Beaker, Gauge, Rocket, RotateCcw, ShieldCheck } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -20,7 +20,7 @@ import { toast } from "sonner";
 const EVIDENCE_PLACEHOLDER =
   '{"sources":[{"citationId":"S1","title":"…","url":"…"}],"errors":[]}';
 
-type Mode = "start" | "evaluate" | "rollback" | "promote" | null;
+type Mode = "start" | "traffic" | "evaluate" | "rollback" | "promote" | null;
 
 export interface VariantOption {
   dirName: string;
@@ -33,10 +33,12 @@ export function EvolutionActions({
   variants,
   packs,
   canaryActive,
+  canaryPercent,
 }: {
   variants: VariantOption[];
   packs: Array<{ dirName: string; name: string }>;
   canaryActive: boolean;
+  canaryPercent: number;
 }) {
   const t = useTranslations("evolutionActions");
   const common = useTranslations("common");
@@ -55,7 +57,8 @@ export function EvolutionActions({
 
   const [baselineDir, setBaselineDir] = useState(champion);
   const [variantDir, setVariantDir] = useState(candidate);
-  const [percent, setPercent] = useState(20);
+  const [percent, setPercent] = useState(0);
+  const [trafficPercent, setTrafficPercent] = useState(canaryPercent);
   const [evidenceText, setEvidenceText] = useState("");
   const [stub, setStub] = useState(true);
   const [reason, setReason] = useState("");
@@ -89,6 +92,11 @@ export function EvolutionActions({
           percent,
         });
         toast.success(t("canaryStarted"));
+      } else if (mode === "traffic") {
+        await post("/api/evolution/canary/traffic", {
+          percent: trafficPercent,
+        });
+        toast.success(t("trafficUpdated", { percent: trafficPercent }));
       } else if (mode === "evaluate") {
         const payload = await post("/api/evolution/canary/evaluate", {
           evidenceText,
@@ -165,6 +173,18 @@ export function EvolutionActions({
         <Button
           size="sm"
           variant="outline"
+          onClick={() => {
+            setTrafficPercent(canaryPercent);
+            setMode("traffic");
+          }}
+          disabled={!canaryActive}
+        >
+          <Gauge className="size-3.5" />
+          {t("traffic")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
           onClick={() => setMode("evaluate")}
           disabled={!canEvaluate}
         >
@@ -204,20 +224,24 @@ export function EvolutionActions({
             <DialogTitle>
               {mode === "start"
                 ? t("startTitle")
-                : mode === "evaluate"
-                  ? t("evaluateTitle")
-                  : mode === "rollback"
-                    ? t("rollbackTitle")
-                    : t("promoteTitle")}
+                : mode === "traffic"
+                  ? t("trafficTitle")
+                  : mode === "evaluate"
+                    ? t("evaluateTitle")
+                    : mode === "rollback"
+                      ? t("rollbackTitle")
+                      : t("promoteTitle")}
             </DialogTitle>
             <DialogDescription>
               {mode === "start"
                 ? t("startDesc")
-                : mode === "evaluate"
-                  ? t("evaluateDesc")
-                  : mode === "rollback"
-                    ? t("rollbackDesc")
-                    : t("promoteDesc")}
+                : mode === "traffic"
+                  ? t("trafficDesc")
+                  : mode === "evaluate"
+                    ? t("evaluateDesc")
+                    : mode === "rollback"
+                      ? t("rollbackDesc")
+                      : t("promoteDesc")}
             </DialogDescription>
           </DialogHeader>
 
@@ -246,10 +270,10 @@ export function EvolutionActions({
                       }))}
                   />
                 </Field>
-                <Field label={t("shadowPercent", { percent })}>
+                <Field label={t("trafficPercentLabel", { percent })}>
                   <input
                     type="range"
-                    min={1}
+                    min={0}
                     max={99}
                     value={percent}
                     onChange={(event) => setPercent(Number(event.target.value))}
@@ -257,6 +281,23 @@ export function EvolutionActions({
                   />
                 </Field>
               </>
+            ) : null}
+
+            {mode === "traffic" ? (
+              <Field
+                label={t("trafficPercentLabel", { percent: trafficPercent })}
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={99}
+                  value={trafficPercent}
+                  onChange={(event) =>
+                    setTrafficPercent(Number(event.target.value))
+                  }
+                  className="w-full accent-emerald-500"
+                />
+              </Field>
             ) : null}
 
             {mode === "evaluate" ? (
@@ -372,13 +413,15 @@ export function EvolutionActions({
                 ? t("working")
                 : mode === "start"
                   ? t("startButton")
-                  : mode === "evaluate"
-                    ? t("evaluateButton")
-                    : mode === "rollback"
-                      ? t("rollbackButton")
-                      : apply
-                        ? t("applyPromotion")
-                        : t("dryRunPromotion")}
+                  : mode === "traffic"
+                    ? t("trafficButton")
+                    : mode === "evaluate"
+                      ? t("evaluateButton")
+                      : mode === "rollback"
+                        ? t("rollbackButton")
+                        : apply
+                          ? t("applyPromotion")
+                          : t("dryRunPromotion")}
             </Button>
           </DialogFooter>
         </DialogContent>

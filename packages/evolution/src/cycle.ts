@@ -312,14 +312,12 @@ export async function runEvolutionCycle(
       });
     }
 
-    await startCanary(
-      baseline.dir,
-      candidate.dir,
-      options.percent ?? 20,
+    await startCanary(baseline.dir, candidate.dir, {
+      trafficPercent: options.percent ?? 0,
       statePath,
-      repo,
-      snapshot.dir,
-    );
+      ...(repo ? { repo } : {}),
+      evalDir: snapshot.dir,
+    });
     const canary = await evaluateCanary([options.inputFile], {
       stub: options.stub,
       archive: archivePath,
@@ -347,11 +345,10 @@ export async function runEvolutionCycle(
     if (options.autoApply && !options.stub) {
       const { promoteVariant } = await import("./evolve");
       await promoteVariant(candidate.dir, loaded.dir, true, repo);
-      await markCanaryPromoted(
-        `auto-promoted by evolution cycle ${cycleId}`,
+      await markCanaryPromoted(`auto-promoted by evolution cycle ${cycleId}`, {
         statePath,
-        repo,
-      );
+        ...(repo ? { repo } : {}),
+      });
       return await persistCycle({
         ...updated,
         decision: "promoted",
