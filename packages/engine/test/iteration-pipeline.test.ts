@@ -238,4 +238,19 @@ describe("iteration pipeline", () => {
     );
     expect(activities.calls).toContain("fail:planner exploded");
   });
+
+  it("still rejects when the terminal write-back itself fails", async () => {
+    const activities = recordingActivities({
+      planIteration: async () => {
+        throw new Error("planner exploded");
+      },
+      failIterationActivity: async () => {
+        throw new Error("terminal write failed");
+      },
+    });
+
+    await expect(runIterationPipeline(input(), activities)).rejects.toThrow(
+      "planner exploded",
+    );
+  });
 });

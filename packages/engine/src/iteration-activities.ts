@@ -40,6 +40,7 @@ import {
   runPostApplyChecks,
   safe,
   startIteration,
+  toErrorMessage,
   touchHeartbeat,
   updateRun,
   updateTask,
@@ -290,9 +291,9 @@ Use only the declared domains. Each task must include:
 - domain: one of the declared domains
 - goal: why the task exists and what to change
 - acceptance: objective completion criteria
-- filesHint: likely files/directories (may be empty)
+- filesHint: JSON array of likely files/directories (use [] when unknown)
 - risk: low | medium | high
-- dependsOn: array of task ids (may be empty)
+- dependsOn: JSON array of task ids (use [])
 Return JSON only: {"goal":"...","summary":"...","tasks":[...]}.
 Do not invent files or facts. Prefer small, testable changes.`;
     const modelInput = `Goal: ${input.goal}
@@ -348,9 +349,29 @@ ${context}`;
     if (!committed.ok) {
       throw new Error(committed.message ?? "budget commit failed");
     }
-    plan = parseTaskPlan(response.text);
     tokens = response.usage.inputTokens + response.usage.outputTokens;
     costCny = response.usage.costCny ?? 0;
+    try {
+      plan = parseTaskPlan(response.text);
+    } catch (error) {
+      // Keep the raw model output for reproduction before failing the run.
+      const rawArtifactId = await publishIterationArtifact(store, {
+        iterationId: input.iterationId,
+        workspaceId: input.workspaceId,
+        stageId: `${input.iterationId}:plan:raw`,
+        content: response.text,
+        agentId: "planner",
+        modelId: iteration.planner.model,
+        tokens,
+        costCny,
+        runMode: input.runMode,
+      }).catch(() => undefined);
+      throw new Error(
+        `planner output rejected: ${toErrorMessage(error)}${
+          rawArtifactId ? ` (raw artifact ${rawArtifactId})` : ""
+        }`,
+      );
+    }
   }
 
   if (input.domain) {
@@ -1225,14 +1246,15 @@ export async function failIterationActivity(
   input: FailIterationInput,
 ): Promise<void> {
   const store = await getStore();
-  await failIteration(store, input.iterationId, input.error);
+  const message = toErrorMessage(input.error);
+  await failIteration(store, input.iterationId, message);
   await safeActivity(store, {
     workspaceId: input.workspaceId,
     runId: input.iterationId,
     kind: "iteration.run.failed",
     status: "failed",
-    summary: input.error.slice(0, 500),
-    payload: { error: input.error },
+    summary: message.slice(0, 500),
+    payload: { error: message },
   });
 }
 
@@ -1522,6 +1544,56 @@ export async function reportIteration(
   return { reportArtifactId, fitnessArtifactId, status };
 }
 
+function trimField(value: unknown): unknown {
+  return typeof value === "string" ? value.trim() : value;
+}
+
+function toStringArrayField(value: unknown): unknown {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return [];
+  }
+  const parts = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/[\n,]+/)
+      : [];
+  return parts
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter((item) => item.length > 0);
+}
+
+function normalizeTask(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return raw;
+  }
+  const task = { ...(raw as Record<string, unknown>) };
+  for (const key of ["id", "domain", "goal", "acceptance"]) {
+    task[key] = trimField(task[key]);
+  }
+  if (typeof task.risk === "string") {
+    task.risk = task.risk.trim().toLowerCase();
+  }
+  task.filesHint = toStringArrayField(task.filesHint);
+  task.dependsOn = toStringArrayField(task.dependsOn);
+  return task;
+}
+
+export function normalizeTaskPlan(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return raw;
+  }
+  const plan = { ...(raw as Record<string, unknown>) };
+  plan.goal = trimField(plan.goal);
+  plan.summary = trimField(plan.summary);
+  if (Array.isArray(plan.tasks)) {
+    plan.tasks = plan.tasks.map(normalizeTask);
+  }
+  return plan;
+}
+
 export function parseTaskPlan(text: string): TaskPlan {
   const cleaned = text
     .trim()
@@ -1535,7 +1607,7 @@ export function parseTaskPlan(text: string): TaskPlan {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`planner returned invalid JSON: ${message}`);
   }
-  return taskPlanSchema.parse(parsed);
+  return taskPlanSchema.parse(normalizeTaskPlan(parsed));
 }
 
 export function classifyRisk(
