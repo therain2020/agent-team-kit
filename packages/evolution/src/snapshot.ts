@@ -303,7 +303,6 @@ async function freezeTree(root: string): Promise<void> {
     const full = path.join(root, entry.name);
     if (entry.isDirectory()) {
       await freezeTree(full);
-      await bestEffortChmod(full, 0o555);
     } else if (entry.isFile()) {
       await bestEffortChmod(full, 0o444);
     }
