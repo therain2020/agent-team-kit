@@ -13,7 +13,9 @@ import {
 import { type AlertInput, emitAlert, getOpsGate } from "@kit/ops";
 import { initStore } from "@kit/store";
 import {
+  type Tool,
   type ToolContext,
+  createDeclarativeTools,
   executeTool,
   getTool,
   toolDefinitions,
@@ -226,7 +228,10 @@ async function executePackStageInner(
       input.includeInitialInput && input.evidenceText
         ? `Evidence set:\n${input.evidenceText}\n\nPrevious stage output:\n${draftText}`
         : draftText;
-    const definitions = toolDefinitions(input.tools ?? []);
+    const extraTools = createDeclarativeTools(input.packTools ?? [], {
+      allowCommand: process.env.KIT_TOOLS_ALLOW_COMMAND === "1",
+    });
+    const definitions = toolDefinitions(input.tools ?? [], extraTools);
 
     if (definitions.length > 0 && !input.stub) {
       const result = await runAgentWithTools({
@@ -236,6 +241,7 @@ async function executePackStageInner(
         instructions: input.instructions ?? "",
         modelInput,
         tools: definitions,
+        extraTools,
       });
       text = result.text;
       costAmount = result.costCny;
@@ -700,6 +706,7 @@ async function runAgentWithTools(input: {
   instructions: string;
   modelInput: string;
   tools: ReturnType<typeof toolDefinitions>;
+  extraTools: Tool[];
 }): Promise<{ text: string; costCny: number; tokens: number }> {
   const gateway = createModelGateway();
   const repoRoot = resolveRepoRoot();
@@ -825,11 +832,16 @@ async function runAgentWithTools(input: {
         payload: { index: toolIndex, arguments: call.arguments },
       });
       try {
-        const tool = getTool(call.name);
+        const tool = getTool(call.name, input.extraTools);
         if (!tool) {
           throw new Error(`unknown tool: ${call.name}`);
         }
-        const result = await executeTool(call.name, call.arguments, context);
+        const result = await executeTool(
+          call.name,
+          call.arguments,
+          context,
+          input.extraTools,
+        );
         content = result.content;
         isError = result.isError === true;
       } catch (error) {

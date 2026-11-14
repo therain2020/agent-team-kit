@@ -101,6 +101,12 @@ export const workflowDefinitionSchema = z.object({
   trigger: z.object({
     event: z.string().min(1),
     schedule: z.string().min(1).optional(),
+    budget: z
+      .object({
+        dailyRuns: z.number().int().positive().optional(),
+        dailyCostCny: z.number().nonnegative().optional(),
+      })
+      .optional(),
   }),
   stages: z.array(workflowStageSchema).min(1),
   delivery: deliverySchema.optional(),

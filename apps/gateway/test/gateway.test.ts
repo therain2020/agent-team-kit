@@ -1,8 +1,11 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   githubEventType,
   normalizeGeneric,
   normalizeGithub,
+  normalizeSentry,
+  sentryEventType,
 } from "../src/normalize";
 import { isFreshTimestamp, signHmac, verifyHmac } from "../src/signature";
 
@@ -84,5 +87,116 @@ describe("github normalization", () => {
 
   it("ignores unsupported events", () => {
     expect(normalizeGithub("issues", "d", { action: "closed" })).toBeNull();
+  });
+});
+
+describe("sentry normalization", () => {
+  it("maps integration-platform issue webhooks", () => {
+    const normalized = normalizeSentry(
+      {
+        action: "created",
+        installation: { uuid: "install-1" },
+        data: {
+          issue: {
+            id: "4501",
+            shortId: "KIT-7",
+            title: "TypeError: cannot read properties of undefined",
+            culprit: "apps/web/lib/manager.ts in handleChat",
+            level: "error",
+            status: "unresolved",
+            url: "https://sentry.example/issues/4501/",
+            count: 12,
+            firstSeen: "2026-11-15T01:00:00Z",
+            lastSeen: "2026-11-15T02:00:00Z",
+            project: { slug: "agent-team-kit", name: "Agent Team Kit" },
+            tags: [
+              ["environment", "production"],
+              ["release", "0.9.0"],
+            ],
+          },
+        },
+      },
+      { resource: "issue", workspaceId: "default" },
+    );
+    expect(normalized?.event.type).toBe("sentry.issue.created");
+    expect(normalized?.event.idempotencyKey).toBe(
+      "sentry:4501:sentry.issue.created",
+    );
+    expect(normalized?.payload).toMatchObject({
+      source: "sentry",
+      issueId: "4501",
+      shortId: "KIT-7",
+      level: "error",
+      project: "agent-team-kit",
+      environment: "production",
+      release: "0.9.0",
+      count: 12,
+    });
+  });
+
+  it("maps legacy issue alerts and keeps the stack tail bounded", () => {
+    const normalized = normalizeSentry({
+      id: "7",
+      project_name: "Agent Team Kit",
+      message: "Error: boom",
+      culprit: "apps/runtime/src/router.ts",
+      level: "error",
+      url: "https://sentry.example/issues/7/",
+      triggered_rule: "New issue",
+      event: {
+        event_id: "abc123",
+        title: "Error: boom",
+        exception: {
+          values: [
+            {
+              type: "Error",
+              value: "boom",
+              stacktrace: {
+                frames: [
+                  { filename: "apps/runtime/a.ts", lineno: 1 },
+                  { filename: "apps/runtime/src/router.ts", lineno: 42 },
+                ],
+              },
+            },
+          ],
+        },
+        tags: [["environment", "staging"]],
+      },
+    });
+    expect(normalized?.event.type).toBe("sentry.issue.alert");
+    expect(normalized?.event.idempotencyKey).toBe(
+      "sentry:7:sentry.issue.alert:abc123",
+    );
+    expect(normalized?.payload).toMatchObject({
+      issueId: "7",
+      title: "Error: boom",
+      eventId: "abc123",
+      environment: "staging",
+      triggeredRule: "New issue",
+    });
+    expect(normalized?.payload.exception).toBe(
+      "Error: boom (apps/runtime/src/router.ts:42)",
+    );
+  });
+
+  it("maps metric alerts and ignores unknown resources", () => {
+    expect(sentryEventType("metric_alert", "critical", {})).toBe(
+      "sentry.metric_alert.critical",
+    );
+    expect(sentryEventType("issue", "deleted", {})).toBeNull();
+    expect(sentryEventType("unknown", "created", {})).toBeNull();
+    expect(normalizeSentry({ action: "deleted" }, { resource: "issue" })).toBe(
+      null,
+    );
+  });
+});
+
+describe("sentry signature", () => {
+  it("verifies the raw hex Sentry-Hook-Signature without a prefix", () => {
+    const secret = "sentry-secret";
+    const body = JSON.stringify({ action: "created" });
+    const header = createHmac("sha256", secret).update(body).digest("hex");
+    expect(verifyHmac(secret, body, header)).toBe(true);
+    expect(verifyHmac(secret, `${body} `, header)).toBe(false);
   });
 });

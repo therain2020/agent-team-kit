@@ -290,7 +290,17 @@
     "notFoundDescription": "请从选择器中选择另一个运行。",
     "pickAnother": "选择其他运行",
     "artifactsCount": "{count} 个产物",
-    "startedAgo": "{time}开始"
+    "startedAgo": "{time}开始",
+    "budgetTitle": "会话预算",
+    "budgetTokens": "Token",
+    "budgetCost": "成本",
+    "budgetRollsIn": "窗口滚动倒计时",
+    "budgetBlocked": "已触达{reason}上限。请重置窗口或等待滚动。",
+    "budgetReasonTokens": "Token",
+    "budgetReasonCost": "成本",
+    "budgetHint": "每 3 分钟窗口 16K tokens / ¥3，到期自动滚动。",
+    "budgetReset": "重置窗口",
+    "budgetResetFailed": "重置窗口失败，请重试。"
   },
   "managerChat": {
     "live": "实时",
@@ -304,7 +314,7 @@
     "suggestionChanged": "上一版修订改了什么？",
     "suggestionNext": "下一步该做什么决定？",
     "placeholder": "询问门禁、成本、风险或下一步…",
-    "outputCap": "单次输出上限 1,200 tokens · 会话上下文按运行隔离",
+    "outputCap": "单次输出上限 1,200 tokens · 每 3 分钟窗口 16K tokens / ¥3",
     "send": "发送",
     "stop": "停止"
   },
@@ -1017,7 +1027,7 @@
     "emptyTitle": "和经理聊聊",
     "emptyDesc": "经理知道花名册、任务和当前状态。它不能启动或审批任何东西。",
     "placeholder": "询问团队、某个任务或下一步…",
-    "hint": "上限 1,200 tokens",
+    "hint": "上限 1,200 tokens · 每 3 分钟窗口 16K tokens / ¥3",
     "send": "发送",
     "stop": "停止",
     "suggestionStatus": "给我一个整体状态。",

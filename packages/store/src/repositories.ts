@@ -26,6 +26,7 @@ import {
   blobs,
   degradationAudit,
   degradationState,
+  managerSessions,
   manifests,
   runRequests,
   runs,
@@ -156,6 +157,52 @@ export interface AutopilotStateStore {
   insertIfMissing(record: AutopilotStateRecord): Promise<void>;
   /** Optimistic update; returns false and leaves the record untouched on a version conflict. */
   update(record: AutopilotStateRecord): Promise<boolean>;
+}
+
+export interface ManagerSessionRecord {
+  workspaceId: string;
+  sessionId: string;
+  windowStartedAt: string;
+  windowEndsAt: string;
+  firstAt: string;
+  lastAt: string;
+  tokens: number;
+  costCny: number;
+  exchanges: number;
+  rejections: number;
+  lastRejectionReason: string | null;
+  updatedAt: string;
+}
+
+export interface ManagerSessionUsageInput {
+  workspaceId: string;
+  sessionId: string;
+  tokens: number;
+  costCny: number;
+  now: string;
+  windowMs: number;
+}
+
+export interface ManagerSessionRejectionInput {
+  workspaceId: string;
+  sessionId: string;
+  reason: string;
+  now: string;
+  windowMs: number;
+}
+
+export interface ManagerSessionStore {
+  get(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<ManagerSessionRecord | null>;
+  /** Adds one exchange's usage, rolling to a fresh window when the old one expired. */
+  addUsage(input: ManagerSessionUsageInput): Promise<ManagerSessionRecord>;
+  /** Records a rejected request without adding tokens or cost. */
+  recordRejection(
+    input: ManagerSessionRejectionInput,
+  ): Promise<ManagerSessionRecord>;
+  reset(workspaceId: string, sessionId: string): Promise<void>;
 }
 
 export function toEventRow(event: EventEnvelope) {
@@ -631,6 +678,112 @@ export function fromAutopilotRow(
   };
 }
 
+export function nextManagerSessionWindow(
+  existing: ManagerSessionRecord | null,
+  input: {
+    workspaceId: string;
+    sessionId: string;
+    now: string;
+    windowMs: number;
+  },
+): ManagerSessionRecord {
+  if (existing && Date.parse(input.now) < Date.parse(existing.windowEndsAt)) {
+    return { ...existing };
+  }
+  return {
+    workspaceId: input.workspaceId,
+    sessionId: input.sessionId,
+    windowStartedAt: input.now,
+    windowEndsAt: new Date(
+      Date.parse(input.now) + Math.max(0, input.windowMs),
+    ).toISOString(),
+    firstAt: input.now,
+    lastAt: input.now,
+    tokens: 0,
+    costCny: 0,
+    exchanges: 0,
+    rejections: 0,
+    lastRejectionReason: null,
+    updatedAt: input.now,
+  };
+}
+
+export function applyManagerSessionUsage(
+  existing: ManagerSessionRecord | null,
+  input: ManagerSessionUsageInput,
+): ManagerSessionRecord {
+  const record = nextManagerSessionWindow(existing, input);
+  record.tokens += Math.max(0, input.tokens);
+  record.costCny += Math.max(0, input.costCny);
+  record.exchanges += 1;
+  record.lastAt = input.now;
+  record.updatedAt = input.now;
+  return record;
+}
+
+export function applyManagerSessionRejection(
+  existing: ManagerSessionRecord | null,
+  input: ManagerSessionRejectionInput,
+): ManagerSessionRecord {
+  const record = nextManagerSessionWindow(existing, input);
+  record.rejections += 1;
+  record.lastRejectionReason = input.reason;
+  record.lastAt = input.now;
+  record.updatedAt = input.now;
+  return record;
+}
+
+export function toManagerSessionRow(record: ManagerSessionRecord) {
+  return {
+    workspaceId: record.workspaceId,
+    sessionId: record.sessionId,
+    windowStartedAt: record.windowStartedAt,
+    windowEndsAt: record.windowEndsAt,
+    firstAt: record.firstAt,
+    lastAt: record.lastAt,
+    tokens: record.tokens,
+    costCny: String(record.costCny),
+    exchanges: record.exchanges,
+    rejections: record.rejections,
+    lastRejectionReason: record.lastRejectionReason,
+    updatedAt: record.updatedAt,
+  };
+}
+
+export function fromManagerSessionRow(
+  row: typeof managerSessions.$inferSelect,
+): ManagerSessionRecord {
+  return {
+    workspaceId: row.workspaceId,
+    sessionId: row.sessionId,
+    windowStartedAt: row.windowStartedAt,
+    windowEndsAt: row.windowEndsAt,
+    firstAt: row.firstAt,
+    lastAt: row.lastAt,
+    tokens: Number(row.tokens ?? 0),
+    costCny: Number(row.costCny ?? 0),
+    exchanges: Number(row.exchanges ?? 0),
+    rejections: Number(row.rejections ?? 0),
+    lastRejectionReason: row.lastRejectionReason ?? null,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function managerSessionUpdateSet(record: ManagerSessionRecord) {
+  return {
+    windowStartedAt: record.windowStartedAt,
+    windowEndsAt: record.windowEndsAt,
+    firstAt: record.firstAt,
+    lastAt: record.lastAt,
+    tokens: record.tokens,
+    costCny: String(record.costCny),
+    exchanges: record.exchanges,
+    rejections: record.rejections,
+    lastRejectionReason: record.lastRejectionReason,
+    updatedAt: record.updatedAt,
+  };
+}
+
 export class PostgresAutopilotStateStore implements AutopilotStateStore {
   constructor(private readonly db: Database) {}
 
@@ -695,6 +848,68 @@ export class PostgresAutopilotStateStore implements AutopilotStateStore {
     }
     record.version = Number(row.version);
     return true;
+  }
+}
+
+export class PostgresManagerSessionStore implements ManagerSessionStore {
+  constructor(private readonly db: Database) {}
+
+  async get(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<ManagerSessionRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(managerSessions)
+      .where(
+        and(
+          eq(managerSessions.workspaceId, workspaceId),
+          eq(managerSessions.sessionId, sessionId),
+        ),
+      )
+      .limit(1);
+    return row ? fromManagerSessionRow(row) : null;
+  }
+
+  async addUsage(
+    input: ManagerSessionUsageInput,
+  ): Promise<ManagerSessionRecord> {
+    const existing = await this.get(input.workspaceId, input.sessionId);
+    const record = applyManagerSessionUsage(existing, input);
+    await this.db
+      .insert(managerSessions)
+      .values(toManagerSessionRow(record))
+      .onConflictDoUpdate({
+        target: [managerSessions.workspaceId, managerSessions.sessionId],
+        set: managerSessionUpdateSet(record),
+      });
+    return record;
+  }
+
+  async recordRejection(
+    input: ManagerSessionRejectionInput,
+  ): Promise<ManagerSessionRecord> {
+    const existing = await this.get(input.workspaceId, input.sessionId);
+    const record = applyManagerSessionRejection(existing, input);
+    await this.db
+      .insert(managerSessions)
+      .values(toManagerSessionRow(record))
+      .onConflictDoUpdate({
+        target: [managerSessions.workspaceId, managerSessions.sessionId],
+        set: managerSessionUpdateSet(record),
+      });
+    return record;
+  }
+
+  async reset(workspaceId: string, sessionId: string): Promise<void> {
+    await this.db
+      .delete(managerSessions)
+      .where(
+        and(
+          eq(managerSessions.workspaceId, workspaceId),
+          eq(managerSessions.sessionId, sessionId),
+        ),
+      );
   }
 }
 

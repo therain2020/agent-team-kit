@@ -39,6 +39,8 @@ export function makePack(overrides: Partial<TeamPack> = {}): TeamPack {
     ],
     workflows: ["workflows/demo.yaml"],
     policies: [],
+    toolpacks: [],
+    skillpacks: [],
     ...overrides,
   };
 }

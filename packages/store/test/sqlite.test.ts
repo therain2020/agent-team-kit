@@ -144,6 +144,76 @@ describe("sqlite embedded store", () => {
     await store.ping();
   }, 60_000);
 
+  it("accumulates manager session usage and rolls the window", async () => {
+    const config = await localConfig();
+    const store = await initStore(config);
+    closers.push(() => store.close());
+
+    const first = await store.managerSessions.addUsage({
+      workspaceId: "default",
+      sessionId: "run_manager_1",
+      tokens: 9000,
+      costCny: 1.2,
+      now: "2026-11-15T10:00:00.000Z",
+      windowMs: 180_000,
+    });
+    expect(first.tokens).toBe(9000);
+    expect(first.costCny).toBeCloseTo(1.2);
+    expect(first.exchanges).toBe(1);
+    expect(first.rejections).toBe(0);
+    expect(first.windowStartedAt).toBe("2026-11-15T10:00:00.000Z");
+    expect(first.windowEndsAt).toBe("2026-11-15T10:03:00.000Z");
+
+    const second = await store.managerSessions.addUsage({
+      workspaceId: "default",
+      sessionId: "run_manager_1",
+      tokens: 500,
+      costCny: 0.2,
+      now: "2026-11-15T10:01:00.000Z",
+      windowMs: 180_000,
+    });
+    expect(second.tokens).toBe(9500);
+    expect(second.costCny).toBeCloseTo(1.4);
+    expect(second.exchanges).toBe(2);
+    expect(second.firstAt).toBe("2026-11-15T10:00:00.000Z");
+    expect(second.lastAt).toBe("2026-11-15T10:01:00.000Z");
+
+    const rejected = await store.managerSessions.recordRejection({
+      workspaceId: "default",
+      sessionId: "run_manager_1",
+      reason: "tokens",
+      now: "2026-11-15T10:01:30.000Z",
+      windowMs: 180_000,
+    });
+    expect(rejected.rejections).toBe(1);
+    expect(rejected.lastRejectionReason).toBe("tokens");
+    expect(rejected.tokens).toBe(9500);
+    expect(rejected.costCny).toBeCloseTo(1.4);
+
+    const rolled = await store.managerSessions.addUsage({
+      workspaceId: "default",
+      sessionId: "run_manager_1",
+      tokens: 100,
+      costCny: 0.1,
+      now: "2026-11-15T10:03:00.000Z",
+      windowMs: 180_000,
+    });
+    expect(rolled.tokens).toBe(100);
+    expect(rolled.costCny).toBeCloseTo(0.1);
+    expect(rolled.exchanges).toBe(1);
+    expect(rolled.rejections).toBe(0);
+    expect(rolled.firstAt).toBe("2026-11-15T10:03:00.000Z");
+
+    expect(
+      await store.managerSessions.get("other", "run_manager_1"),
+    ).toBeNull();
+
+    await store.managerSessions.reset("default", "run_manager_1");
+    expect(
+      await store.managerSessions.get("default", "run_manager_1"),
+    ).toBeNull();
+  }, 60_000);
+
   it("claims a run request once and reclaims it after the lease goes stale", async () => {
     const config = await localConfig();
     const store = await initStore(config);

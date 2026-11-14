@@ -21,6 +21,20 @@
   that hypothesis to the meta-agent. Evidence stays operator-provided.
 - `@kit/core/cron` exposes `isCronExpression` without node-only imports so the
   composer can validate cron expressions in the browser.
+- Sentry webhook adapter: `POST /ingest/sentry` verifies
+  `Sentry-Hook-Signature`, rejects stale `Sentry-Hook-Timestamp` values, and
+  normalizes Integration Platform and legacy issue-alert payloads into
+  `sentry.issue.*`, `sentry.event_alert.triggered` and
+  `sentry.metric_alert.*` events.
+- Event Router budget gate: workflows can declare `trigger.budget`
+  (`dailyRuns`, `dailyCostCny`); packs without one fall back to
+  `KIT_EVENT_DAILY_RUNS` / `KIT_EVENT_DAILY_COST_CNY`. Skips appear in the
+  route result with the budget reason.
+- `KIT_REPAIR_ROUNDS` sets the default repair attempts per task (0–5, default
+  2); explicit `--max-repair`, API values and `iteration.yaml` keep precedence.
+- `scripts/recovery-drill.ps1`: `plan` (preflight), `kill-worker` (supervisor
+  restart RTO) and `rollback -Force` (injected failure → kitd rollback) drills
+  with evidence in `%USERPROFILE%\.agent-team-kit\audit`.
 
 ## 0.9.0 — 2026-11-14
 
