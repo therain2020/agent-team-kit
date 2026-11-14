@@ -3,6 +3,7 @@ import {
   hasApiKey,
   probeModel,
   readBootstrapProfileSync,
+  resolveRuntimeMode,
   saveApiKey,
   writeBootstrapProfile,
 } from "@kit/bootstrap";
@@ -81,10 +82,7 @@ export async function POST(request: Request) {
   const saved = await saveApiKey(apiKey);
   const profile = {
     apiVersion: "agentteam/v1" as const,
-    mode:
-      process.env.KIT_RUNTIME_MODE === "scale"
-        ? ("scale" as const)
-        : ("local" as const),
+    mode: resolveRuntimeMode(process.env),
     baseUrl,
     models: { flash, pro },
     workspaceId: "default",

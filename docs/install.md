@@ -5,13 +5,13 @@
 - Bun 1.4+
 - Node 24 (Temporal worker runs on Node/tsx; bun worker support is experimental)
 - Docker Desktop (Postgres, MinIO, NATS, Temporal, OTel collector, Jaeger)
-- Optional: DSH, Codex or OpenCode CLI for external coder tasks
+- Optional: DSH, Codex, OpenCode or Pi CLI for external coder tasks
 
 ## First five minutes
 
 ```bash
 bun install
-bun run kit doctor          # Bun, Node, Docker, ports, model key
+bun run kit doctor          # self-check: toolchain, services, model key, coder CLIs
 bun run kit demo            # demo team + static plan (no Docker)
 bun run kit init packs/my-team --template research
 bun run kit pack simulate packs/my-team
@@ -19,6 +19,14 @@ bun run kit up --web        # console at http://localhost:3000
 ```
 
 Open `/welcome` to store a model key, or run `bun run kit bootstrap`.
+
+`kit bootstrap` runs the same self-check after it stores the key: runtime mode,
+Docker and Compose, Postgres/NATS/Temporal/console ports, the local database,
+model connectivity, and the coder CLIs (`dsh`, `codex`, `opencode`, `pi`).
+Every missing item prints the command to fix it; `/welcome` renders the same
+report. Add `--install-coders` to install the missing coder CLIs with npm
+(nothing is installed without that flag). Local mode (`KIT_RUNTIME_MODE=local`)
+skips Docker and the service ports because it uses the embedded SQLite store.
 
 ## Local stack
 
