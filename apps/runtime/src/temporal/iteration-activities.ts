@@ -546,6 +546,7 @@ export async function applyIterationTask(
     );
   }
 
+  await formatAppliedFiles(repoRoot);
   await runGit(repoRoot, ["add", "-A"]);
   const commit = await runGit(repoRoot, [
     "-c",
@@ -1055,6 +1056,26 @@ async function failVerification(
     checks: [],
     artifactId,
   };
+}
+
+async function formatAppliedFiles(repoRoot: string): Promise<void> {
+  const changed = await runGit(repoRoot, ["diff", "--name-only", "HEAD"]);
+  if (changed.exitCode !== 0) {
+    return;
+  }
+  const files = changed.stdout
+    .split(/\r?\n/)
+    .map((file) => file.trim())
+    .filter((file) => /\.(ts|tsx|js|jsx|json|css|md|yaml|yml)$/.test(file));
+  if (files.length === 0) {
+    return;
+  }
+  const bun = commandOnPath("bun") ?? "bun";
+  await runProcess(bun, ["x", "biome", "check", "--write", ...files], {
+    cwd: repoRoot,
+    timeoutMs: 120_000,
+    maxOutputBytes: 200_000,
+  });
 }
 
 async function runPostApplyChecks(
