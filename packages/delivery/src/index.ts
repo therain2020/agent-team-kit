@@ -62,7 +62,7 @@ async function sendEmail(
 ): Promise<DeliveryResult> {
   const host = env.KIT_SMTP_HOST;
   const user = env.KIT_SMTP_USER;
-  const pass = env.KIT_SMTP_PASS;
+  const pass = env.KIT_SMTP_PASS ?? env["SMTP-AgentTeamKit"];
   const to = env.KIT_DELIVERY_EMAIL_TO;
 
   if (!host || !user || !pass || !to) {
@@ -71,7 +71,7 @@ async function sendEmail(
       channel: "email",
       skipped: false,
       detail:
-        "missing SMTP config: set KIT_SMTP_HOST, KIT_SMTP_USER, KIT_SMTP_PASS and KIT_DELIVERY_EMAIL_TO",
+        "missing SMTP config: set KIT_SMTP_HOST, KIT_SMTP_USER, KIT_SMTP_PASS (or SMTP-AgentTeamKit) and KIT_DELIVERY_EMAIL_TO",
     };
   }
 

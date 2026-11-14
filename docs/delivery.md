@@ -25,6 +25,21 @@ KIT_DELIVERY_EMAIL_FROM=you@example.com
 QQ Mail: enable SMTP in the mailbox settings and use the **authorization code**,
 not the account password. Other providers use the same variables.
 
+NetEase (163/126): host `smtp.163.com` or `smtp.126.com`, port `465`, SSL on,
+and the mailbox authorization code as the password.
+
+On Windows, if you keep the authorization code in the user environment variable
+`SMTP-AgentTeamKit`, the adapter uses it when `KIT_SMTP_PASS` is not set:
+
+```powershell
+$env:KIT_SMTP_HOST="smtp.163.com"
+$env:KIT_SMTP_PORT="465"
+$env:KIT_SMTP_SECURE="1"
+$env:KIT_SMTP_USER="agentteamkit@163.com"
+$env:KIT_DELIVERY_EMAIL_TO="agentteamkit@163.com"
+# KIT_SMTP_PASS is optional when SMTP-AgentTeamKit is set
+```
+
 Declare delivery in the workflow:
 
 ```yaml
