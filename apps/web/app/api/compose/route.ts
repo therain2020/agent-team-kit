@@ -27,7 +27,10 @@ export async function POST(request: Request) {
   const kind = parseKind(body.kind);
   if (!kind) {
     return NextResponse.json(
-      { error: "kind must be mission, packRun, or approvalPolicy" },
+      {
+        error:
+          "kind must be mission, packRun, approvalPolicy, autopilot, or evolutionCycle",
+      },
       { status: 400 },
     );
   }
@@ -51,7 +54,9 @@ export async function POST(request: Request) {
 function parseKind(value: unknown): ComposeKind | undefined {
   return value === "mission" ||
     value === "packRun" ||
-    value === "approvalPolicy"
+    value === "approvalPolicy" ||
+    value === "autopilot" ||
+    value === "evolutionCycle"
     ? value
     : undefined;
 }

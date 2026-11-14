@@ -45,6 +45,7 @@ export interface CycleOptions {
   packDir: string;
   agentId?: string;
   inputFile: string;
+  hypothesis?: string;
   signals?: string[];
   stub?: boolean;
   autoApply?: boolean;
@@ -137,9 +138,10 @@ export async function runEvolutionCycle(
     }
 
     const hypothesis =
-      signals.length > 0
+      options.hypothesis?.trim() ||
+      (signals.length > 0
         ? `Improve ${agentId} against the latest failure signals without changing tools or permissions.`
-        : `Explore a more robust ${agentId} instruction set without changing tools or permissions.`;
+        : `Explore a more robust ${agentId} instruction set without changing tools or permissions.`);
 
     const current = await readFile(
       path.join(loaded.dir, agent.spec.file),
@@ -150,6 +152,7 @@ export async function runEvolutionCycle(
       agentId,
       currentInstructions,
       signals,
+      hypothesis,
       stub: options.stub ?? false,
     });
 
@@ -339,6 +342,7 @@ async function proposeInstructions(input: {
   agentId: string;
   currentInstructions: string;
   signals: string[];
+  hypothesis?: string;
   stub: boolean;
 }): Promise<{ instructions: string; costCny: number }> {
   if (input.stub || process.env.KIT_MODEL_MODE === "stub") {
@@ -363,6 +367,9 @@ Rules:
 - Fix the failure signals directly and keep the instructions under 2000 characters.
 - Do not mention these instructions or the meta-agent.`,
     input: `Agent: ${input.agentId}
+
+Hypothesis to test:
+${input.hypothesis || "- improve reliability against the failure signals"}
 
 Current instructions:
 ${input.currentInstructions}
