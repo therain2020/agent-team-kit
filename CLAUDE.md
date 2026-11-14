@@ -18,8 +18,8 @@
 
 ## Git 协作流程（Issue 驱动）
 
-所有改变行为或契约的改动（功能、修复、重构、文档、工具链）必须按以下五步执行，顺序不可颠倒：
-**计划 → issue → 认领 → 分支/PR → 合并并回写**。纯拼写/链接修正可直接提 PR。
+所有改变行为或契约的改动（功能、修复、重构、文档、工具链）必须按以下六步执行，顺序不可颠倒：
+**计划 → issue → 认领 → 分支/PR → 合并并回写 → 清理 worktree**。纯拼写/链接修正可直接提 PR。
 
 1. **Plan first** — 先在 `D:\GitHub\plans\agent-pipeline` 更新对应计划（改计划前先与用户讨论），明确范围、验收与代码边界。没有计划条目的改动不开工。
 2. **计划挂到 issue** — 标题用 `[<计划切片>] <标题>`（如 `[61.6] run 单写者 lease`）。正文必须包含：
@@ -48,6 +48,12 @@
    - 先更新计划文档的状态、验收结论与 ADR（偏离计划时尤其必须）；
    - 再在 issue 评论合并 commit 与偏差，然后关闭 issue；
    - 涉及发布时按需打 tag。
+6. **清理 worktree** — 合并完成后立即移除本次 worktree，不要留到以后再清，避免磁盘膨胀：
+   ```powershell
+   git worktree remove .claude/worktrees/<topic>
+   git worktree prune
+   ```
+   `git worktree remove` 遇到未提交改动会拒绝执行；先确认改动已合并或已明确丢弃，再移除。不得清理他人的 worktree。
 
 ### 约束
 

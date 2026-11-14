@@ -32,9 +32,9 @@ bun run kit pack simulate my-team
 
 ### 3. Change the core
 
-Every change that alters behavior or a contract follows the same five steps:
-**plan → issue → claim → branch/PR → merge and write back.** Typo and
-link-only fixes can go straight to a PR.
+Every change that alters behavior or a contract follows the same six steps:
+**plan → issue → claim → branch/PR → merge and write back → clean up the
+worktree.** Typo and link-only fixes can go straight to a PR.
 
 1. **Plan first.** Align on the plan before writing code. The planning source of
    truth lives outside this repository (see [docs/README.md](./docs/README.md)).
@@ -58,6 +58,17 @@ link-only fixes can go straight to a PR.
 5. **Merge and write back.** Once CI is green, squash-merge. Then update the
    plan's status and decisions, comment the merge commit on the issue, and close
    it.
+6. **Clean up the worktree.** Remove it as soon as the PR is merged — worktrees
+   are full checkouts and pile up quickly:
+
+   ```bash
+   git worktree remove .claude/worktrees/<topic>
+   git worktree prune
+   ```
+
+   `git worktree remove` refuses to run with uncommitted changes, so confirm the
+   work is merged or explicitly discarded first. Never remove someone else's
+   worktree.
 
 `develop` is the integration branch and the only default merge target. `master`
 is the release line, and `feat/autonomy-0.9` is the remote default branch — neither
