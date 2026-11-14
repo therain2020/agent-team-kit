@@ -9,7 +9,9 @@ import {
   type IterationConfig,
   type Policy,
   type SkillFrontmatter,
+  type SkillPack,
   type TeamPack,
+  type ToolPack,
   type WorkflowDefinition,
   agentFrontmatterSchema,
   autopilotSchema,
@@ -17,11 +19,15 @@ import {
   policySchema,
   rubricSetSchema,
   skillFrontmatterSchema,
+  skillPackSchema,
   teamPackSchema,
+  toolPackSchema,
   workflowDefinitionSchema,
 } from "@kit/core";
+import { KNOWN_TOOLS } from "@kit/tools";
 import { parse } from "yaml";
 import { type RoleRules, getRoleRules, resolveAgentRole } from "./role-plan";
+import { scanSecrets } from "./security";
 
 export interface LoadedAgent {
   spec: AgentSpec;
@@ -34,6 +40,8 @@ export interface LoadedPack {
   dir: string;
   agents: Map<string, LoadedAgent>;
   skills: Map<string, SkillFrontmatter>;
+  toolPacks: ToolPack[];
+  skillPacks: SkillPack[];
   workflows: WorkflowDefinition[];
   policies: Policy[];
   autopilot?: AutopilotConfig;
@@ -47,13 +55,7 @@ export type LoadResult =
   | { ok: false; dir: string; errors: string[] };
 
 const KIT_VERSION = "0.9.0";
-
-const SECRET_PATTERNS = [
-  /sk-[A-Za-z0-9]{16,}/,
-  /AKIA[0-9A-Z]{16}/,
-  /ghp_[A-Za-z0-9]{20,}/,
-  /AIza[0-9A-Za-z_-]{20,}/,
-];
+const MAX_PACK_FILE_BYTES = 256 * 1024;
 
 export async function loadPack(dirInput: string): Promise<LoadResult> {
   const dir = path.resolve(process.cwd(), dirInput);
@@ -174,7 +176,162 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     }
   }
 
+  const toolPacks: ToolPack[] = [];
+  const toolNames = new Set<string>();
+
+  for (const toolpackFile of pack.toolpacks) {
+    const toolpackPath = resolvePackPath(dir, toolpackFile);
+    if (!toolpackPath) {
+      errors.push(`${toolpackFile}: file escapes the pack`);
+      continue;
+    }
+    if (!existsSync(toolpackPath)) {
+      errors.push(`toolpack file missing: ${toolpackFile}`);
+      continue;
+    }
+
+    const text = await readFile(toolpackPath, "utf8");
+    if (Buffer.byteLength(text, "utf8") > MAX_PACK_FILE_BYTES) {
+      errors.push(`${toolpackFile}: file exceeds 256KB`);
+      continue;
+    }
+    scanSecrets(text, toolpackFile, errors);
+
+    let doc: unknown;
+    try {
+      doc = parse(text);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${toolpackFile}: parse error: ${message}`);
+      continue;
+    }
+
+    const parsedToolPack = toolPackSchema.safeParse(doc);
+    if (!parsedToolPack.success) {
+      errors.push(
+        ...parsedToolPack.error.issues.map(
+          (issue) =>
+            `${toolpackFile}: ${issue.path.join(".") || "<root>"}: ${issue.message}`,
+        ),
+      );
+      continue;
+    }
+
+    for (const tool of parsedToolPack.data.tools) {
+      if (KNOWN_TOOLS.includes(tool.name)) {
+        errors.push(
+          `${toolpackFile}: tool ${tool.name} conflicts with a builtin tool`,
+        );
+      }
+      if (toolNames.has(tool.name)) {
+        errors.push(
+          `${toolpackFile}: duplicate tool name across packs: ${tool.name}`,
+        );
+      }
+      toolNames.add(tool.name);
+      if (tool.adapter === "command") {
+        warnings.push(
+          `tool ${tool.name}: command tools stay disabled until KIT_TOOLS_ALLOW_COMMAND=1`,
+        );
+      }
+    }
+
+    toolPacks.push(parsedToolPack.data);
+  }
+
   const skills = new Map<string, SkillFrontmatter>();
+  const skillPacks: SkillPack[] = [];
+
+  for (const skillpackFile of pack.skillpacks) {
+    const skillpackPath = resolvePackPath(dir, skillpackFile);
+    if (!skillpackPath) {
+      errors.push(`${skillpackFile}: file escapes the pack`);
+      continue;
+    }
+    if (!existsSync(skillpackPath)) {
+      errors.push(`skillpack file missing: ${skillpackFile}`);
+      continue;
+    }
+
+    const text = await readFile(skillpackPath, "utf8");
+    if (Buffer.byteLength(text, "utf8") > MAX_PACK_FILE_BYTES) {
+      errors.push(`${skillpackFile}: file exceeds 256KB`);
+      continue;
+    }
+    scanSecrets(text, skillpackFile, errors);
+
+    let doc: unknown;
+    try {
+      doc = parse(text);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${skillpackFile}: parse error: ${message}`);
+      continue;
+    }
+
+    const parsedSkillPack = skillPackSchema.safeParse(doc);
+    if (!parsedSkillPack.success) {
+      errors.push(
+        ...parsedSkillPack.error.issues.map(
+          (issue) =>
+            `${skillpackFile}: ${issue.path.join(".") || "<root>"}: ${issue.message}`,
+        ),
+      );
+      continue;
+    }
+
+    const skillPack = parsedSkillPack.data;
+    for (const file of skillPack.files) {
+      const filePath = resolvePackPath(dir, file);
+      if (!filePath) {
+        errors.push(`${skillpackFile}: file escapes the pack: ${file}`);
+        continue;
+      }
+      if (!existsSync(filePath)) {
+        errors.push(`${skillpackFile}: file missing: ${file}`);
+        continue;
+      }
+      const fileText = await readFile(filePath, "utf8");
+      if (Buffer.byteLength(fileText, "utf8") > MAX_PACK_FILE_BYTES) {
+        errors.push(`${skillpackFile}: file exceeds 256KB: ${file}`);
+        continue;
+      }
+      scanSecrets(fileText, file, errors);
+    }
+
+    const entryPath = resolvePackPath(dir, skillPack.entry);
+    if (!entryPath || !existsSync(entryPath)) {
+      continue;
+    }
+
+    const frontmatter = parseFrontmatter(await readFile(entryPath, "utf8"));
+    if (!frontmatter) {
+      errors.push(
+        `${skillpackFile}: skill frontmatter missing: ${skillPack.entry}`,
+      );
+      continue;
+    }
+
+    const parsedSkill = skillFrontmatterSchema.safeParse(frontmatter);
+    if (!parsedSkill.success) {
+      errors.push(
+        ...parsedSkill.error.issues.map(
+          (issue) =>
+            `${skillPack.entry}: ${issue.path.join(".")}: ${issue.message}`,
+        ),
+      );
+      continue;
+    }
+
+    if (parsedSkill.data.name !== skillPack.name) {
+      errors.push(
+        `${skillpackFile}: frontmatter name "${parsedSkill.data.name}" does not match skill pack name "${skillPack.name}"`,
+      );
+    }
+
+    skills.set(skillPack.name, parsedSkill.data);
+    skillPacks.push(skillPack);
+  }
 
   for (const agent of pack.agents) {
     for (const skill of agent.skills) {
@@ -498,6 +655,8 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
     pack,
     agents,
     skills,
+    toolPacks,
+    skillPacks,
     workflows,
     policies,
     ...(autopilot ? { autopilot } : {}),
@@ -519,15 +678,6 @@ function parseFrontmatter(text: string): unknown {
     return undefined;
   }
   return parse(match[1] ?? "");
-}
-
-function scanSecrets(text: string, file: string, errors: string[]): void {
-  for (const pattern of SECRET_PATTERNS) {
-    if (pattern.test(text)) {
-      errors.push(`possible secret in ${file}`);
-      return;
-    }
-  }
 }
 
 function compareVersions(a: number[], b: number[]): number {

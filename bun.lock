@@ -239,6 +239,7 @@
       "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
+        "@kit/tools": "workspace:*",
         "@kit/workflow": "workspace:*",
         "yaml": "^2.6.1",
       },
@@ -299,6 +300,7 @@
       "name": "@kit/tools",
       "version": "0.9.0",
       "dependencies": {
+        "@kit/core": "workspace:*",
         "diff": "^9.0.0",
       },
     },

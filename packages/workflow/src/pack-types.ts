@@ -1,4 +1,4 @@
-import type { RubricDimension } from "@kit/core";
+import type { PackTool, RubricDimension } from "@kit/core";
 
 export interface StageGate {
   ref: string;
@@ -35,6 +35,7 @@ export interface PackStageSpec {
   modelAlias?: string;
   instructions?: string;
   tools?: string[];
+  packTools?: PackTool[];
   timeoutMs?: number;
   gate?: StageGate;
   includeInitialInput?: boolean;

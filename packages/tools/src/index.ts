@@ -17,6 +17,8 @@ import {
 import type { Tool } from "./types";
 import { browserInspectTool, httpFetchTool } from "./web-tools";
 
+export * from "./declarative";
+export { resetMcpSessions } from "./mcp";
 export * from "./types";
 export {
   repoReadTool,
@@ -46,13 +48,21 @@ const BY_NAME = new Map(TOOLS.map((tool) => [tool.definition.name, tool]));
 
 export const KNOWN_TOOLS = [...BY_NAME.keys()];
 
-export function getTool(name: string): Tool | null {
-  return BY_NAME.get(name) ?? null;
+function findTool(name: string, extra: Tool[] = []): Tool | null {
+  return (
+    BY_NAME.get(name) ??
+    extra.find((tool) => tool.definition.name === name) ??
+    null
+  );
 }
 
-export function toolDefinitions(names: string[]) {
+export function getTool(name: string, extra: Tool[] = []): Tool | null {
+  return findTool(name, extra);
+}
+
+export function toolDefinitions(names: string[], extra: Tool[] = []) {
   return names.flatMap((name) => {
-    const tool = BY_NAME.get(name);
+    const tool = findTool(name, extra);
     return tool
       ? [
           {
@@ -69,8 +79,9 @@ export async function executeTool(
   name: string,
   args: Record<string, unknown>,
   context: Parameters<Tool["execute"]>[1],
+  extra: Tool[] = [],
 ) {
-  const tool = BY_NAME.get(name);
+  const tool = findTool(name, extra);
   if (!tool) {
     throw new Error(`unknown tool: ${name}`);
   }

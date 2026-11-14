@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { type WorkshopManifest, workshopManifestSchema } from "@kit/core";
-import { loadPack } from "@kit/pack";
+import {
+  type PackTool,
+  type WorkshopManifest,
+  skillPackSchema,
+  toolPackSchema,
+  workshopManifestSchema,
+} from "@kit/core";
+import { loadPack, scanSecrets } from "@kit/pack";
 import { parse } from "yaml";
 
 const USER_AGENT = "agent-team-kit/0.9";
@@ -191,6 +198,11 @@ export async function installWorkshop(input: {
       if (total > MAX_TOTAL_BYTES) {
         throw new Error("workshop item exceeds 5MB");
       }
+      const secretErrors: string[] = [];
+      scanSecrets(content, file, secretErrors);
+      if (secretErrors.length > 0) {
+        throw new Error(secretErrors.join("; "));
+      }
       const destination = path.resolve(target, file);
       if (!destination.startsWith(`${target}${path.sep}`)) {
         throw new Error(`unsafe workshop path: ${file}`);
@@ -207,6 +219,43 @@ export async function installWorkshop(input: {
         throw new Error(
           `installed pack is invalid: ${loaded.errors.join("; ")}`,
         );
+      }
+      assertToolPermissions(
+        loaded.toolPacks.flatMap((toolPack) => toolPack.tools),
+        manifest,
+      );
+    } else if (manifest.kind === "toolpack") {
+      const parsed = toolPackSchema.safeParse(
+        parse(await readFile(path.join(target, manifest.entry), "utf8")),
+      );
+      if (!parsed.success) {
+        throw new Error(
+          `installed toolpack is invalid: ${parsed.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .join("; ")}`,
+        );
+      }
+      assertToolPermissions(parsed.data.tools, manifest);
+    } else if (manifest.kind === "skillpack") {
+      const parsed = skillPackSchema.safeParse(
+        parse(await readFile(path.join(target, manifest.entry), "utf8")),
+      );
+      if (!parsed.success) {
+        throw new Error(
+          `installed skillpack is invalid: ${parsed.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .join("; ")}`,
+        );
+      }
+      for (const file of parsed.data.files) {
+        if (!manifest.files.includes(file)) {
+          throw new Error(
+            `skillpack file is not listed in the manifest: ${file}`,
+          );
+        }
+        if (!existsSync(path.join(target, file))) {
+          throw new Error(`skillpack file is missing: ${file}`);
+        }
       }
     }
 
@@ -242,6 +291,11 @@ async function fetchManifest(
   token?: string,
 ): Promise<WorkshopManifest> {
   const raw = await fetchRaw(repo, ref, "workshop.yaml", token);
+  const secretErrors: string[] = [];
+  scanSecrets(raw, "workshop.yaml", secretErrors);
+  if (secretErrors.length > 0) {
+    throw new Error(secretErrors.join("; "));
+  }
   const parsed = workshopManifestSchema.safeParse(parse(raw));
   if (!parsed.success) {
     throw new Error(
@@ -256,6 +310,25 @@ async function fetchManifest(
 function assertRepo(repo: string): void {
   if (!REPO_PATTERN.test(repo)) {
     throw new Error("repo must be owner/name");
+  }
+}
+
+function assertToolPermissions(
+  tools: PackTool[],
+  manifest: WorkshopManifest,
+): void {
+  for (const tool of tools) {
+    if (tool.adapter === "command" && !manifest.permissions.code) {
+      throw new Error(`tool ${tool.name} requires manifest permissions.code`);
+    }
+    if (
+      (tool.adapter === "http" || tool.adapter === "mcp") &&
+      !manifest.permissions.network
+    ) {
+      throw new Error(
+        `tool ${tool.name} requires manifest permissions.network`,
+      );
+    }
   }
 }
 
