@@ -147,7 +147,6 @@ export interface CycleOptions {
   workspaceId?: string;
   cyclesRoot?: string;
   hiddenEvalsDir?: string;
-  workspaceId?: string;
   freezeSnapshot?: boolean;
   allowEvaluatorChange?: boolean;
   evaluatorApprovalRef?: string;
