@@ -15,16 +15,16 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between",
+        "flex flex-col gap-3 border-b border-px-line pb-3 sm:flex-row sm:items-start sm:justify-between",
         className,
       )}
     >
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight text-zinc-50">
+      <div className="min-w-0">
+        <h1 className="font-mono text-[15px] leading-tight font-bold tracking-[0.1em] text-px-strong uppercase">
           {title}
         </h1>
         {description ? (
-          <div className="mt-1 text-sm text-muted-foreground">
+          <div className="mt-1.5 font-mono text-[11px] leading-relaxed text-px-muted">
             {description}
           </div>
         ) : null}

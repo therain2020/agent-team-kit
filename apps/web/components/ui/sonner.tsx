@@ -9,9 +9,11 @@ export function Toaster() {
       position="bottom-right"
       toastOptions={{
         classNames: {
-          toast: "!border-zinc-800 !bg-zinc-900 !text-zinc-100 !shadow-xl",
-          description: "!text-zinc-400",
-          actionButton: "!bg-emerald-500 !text-zinc-950",
+          toast:
+            "!rounded-none !border-px-line2 !bg-px-panel !text-px-text !font-mono !shadow-px",
+          description: "!text-px-muted",
+          actionButton:
+            "!rounded-none !border !border-px-accent-hi !bg-px-accent !font-mono !text-px-accent-ink",
         },
       }}
     />

@@ -35,7 +35,7 @@ export async function StageTimeline({
   const locale = await getLocale();
 
   if (stages.length === 0) {
-    return <p className="text-xs text-muted-foreground">{t("noStages")}</p>;
+    return <p className="text-xs text-px-muted">{t("noStages")}</p>;
   }
 
   return (
@@ -54,29 +54,30 @@ export async function StageTimeline({
         return (
           <li key={stage.stageId} className="relative pl-7">
             {index < stages.length - 1 ? (
-              <span className="absolute left-[9px] top-7 h-[calc(100%-12px)] w-px bg-zinc-800" />
+              <span className="pixel-sep-v absolute top-7 left-[9px] h-[calc(100%-12px)]" />
             ) : null}
             <Icon
               className={cn(
-                "absolute left-0 top-1.5 size-[18px]",
+                "absolute top-1.5 left-0 size-[18px]",
                 stage.status === "succeeded" && "text-emerald-400",
-                stage.status === "running" && "animate-spin text-sky-400",
+                stage.status === "running" &&
+                  "animate-spin text-sky-400 motion-reduce:animate-none",
                 stage.status === "failed" && "text-red-400",
-                stage.status === "pending" && "text-zinc-600",
-                stage.status === "skipped" && "text-zinc-600",
+                stage.status === "pending" && "text-px-faint",
+                stage.status === "skipped" && "text-px-faint",
               )}
             />
-            <div className="rounded-md border border-transparent px-2 py-2 transition-colors hover:border-border hover:bg-card">
+            <div className="rounded-none border border-transparent px-2 py-2 transition-colors hover:border-px-line hover:bg-px-panel2">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-mono text-sm text-zinc-200">
+                <span className="font-mono text-[13px] font-bold tracking-[0.06em] text-px-text uppercase">
                   {stage.name}
                 </span>
                 <StageStatusBadge status={stage.status} />
-                <span className="text-[11px] text-zinc-500">
+                <span className="text-[11px] text-px-muted">
                   {formatDuration(stage.startedAt, stage.finishedAt, locale)}
                 </span>
                 {stage.startedAt ? (
-                  <span className="text-[11px] text-zinc-600">
+                  <span className="text-[11px] text-px-faint">
                     {timeAgo(stage.startedAt, locale)}
                   </span>
                 ) : null}
@@ -147,13 +148,13 @@ function ArtifactLink({
       <Link
         href={`/runs/${encodeURIComponent(runId)}?artifact=${encodeURIComponent(key)}`}
         className={cn(
-          "flex items-center gap-2 rounded px-2 py-1 text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200",
-          selected && "bg-zinc-800 text-zinc-100",
+          "flex items-center gap-2 rounded-none px-2 py-1 text-[11px] text-px-muted transition-colors hover:bg-px-panel3 hover:text-px-text",
+          selected && "bg-px-panel3 text-px-strong",
         )}
       >
         <FileText className="size-3.5 shrink-0" />
         <span className="font-mono">{view.artifact.artifactId}</span>
-        <span className="text-zinc-600">v{view.artifact.version}</span>
+        <span className="text-px-faint">v{view.artifact.version}</span>
         <Badge variant="outline" className="ml-auto text-[10px]">
           {kindLabel}
         </Badge>

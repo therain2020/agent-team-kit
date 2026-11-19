@@ -25,7 +25,7 @@ export function TabsList({
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        "inline-flex h-8 items-center gap-1 rounded-md border border-border bg-zinc-900/60 p-0.5",
+        "inline-flex h-8 items-center gap-0.5 rounded-none border border-px-line2 bg-px-ink p-0.5",
         className,
       )}
       {...props}
@@ -41,7 +41,7 @@ export function TabsTrigger({
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
       className={cn(
-        "inline-flex items-center justify-center rounded px-2.5 py-1 text-xs font-medium text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 data-[state=active]:bg-zinc-800 data-[state=active]:text-foreground disabled:pointer-events-none disabled:opacity-50",
+        "inline-flex items-center justify-center rounded-none border border-transparent px-2.5 py-1 font-mono text-[10.5px] font-bold tracking-[0.1em] text-px-muted uppercase outline-none transition-colors hover:border-px-line hover:bg-px-panel3 hover:text-px-text data-[state=active]:border-px-accent data-[state=active]:bg-px-accent data-[state=active]:text-px-accent-ink disabled:pointer-events-none disabled:opacity-50",
         className,
       )}
       {...props}

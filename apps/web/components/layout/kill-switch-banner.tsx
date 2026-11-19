@@ -50,15 +50,17 @@ export function KillSwitchBanner() {
   return (
     <div
       role="alert"
-      className="border-b border-red-700/50 bg-red-950/40 px-5 py-2 text-xs text-red-100"
+      className="border-b border-red-700 bg-red-950 px-5 py-2 font-mono text-[11px] text-red-100 shadow-px-inset-b"
     >
-      <span className="font-medium">{t("bannerActive")}</span>
-      <span className="mx-2 text-red-300/70">
+      <span className="border border-red-700 bg-red-900 px-1 py-0.5 text-[10px] font-bold tracking-[0.12em] text-red-200 uppercase">
+        {t("bannerActive")}
+      </span>
+      <span className="mx-2 text-red-200/80">
         {active
           .map((item) => `${item.scope}/${item.target || "*"} — ${item.reason}`)
           .join(" · ")}
       </span>
-      <Link href="/kill-switch" className="underline">
+      <Link href="/kill-switch" className="underline underline-offset-2">
         {t("bannerLink")}
       </Link>
     </div>

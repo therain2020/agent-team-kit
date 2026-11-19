@@ -11,7 +11,7 @@ export function Input({
       type={type}
       data-slot="input"
       className={cn(
-        "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50",
+        "flex h-8 w-full rounded-none border border-px-line2 bg-px-ink px-2.5 py-1 font-mono text-[13px] text-px-text shadow-px-inset outline-none transition-colors placeholder:text-px-faint focus-visible:border-px-accent disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       {...props}

@@ -9,7 +9,7 @@ export function Card({
     <div
       data-slot="card"
       className={cn(
-        "rounded-lg border border-border bg-card text-card-foreground",
+        "pixel-corners relative rounded-none border border-px-line bg-px-panel text-card-foreground shadow-px",
         className,
       )}
       {...props}
@@ -25,7 +25,7 @@ export function CardHeader({
     <div
       data-slot="card-header"
       className={cn(
-        "flex flex-col gap-1 border-b border-border px-4 py-3",
+        "flex flex-col gap-1 border-b border-px-line bg-px-panel2 px-3.5 py-2.5",
         className,
       )}
       {...props}
@@ -40,7 +40,10 @@ export function CardTitle({
   return (
     <h3
       data-slot="card-title"
-      className={cn("text-sm font-semibold text-zinc-100", className)}
+      className={cn(
+        "font-mono text-[11px] font-bold tracking-[0.16em] text-px-text uppercase",
+        className,
+      )}
       {...props}
     />
   );
@@ -53,7 +56,7 @@ export function CardDescription({
   return (
     <p
       data-slot="card-description"
-      className={cn("text-xs text-muted-foreground", className)}
+      className={cn("font-mono text-[10.5px] text-px-muted", className)}
       {...props}
     />
   );
@@ -66,7 +69,7 @@ export function CardContent({
   return (
     <div
       data-slot="card-content"
-      className={cn("px-4 py-3", className)}
+      className={cn("px-3.5 py-3", className)}
       {...props}
     />
   );
@@ -80,7 +83,7 @@ export function CardFooter({
     <div
       data-slot="card-footer"
       className={cn(
-        "flex items-center gap-2 border-t border-border px-4 py-3",
+        "flex items-center gap-2 border-t border-px-line px-3.5 py-2.5",
         className,
       )}
       {...props}
