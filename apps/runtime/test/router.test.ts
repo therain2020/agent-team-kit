@@ -1,10 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   eventBudgetSkip,
+  eventPriorityOf,
   resolveEventBudget,
   startOfUtcDay,
   triggerMatches,
 } from "../src/router";
+
+describe("event priority linkage", () => {
+  it("reads priority hints from a payload and ignores malformed input", () => {
+    expect(eventPriorityOf({ priority: "P1" })).toBe("P1");
+    expect(eventPriorityOf({ priorityClass: "P0" })).toBe("P0");
+    expect(eventPriorityOf({ tier: "P2" })).toBe("P2");
+    expect(eventPriorityOf({ other: 1 })).toBeUndefined();
+    expect(eventPriorityOf("P0")).toBeUndefined();
+    expect(eventPriorityOf(null)).toBeUndefined();
+    expect(eventPriorityOf({ priority: "  " })).toBeUndefined();
+  });
+});
 
 describe("trigger matching", () => {
   it("matches exact types", () => {

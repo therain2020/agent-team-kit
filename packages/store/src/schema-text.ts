@@ -224,6 +224,9 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   rationale TEXT NOT NULL,
   auto_applied BOOLEAN NOT NULL DEFAULT false,
   error TEXT,
+  budget_status TEXT NOT NULL DEFAULT 'unledgered',
+  budget_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  budget_reconciliation JSONB,
   eval_snapshot_path TEXT,
   eval_snapshot_hash TEXT,
   evaluator_hash TEXT,
@@ -270,6 +273,20 @@ CREATE TABLE IF NOT EXISTS evolution_meta (
   PRIMARY KEY (workspace_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS evolution_freeze (
+  workspace_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  kind TEXT,
+  reason TEXT,
+  actor TEXT,
+  since TIMESTAMPTZ,
+  lift_condition TEXT,
+  lifted_at TIMESTAMPTZ,
+  lifted_by TEXT,
+  lift_reason TEXT,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS eval_snapshot_path TEXT;
 ALTER TABLE evolution_cycles
@@ -282,6 +299,12 @@ ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS budget_status TEXT NOT NULL DEFAULT 'unledgered';
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS budget_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS budget_reconciliation JSONB;
 ALTER TABLE evolution_state
   ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
@@ -492,6 +515,42 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS circuit_breakers (
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  window JSONB NOT NULL DEFAULT '[]'::jsonb,
+  opened_at TIMESTAMPTZ,
+  half_open_started_at TIMESTAMPTZ,
+  half_open_successes INTEGER NOT NULL DEFAULT 0,
+  last_trip_at TIMESTAMPTZ,
+  recovered_at TIMESTAMPTZ,
+  trip_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_circuit_breakers_state
+  ON circuit_breakers(state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_circuit_breakers_workspace
+  ON circuit_breakers(workspace_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS circuit_breaker_events (
+  event_id TEXT PRIMARY KEY,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  workspace_id TEXT NOT NULL,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  action TEXT NOT NULL,
+  reason TEXT,
+  detail JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_circuit_breaker_events_occurred
+  ON circuit_breaker_events(occurred_at DESC);
 
 CREATE TABLE IF NOT EXISTS event_spool (
   spool_id BIGSERIAL PRIMARY KEY,
@@ -963,6 +1022,9 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   rationale TEXT NOT NULL,
   auto_applied INTEGER NOT NULL DEFAULT 0,
   error TEXT,
+  budget_status TEXT NOT NULL DEFAULT 'unledgered',
+  budget_refs TEXT NOT NULL DEFAULT '[]',
+  budget_reconciliation TEXT,
   eval_snapshot_path TEXT,
   eval_snapshot_hash TEXT,
   evaluator_hash TEXT,
@@ -1007,6 +1069,20 @@ CREATE TABLE IF NOT EXISTS evolution_meta (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS evolution_freeze (
+  workspace_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  kind TEXT,
+  reason TEXT,
+  actor TEXT,
+  since TEXT,
+  lift_condition TEXT,
+  lifted_at TEXT,
+  lifted_by TEXT,
+  lift_reason TEXT,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS merge_tickets (
@@ -1219,6 +1295,42 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
 
+CREATE TABLE IF NOT EXISTS circuit_breakers (
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  window TEXT NOT NULL DEFAULT '[]',
+  opened_at TEXT,
+  half_open_started_at TEXT,
+  half_open_successes INTEGER NOT NULL DEFAULT 0,
+  last_trip_at TEXT,
+  recovered_at TEXT,
+  trip_count INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_circuit_breakers_state
+  ON circuit_breakers(state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_circuit_breakers_workspace
+  ON circuit_breakers(workspace_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS circuit_breaker_events (
+  event_id TEXT PRIMARY KEY,
+  occurred_at TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  action TEXT NOT NULL,
+  reason TEXT,
+  detail TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_circuit_breaker_events_occurred
+  ON circuit_breaker_events(occurred_at DESC);
+
 CREATE TABLE IF NOT EXISTS event_spool (
   spool_id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id TEXT NOT NULL UNIQUE,
@@ -1321,6 +1433,9 @@ ALTER TABLE evolution_cycles ADD COLUMN evaluator_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_approval_ref TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN signal_refs TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE evolution_cycles ADD COLUMN signal_sources TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE evolution_cycles ADD COLUMN budget_status TEXT NOT NULL DEFAULT 'unledgered';
+ALTER TABLE evolution_cycles ADD COLUMN budget_refs TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE evolution_cycles ADD COLUMN budget_reconciliation TEXT;
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS budgets (

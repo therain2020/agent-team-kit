@@ -1,5 +1,6 @@
 import type {
   PackTool,
+  PriorityClass,
   RubricDimension,
   RunBudgetSpec,
   RunOrigin,
@@ -70,6 +71,8 @@ export interface PackRunInput {
   stub: boolean;
   origin?: RunOrigin;
   maxConcurrency?: number;
+  /** Queue priority (60 §2); derived from the triggering event when absent. */
+  priority?: PriorityClass;
   variant?: PackRunVariant;
   budget?: RunBudgetSpec;
   delivery?: {

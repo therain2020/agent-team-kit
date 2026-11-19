@@ -2,6 +2,7 @@ import { ApprovalService } from "./approval-service";
 import { ArtifactService } from "./artifact-service";
 import { type BlobClient, FsBlobClient, S3BlobClient } from "./blob";
 import { BudgetService } from "./budget-service";
+import { CircuitBreakerService } from "./circuit-breaker-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
 import { createDb } from "./db";
 import { SqlEventSpoolStore } from "./event-spool";
@@ -114,6 +115,10 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
       driver: handle.driver,
     }),
     budgetService: new BudgetService({
+      sql: handle.sql,
+      driver: handle.driver,
+    }),
+    circuitBreakerService: new CircuitBreakerService({
       sql: handle.sql,
       driver: handle.driver,
     }),

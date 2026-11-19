@@ -1,6 +1,8 @@
+import type { EvolutionBudgetLedger } from "@kit/core";
 import type { CanaryState, EvolutionDecisionRecord } from "./canary";
 import type { EvolutionCycleRecord } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
+import type { EvolutionFreezeState } from "./freeze";
 
 export interface StoredCanaryState {
   state: CanaryState;
@@ -21,6 +23,12 @@ export interface StoredVariant {
 export interface EvolutionRepository {
   readonly kind: "postgres" | "sqlite" | "file";
   readonly workspaceId: string;
+  /**
+   * Shared budget ledger. Store-backed repositories expose the budget service
+   * so every cycle reserves/commits its model calls; file repositories (tests,
+   * legacy local flows) leave it undefined and cycles stay `unledgered`.
+   */
+  readonly budget?: EvolutionBudgetLedger;
   ensureReady(): Promise<void>;
   saveVariant(input: {
     meta: VariantMeta;
@@ -44,5 +52,8 @@ export interface EvolutionRepository {
     decision: EvolutionDecisionRecord,
     expectedVersion?: number,
   ): Promise<boolean>;
+  /** Workspace-level freeze switch; null means evolution is active. */
+  getFreeze(): Promise<EvolutionFreezeState | null>;
+  setFreeze(state: EvolutionFreezeState): Promise<void>;
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T | null>;
 }

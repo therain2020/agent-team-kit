@@ -12,6 +12,13 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  type HiddenPlan,
+  appendHiddenAudit,
+  loadHiddenSuite,
+  selectHiddenChunk,
+} from "./hidden";
+import { assertSnapshotRootAllowed } from "./security-invariants";
 
 /**
  * Bump when the judge prompt or scoring logic changes. The evaluator hash
@@ -38,6 +45,11 @@ export interface EvalSnapshotManifest {
   evaluatorVersion: string;
   evaluatorHash: string;
   sources: SnapshotFile[];
+  /**
+   * Rotation record for the hidden eval set. `{ available: false }` means the
+   * cycle ran with the visible rubric only; older manifests omit the field.
+   */
+  hidden?: HiddenPlan;
 }
 
 export interface EvalSnapshot {
@@ -64,13 +76,29 @@ export async function createEvalSnapshot(input: {
   packDir: string;
   cyclesRoot?: string;
   hiddenEvalsDir?: string;
+  workspaceId?: string;
+  /** Rotation clock; tests pin it to exercise the time-based rotation. */
+  now?: Date;
   freeze?: boolean;
   expectedEvaluatorHash?: string;
+  /**
+   * External kit home (`KIT_HOME`, default `~/.agent-team-kit`). When supplied,
+   * the snapshot root must live inside it (SEC-INV-03); otherwise the cycle
+   * refuses to write the frozen eval snapshot.
+   */
+  kitHome?: string;
 }): Promise<EvalSnapshot> {
   const packDir = path.resolve(input.packDir);
   const cyclesRoot = path.resolve(input.cyclesRoot ?? defaultCyclesRoot());
   assertOutside(cyclesRoot, packDir, "pack directory");
   assertOutside(cyclesRoot, process.cwd(), "repository");
+  if (input.kitHome) {
+    assertSnapshotRootAllowed({
+      cyclesRoot,
+      kitHome: input.kitHome,
+      repoRoot: path.resolve(process.cwd()),
+    });
+  }
 
   const evalsDir = path.join(packDir, "evals");
   if (!existsSync(evalsDir)) {
@@ -90,6 +118,7 @@ export async function createEvalSnapshot(input: {
     await cp(fixturesDir, path.join(dir, "fixtures"), { recursive: true });
   }
 
+  let hidden: HiddenPlan = { available: false };
   if (input.hiddenEvalsDir) {
     const hiddenDir = path.resolve(input.hiddenEvalsDir);
     if (!existsSync(hiddenDir)) {
@@ -100,7 +129,30 @@ export async function createEvalSnapshot(input: {
         `hidden evals directory must not be inside the snapshot destination: ${hiddenDir}`,
       );
     }
+    if (isInside(packDir, hiddenDir)) {
+      throw new Error(
+        `hidden evals directory must live outside the pack: ${hiddenDir}`,
+      );
+    }
+    if (isInside(process.cwd(), hiddenDir)) {
+      throw new Error(
+        `hidden evals directory must live outside the repository: ${hiddenDir}`,
+      );
+    }
+    const rotatedAt = (input.now ?? new Date()).toISOString();
+    const suite = await loadHiddenSuite(hiddenDir);
+    const selection = selectHiddenChunk(suite, input.now);
+    await appendHiddenAudit(cyclesRoot, {
+      at: rotatedAt,
+      action: "select",
+      cycleId: input.cycleId,
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      suiteHash: selection.suiteHash,
+      rotationEpoch: selection.rotationEpoch,
+      selectedCaseIds: selection.selectedCaseIds,
+    });
     await cp(hiddenDir, path.join(dir, "hidden"), { recursive: true });
+    hidden = { available: true, rotatedAt, ...selection };
   }
 
   const sources = await hashTree(dir);
@@ -112,6 +164,7 @@ export async function createEvalSnapshot(input: {
     evaluatorVersion: EVALUATOR_VERSION,
     evaluatorHash: evaluatorHashOf(sources),
     sources,
+    hidden,
   };
   if (
     input.expectedEvaluatorHash &&
@@ -217,6 +270,21 @@ export async function verifyEvalSnapshot(
   return { ok: mismatches.length === 0, manifestHash, mismatches };
 }
 
+export async function readEvalSnapshotManifest(
+  dir: string,
+): Promise<EvalSnapshot> {
+  const root = path.resolve(dir);
+  const manifestPath = path.join(root, MANIFEST_FILE);
+  if (!existsSync(manifestPath)) {
+    throw new Error(`eval snapshot manifest missing: ${root}`);
+  }
+  const manifestBytes = await readFile(manifestPath);
+  const manifest = JSON.parse(
+    manifestBytes.toString("utf8"),
+  ) as EvalSnapshotManifest;
+  return { dir: root, manifest, manifestHash: sha256(manifestBytes) };
+}
+
 export async function loadEvalSnapshot(
   cyclesRoot: string,
   cycleId: string,
@@ -225,11 +293,7 @@ export async function loadEvalSnapshot(
   if (!existsSync(path.join(dir, MANIFEST_FILE))) {
     return null;
   }
-  const manifestBytes = await readFile(path.join(dir, MANIFEST_FILE));
-  const manifest = JSON.parse(
-    manifestBytes.toString("utf8"),
-  ) as EvalSnapshotManifest;
-  return { dir, manifest, manifestHash: sha256(manifestBytes) };
+  return await readEvalSnapshotManifest(dir);
 }
 
 export async function findPreviousEvalSnapshot(input: {

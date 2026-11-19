@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BUDGETS,
+  DEFAULT_EVOLUTION_BUDGET_SHARE,
   cnyToMicro,
+  evolutionBudgetLimit,
+  evolutionBudgetPurpose,
   is80Percent,
+  isEvolutionBudgetPurpose,
   loadBudgetPolicy,
+  loadEvolutionBudgetShare,
   microToCny,
   runBudgetSpecSchema,
   utcDayKey,
@@ -85,6 +90,40 @@ describe("budget contracts", () => {
     expect(overridden.day.cny).toBe(10);
     expect(overridden.month.cny).toBe(50);
     expect(overridden.workspace.cny).toBe(80);
+  });
+
+  it("sizes the evolution subject at 10% of the production month budget", () => {
+    const defaults = loadBudgetPolicy({});
+    expect(loadEvolutionBudgetShare({})).toBe(DEFAULT_EVOLUTION_BUDGET_SHARE);
+    expect(DEFAULT_EVOLUTION_BUDGET_SHARE).toBe(0.1);
+    expect(evolutionBudgetLimit(defaults.month, 0.1)).toEqual({
+      cny: DEFAULT_BUDGETS.monthCny * 0.1,
+    });
+
+    const overridden = loadBudgetPolicy({
+      KIT_BUDGET_MONTH_CNY: "50",
+      KIT_BUDGET_MONTH_TOKENS: "10000",
+    });
+    expect(
+      evolutionBudgetLimit(overridden.month, loadEvolutionBudgetShare({})),
+    ).toEqual({ cny: 5, tokens: 1000 });
+
+    expect(
+      loadEvolutionBudgetShare({ KIT_EVOLUTION_BUDGET_SHARE: "0.05" }),
+    ).toBe(0.05);
+    // Out-of-range or garbage values fall back to D-38's 10%.
+    expect(loadEvolutionBudgetShare({ KIT_EVOLUTION_BUDGET_SHARE: "2" })).toBe(
+      0.1,
+    );
+    expect(
+      loadEvolutionBudgetShare({ KIT_EVOLUTION_BUDGET_SHARE: "nope" }),
+    ).toBe(0.1);
+  });
+
+  it("tags evolution reservations by phase", () => {
+    expect(evolutionBudgetPurpose("score")).toBe("evolution:score");
+    expect(isEvolutionBudgetPurpose("evolution:canary")).toBe(true);
+    expect(isEvolutionBudgetPurpose("planning")).toBe(false);
   });
 
   it("parses explicit per-stage and per-agent overrides", () => {

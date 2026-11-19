@@ -62,6 +62,7 @@
         "@kit/engine": "workspace:*",
         "@kit/evolution": "workspace:*",
         "@kit/iteration": "workspace:*",
+        "@kit/job": "workspace:*",
         "@kit/model": "workspace:*",
         "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
@@ -143,6 +144,7 @@
       "dependencies": {
         "@kit/core": "workspace:*",
         "@kit/evolution": "workspace:*",
+        "@kit/job": "workspace:*",
         "@kit/manager": "workspace:*",
         "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
@@ -240,11 +242,16 @@
         "@kit/store": "workspace:*",
       },
     },
+    "packages/market": {
+      "name": "@kit/market",
+      "version": "0.9.0",
+    },
     "packages/model": {
       "name": "@kit/model",
       "version": "0.9.0",
       "dependencies": {
         "@kit/bootstrap": "workspace:*",
+        "@kit/core": "workspace:*",
       },
     },
     "packages/ops": {
@@ -286,6 +293,8 @@
       "name": "@kit/source",
       "version": "0.9.0",
       "dependencies": {
+        "@kit/core": "workspace:*",
+        "@kit/market": "workspace:*",
         "yaml": "^2.6.1",
         "zod": "^3.24.1",
       },
@@ -341,6 +350,7 @@
       "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
+        "@kit/market": "workspace:*",
         "@kit/pack": "workspace:*",
         "yaml": "^2.6.1",
       },
@@ -638,6 +648,8 @@
     "@kit/job": ["@kit/job@workspace:packages/job"],
 
     "@kit/manager": ["@kit/manager@workspace:packages/manager"],
+
+    "@kit/market": ["@kit/market@workspace:packages/market"],
 
     "@kit/model": ["@kit/model@workspace:packages/model"],
 

@@ -1,6 +1,12 @@
 "use client";
 
-import { PixelWorkpiece } from "@/components/approvals/pixel-workpiece";
+import {
+  PixelMotionProvider,
+  PixelMotionToggle,
+  PixelRoom,
+  PixelWorkpiece,
+  usePixelMotion,
+} from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,25 +41,7 @@ const STATION_I18N: Record<
   deliver: "stationDeliver",
 };
 
-/**
- * Factory view of the approvals surface: the pixel conveyor from #148, driven
- * by the shared world stream. Selection, decisions and the drawer live in
- * `ApprovalsSurface` so both views stay in lockstep.
- */
-export function FactoryView({
-  items,
-  gate,
-  activeId,
-  pending,
-  refreshing,
-  shift,
-  onActivate,
-  onOpen,
-  onApprove,
-  onReject,
-  onBatch,
-  onRefresh,
-}: {
+interface FactoryViewProps {
   items: FactoryItem[];
   /** Approvals ordered by risk: the conveyor order and keyboard order. */
   gate: FactoryItem[];
@@ -67,10 +55,43 @@ export function FactoryView({
   onReject: (item: FactoryItem) => void;
   onBatch: () => void;
   onRefresh: () => void;
-}) {
+}
+
+/**
+ * Factory view of the approvals surface: the pixel conveyor from #148, driven
+ * by the shared world stream. Selection, decisions and the drawer live in
+ * `ApprovalsSurface` so both views stay in lockstep.
+ *
+ * The view is wrapped in the shared motion provider so the belt treads, the
+ * workpiece palette and the reduced-motion switch are the same primitives the
+ * office uses (97 §3.1, 89 F-5).
+ */
+export function FactoryView(props: FactoryViewProps) {
+  return (
+    <PixelMotionProvider>
+      <FactoryViewBody {...props} />
+    </PixelMotionProvider>
+  );
+}
+
+function FactoryViewBody({
+  items,
+  gate,
+  activeId,
+  pending,
+  refreshing,
+  shift,
+  onActivate,
+  onOpen,
+  onApprove,
+  onReject,
+  onBatch,
+  onRefresh,
+}: FactoryViewProps) {
   const t = useTranslations("factory");
   const riskT = useTranslations("risk");
   const locale = useLocale();
+  const { enabled: motionEnabled } = usePixelMotion();
   const blocked = useMemo(
     () => items.filter((item) => item.kind === "failed"),
     [items],
@@ -84,6 +105,7 @@ export function FactoryView({
         <span className="hidden font-mono text-[10px] uppercase text-zinc-500 sm:inline">
           {t("shortcuts")}
         </span>
+        <PixelMotionToggle />
         <Button
           size="sm"
           variant="outline"
@@ -133,7 +155,7 @@ export function FactoryView({
         ))}
       </div>
 
-      <section className="rounded-none border-2 border-zinc-700 bg-[#0d1117] p-3 shadow-[4px_4px_0_#000]">
+      <PixelRoom className="border-zinc-700 bg-[#0d1117] p-3 shadow-[4px_4px_0_#000]">
         <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-zinc-500">
           <span>{t("conveyor")}</span>
           <span>
@@ -142,7 +164,10 @@ export function FactoryView({
         </div>
 
         <div
-          className="factory-belt hidden min-h-44 items-stretch gap-2 overflow-x-auto border-y-2 border-zinc-800 p-3 md:flex"
+          className={cn(
+            "factory-belt hidden min-h-44 items-stretch gap-2 overflow-x-auto border-y-2 border-zinc-800 p-3 md:flex",
+            motionEnabled && "factory-belt-run",
+          )}
           aria-live="polite"
         >
           {gate.length === 0 ? (
@@ -326,7 +351,7 @@ export function FactoryView({
             <span className="text-xs text-zinc-600">{t("empty")}</span>
           )}
         </div>
-      </section>
+      </PixelRoom>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="border-2 border-zinc-800 bg-[#0d1117] p-3">

@@ -4,8 +4,8 @@ import type { StampOutcome } from "@/lib/pixel-events";
 import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
-import { usePixelMotion } from "./motion-preference";
 import { PIXEL_GREEN, PIXEL_RED } from "./palette";
+import { usePixelMotion } from "./use-pixel-motion";
 
 /**
  * Gate stamp: presses once per `trigger` and leaves its mark.

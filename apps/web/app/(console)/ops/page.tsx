@@ -2,6 +2,7 @@ import { PageHeader } from "@/components/kit/page-header";
 import { OpsSurface } from "@/components/ops/ops-surface";
 import { loadAutopilotOverview } from "@/lib/autopilot";
 import { loadBudgetOverview } from "@/lib/budgets";
+import { loadCapacityOverview } from "@/lib/capacity";
 import { loadActiveModes, loadDegradationAudit } from "@/lib/degradation";
 import { loadKillSwitchState } from "@/lib/kill-switch";
 import { loadLkgOverview } from "@/lib/lkg";
@@ -28,6 +29,7 @@ export default async function OpsPage({
     killSwitch,
     autopilot,
     lkg,
+    capacity,
   ] = await Promise.all([
     searchParams,
     getTranslations("opsSurface"),
@@ -38,6 +40,7 @@ export default async function OpsPage({
     loadKillSwitchState(),
     loadAutopilotOverview(),
     loadLkgOverview(),
+    loadCapacityOverview(),
   ]);
 
   return (
@@ -59,6 +62,7 @@ export default async function OpsPage({
           killSwitch,
           autopilot,
           lkg,
+          capacity,
         }}
         operator={currentOperatorId()}
         initialSection={resolveOpsSection(section)}

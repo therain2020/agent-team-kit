@@ -28,7 +28,7 @@ const AGENT_ID = /^[a-z][a-z0-9-]*$/;
 const WORKFLOW_ID = /^[a-z][a-z0-9-]*$/;
 const WORKFLOW_FILE = /^workflows\/[a-z][a-z0-9-]*\.yaml$/;
 const ALLOWED_FILES =
-  /^(team\.yaml|iteration\.yaml|autopilot\.yaml|README\.md|agents\/[^/]+\.md|workflows\/[^/]+\.yaml|policies\/[^/]+\.yaml|evals\/[^/]+\.yaml|skills\/[^/]+\/SKILL\.md)$/;
+  /^(team\.yaml|iteration\.yaml|autopilot\.yaml|README\.md|agents\/[^/]+\.md|workflows\/[^/]+\.yaml|policies\/[^/]+\.yaml|evals\/(?:visible\/)?[^/]+\.yaml|skills\/[^/]+\/SKILL\.md)$/;
 
 export type PackTemplate = string;
 

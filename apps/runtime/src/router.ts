@@ -3,9 +3,8 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   type EventEnvelope,
-  cnyToMicro,
   isExecutionBlocked,
-  newId,
+  priorityClassFor,
   resolveKillSwitch,
 } from "@kit/core";
 import { activeModeForWorkspace, auditBlockedExecution } from "@kit/engine";
@@ -14,17 +13,11 @@ import {
   type EvolutionRepository,
   selectRunVariant,
 } from "@kit/evolution";
-import {
-  type LoadedPack,
-  buildPackRun,
-  loadPack,
-  simulatePack,
-} from "@kit/pack";
+import { JobError, dedupeRunId, startJob } from "@kit/job";
+import { type LoadedPack, loadPack, simulatePack } from "@kit/pack";
 import type { initStore } from "@kit/store";
-import { type createTemporalClient, taskQueue } from "@kit/workflow";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
-type Temporal = Awaited<ReturnType<typeof createTemporalClient>>;
 
 export interface RouteResult {
   started: Array<{
@@ -106,11 +99,9 @@ export class EvolutionRunVariantSelector implements RunVariantSelector {
 
 export class EventRouter {
   private cache?: { at: number; packs: LoadedPack[] };
-  private variantCache = new Map<string, { at: number; pack: LoadedPack }>();
 
   constructor(
     private readonly store: Store,
-    private readonly temporal: Temporal,
     private readonly repoRoot: string,
     private readonly variantSelector: RunVariantSelector | null = null,
     private readonly workspaceId = "default",
@@ -214,68 +205,58 @@ export class EventRouter {
         }
 
         try {
-          const runId = newId("run");
+          const dedupeKey = `event:${this.workspaceId}:${event.eventId}:${workflow.id}`;
+          const runId = dedupeRunId(dedupeKey);
           const selected = this.variantSelector
             ? await this.variantSelector.select(this.workspaceId, runId)
             : null;
-          const source = selected
-            ? await this.loadVariantPack(selected.path)
-            : pack;
-          const built = await buildPackRun(source, {
-            workflow: workflow.id,
-            input: JSON.stringify({ event, payload: payload ?? null }),
-            runMode:
-              process.env.KIT_EVENT_RUN_MODE === "live" ? "LIVE" : "DRY_RUN",
-            stub: process.env.KIT_MODEL_MODE === "stub",
-            runId,
-            workspaceId: this.workspaceId,
-            ...(selected
-              ? {
-                  variant: {
-                    role: "canary" as const,
-                    variantId: selected.variantId,
-                    trafficPercent: selected.trafficPercent,
-                  },
-                }
-              : {}),
-          });
-          built.input.eventId = event.eventId;
-
-          const simulated = simulatePack(pack).workflows.find(
-            (item) => item.id === workflow.id,
+          const runMode =
+            process.env.KIT_EVENT_RUN_MODE === "live" ? "LIVE" : "DRY_RUN";
+          const started = await startJob(
+            this.store,
+            {
+              kind: "packRun",
+              packDir: selected ? selected.path : pack.dir,
+              workflow: workflow.id,
+              evidenceText: JSON.stringify({ event, payload: payload ?? null }),
+              runId,
+              dedupeKey,
+              eventId: event.eventId,
+              workspaceId: this.workspaceId,
+              runMode,
+              stub: process.env.KIT_MODEL_MODE === "stub",
+              // Rule 10 event priority → PriorityClass (60 §2). Explicit
+              // payload priority/tier wins; non-LIVE event runs fall back to P3.
+              priority: priorityClassFor({
+                priority: eventPriorityOf(payload),
+                runMode,
+              }),
+              origin: {
+                kind: "event",
+                triggerId: `${packName}:${workflow.id}`,
+                triggerRunId: event.eventId,
+                actor: "trigger:event-router",
+              },
+              ...(selected
+                ? {
+                    variant: {
+                      role: "canary" as const,
+                      variantId: selected.variantId,
+                      trafficPercent: selected.trafficPercent,
+                    },
+                  }
+                : {}),
+            },
+            { repoRoot: this.repoRoot, allowPackOutsideRoot: true },
           );
-          const admitted = await this.store.budgetService.admitRun({
-            workspaceId: built.input.workspaceId,
-            runId: built.input.runId,
-            stages: built.input.stages.map((stage) => ({
-              stageId: stage.stageId,
-              stageName: stage.stageName,
-              ...(stage.agentId ? { agentId: stage.agentId } : {}),
-            })),
-            estimateCnyMicro: cnyToMicro(simulated?.totalCostCny ?? 0),
-            estimateTokens:
-              simulated?.stages.reduce(
-                (sum, stage) =>
-                  sum +
-                  stage.estimatedInputTokens +
-                  stage.estimatedOutputTokens,
-                0,
-              ) ?? 0,
-          });
-          if (!admitted.ok) {
+          if (started.deduped) {
             result.skipped.push({
               pack: packName,
               workflow: workflow.id,
-              reason: admitted.reason ?? "budget exceeded",
+              reason: "duplicate event",
             });
             continue;
           }
-
-          await this.temporal.client.workflow.start("packWorkflow", {
-            taskQueue,
-            workflowId: `pack-event-${event.eventId}-${workflow.id}`,
-            args: [built.input],
-          });
           if (used) {
             used.runs += 1;
             used.costCny += estimate;
@@ -283,13 +264,19 @@ export class EventRouter {
           result.started.push({
             pack: packName,
             workflow: workflow.id,
-            runId: built.input.runId,
+            runId: started.jobId,
             ...(selected ? { variant: "canary" as const } : {}),
           });
         } catch (error) {
           const message =
             error instanceof Error ? error.message : String(error);
-          if (
+          if (error instanceof JobError && error.code === "budget_exceeded") {
+            result.skipped.push({
+              pack: packName,
+              workflow: workflow.id,
+              reason: message,
+            });
+          } else if (
             /already started|WorkflowExecutionAlreadyStarted/i.test(message)
           ) {
             result.skipped.push({
@@ -340,19 +327,6 @@ export class EventRouter {
       total += manifest?.cost.amount ?? 0;
     }
     return total;
-  }
-
-  private async loadVariantPack(dir: string): Promise<LoadedPack> {
-    const cached = this.variantCache.get(dir);
-    if (cached && Date.now() - cached.at < 30_000) {
-      return cached.pack;
-    }
-    const loaded = await loadPack(dir);
-    if (!loaded.ok) {
-      throw new Error(`canary variant invalid: ${loaded.errors.join("; ")}`);
-    }
-    this.variantCache.set(dir, { at: Date.now(), pack: loaded });
-    return loaded;
   }
 
   private async loadPacks(): Promise<LoadedPack[]> {
@@ -448,6 +422,24 @@ function nonNegativeNumber(value: string | undefined): number | undefined {
 
 function round4(value: number): number {
   return Math.round(value * 10000) / 10000;
+}
+
+/**
+ * Reads the priority hint carried by an event payload (rule 10 contract). The
+ * envelope itself has no priority field, so this stays defensive.
+ */
+export function eventPriorityOf(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const key of ["priority", "priorityClass", "tier"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 export function triggerMatches(pattern: string, type: string): boolean {

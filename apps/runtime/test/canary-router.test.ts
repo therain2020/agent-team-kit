@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { EventEnvelope } from "@kit/core";
 import { type CanaryState, bucketForRun } from "@kit/evolution";
+import { initStore, loadStoreConfig } from "@kit/store";
 import type { PackRunInput } from "@kit/workflow";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -12,8 +13,12 @@ import {
 } from "../src/router";
 
 const roots: string[] = [];
+const closers: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
+  for (const close of closers.splice(0)) {
+    await close().catch(() => undefined);
+  }
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -37,6 +42,18 @@ async function setup() {
   return { root, candidateDir };
 }
 
+async function sqliteStore(root: string) {
+  const store = await initStore(
+    loadStoreConfig({
+      KIT_RUNTIME_MODE: "local",
+      KIT_HOME: path.join(root, ".kit"),
+      KIT_BLOB_ROOT: path.join(root, "blobs"),
+    }),
+  );
+  closers.push(() => store.close());
+  return store;
+}
+
 function event(): EventEnvelope {
   return {
     eventId: "evt_canary_test",
@@ -53,41 +70,29 @@ function event(): EventEnvelope {
 
 function routerFor(
   root: string,
-  started: PackRunInput[],
+  store: Awaited<ReturnType<typeof initStore>>,
   select: (
     workspaceId: string,
     runId: string,
   ) => Promise<RunVariantSelection | null>,
 ): EventRouter {
-  const store = {
-    runs: { list: async () => [] },
-    degradation: { listActive: async () => [] },
-    killSwitches: { listActive: async () => [] },
-    budgetService: { admitRun: async () => ({ ok: true }) },
-  };
-  const temporal = {
-    client: {
-      workflow: {
-        start: async (_name: string, options: { args: [PackRunInput] }) => {
-          started.push(options.args[0]);
-        },
-      },
-    },
-  };
-  return new EventRouter(
-    store as never,
-    temporal as never,
-    root,
-    { select },
-    "default",
-  );
+  return new EventRouter(store, root, { select }, "default");
+}
+
+async function runInput(
+  store: Awaited<ReturnType<typeof initStore>>,
+  runId: string,
+): Promise<PackRunInput> {
+  const request = await store.runRequests.find(runId);
+  expect(request).not.toBeNull();
+  return JSON.parse(request?.payload ?? "{}") as PackRunInput;
 }
 
 describe("runtime canary routing", () => {
   it("starts bucketed runs from the candidate variant", async () => {
     const { root, candidateDir } = await setup();
-    const started: PackRunInput[] = [];
-    const router = routerFor(root, started, async () => ({
+    const store = await sqliteStore(root);
+    const router = routerFor(root, store, async () => ({
       path: candidateDir,
       variantId: "var_canary",
       trafficPercent: 20,
@@ -98,32 +103,57 @@ describe("runtime canary routing", () => {
     expect(result.errors).toEqual([]);
     expect(result.started).toHaveLength(1);
     expect(result.started[0]?.variant).toBe("canary");
-    const input = started[0];
-    expect(input?.workspaceId).toBe("default");
-    expect(input?.variant).toEqual({
+    const input = await runInput(store, result.started[0]?.runId ?? "");
+    expect(input.workspaceId).toBe("default");
+    expect(input.variant).toEqual({
       role: "canary",
       variantId: "var_canary",
       trafficPercent: 20,
     });
     expect(
-      input?.stages.find((stage) => stage.stageName === "summarize")
+      input.stages.find((stage) => stage.stageName === "summarize")
         ?.instructions,
     ).toContain("CANARY-MARKER");
   });
 
-  it("keeps the live pack when the selector declines", async () => {
+  it("routes through startJob with an event origin and the triggering eventId", async () => {
     const { root } = await setup();
-    const started: PackRunInput[] = [];
-    const router = routerFor(root, started, async () => null);
+    const store = await sqliteStore(root);
+    const router = routerFor(root, store, async () => null);
 
-    await router.route(event(), { signal: "test" });
+    const result = await router.route(event(), { signal: "test" });
 
-    const input = started[0];
-    expect(input?.variant).toBeUndefined();
+    expect(result.errors).toEqual([]);
+    const started = result.started[0];
+    const input = await runInput(store, started?.runId ?? "");
+    expect(input.variant).toBeUndefined();
+    expect(input.eventId).toBe("evt_canary_test");
+    expect(input.origin).toEqual({
+      kind: "event",
+      triggerId: "tech-radar:flash-radar",
+      triggerRunId: "evt_canary_test",
+    });
     expect(
-      input?.stages.find((stage) => stage.stageName === "summarize")
+      input.stages.find((stage) => stage.stageName === "summarize")
         ?.instructions,
     ).not.toContain("CANARY-MARKER");
+  });
+
+  it("dedupes a replayed event to the first run", async () => {
+    const { root } = await setup();
+    const store = await sqliteStore(root);
+    const router = routerFor(root, store, async () => null);
+
+    const first = await router.route(event(), { signal: "test" });
+    const second = await router.route(event(), { signal: "test" });
+
+    expect(first.started).toHaveLength(1);
+    expect(second.started).toHaveLength(0);
+    expect(second.skipped).toContainEqual({
+      pack: "tech-radar",
+      workflow: "flash-radar",
+      reason: "duplicate event",
+    });
   });
 });
 

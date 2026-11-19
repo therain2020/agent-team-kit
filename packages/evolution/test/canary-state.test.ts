@@ -233,7 +233,7 @@ describe("canary state machine", () => {
       freeze: false,
     });
     await writeFile(
-      path.join(snapshot.dir, "evals", "rubrics.yaml"),
+      path.join(snapshot.dir, "evals", "visible", "rubrics.yaml"),
       "tampered: true\n",
       "utf8",
     );

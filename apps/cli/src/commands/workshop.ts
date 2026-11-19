@@ -1,5 +1,6 @@
 import { CliError } from "@kit/core";
 import {
+  type WorkshopManifest,
   type WorkshopPublishResult,
   installWorkshop,
   previewWorkshop,
@@ -139,15 +140,20 @@ export function registerWorkshop(program: Command): void {
       "Generate or validate workshop.yaml and print a publish checklist (never pushes)",
     )
     .option("--check", "validate an existing workshop.yaml without writing")
+    .option(
+      "--kind <kind>",
+      "asset kind when the directory has no workshop.yaml (pack|pipeline|agent|workflow|toolpack|skillpack|template)",
+    )
     .option("--json", "print machine-readable JSON")
     .action(
       async (
         dir: string | undefined,
-        options: { check?: boolean; json?: boolean },
+        options: { check?: boolean; kind?: string; json?: boolean },
       ) => {
         const json = wantsJson(options);
         const result = await publishWorkshop({
           dir: dir ?? process.cwd(),
+          kind: options.kind as WorkshopManifest["kind"] | undefined,
           write: !options.check,
         });
         if (!result.ok) {
@@ -175,8 +181,13 @@ function printPublish(result: WorkshopPublishResult): void {
   const status = result.ok
     ? "✔ publish check passed"
     : "✖ publish check failed";
+  const subject = result.manifest
+    ? `${result.manifest.kind} ${result.manifest.name}@${result.manifest.version}`
+    : `${result.kind ?? "unknown"} (no manifest)`;
   console.log(
-    `${status} · ${result.manifest.kind} ${result.manifest.name}@${result.manifest.version}`,
+    `${status} · ${subject}${
+      result.publisher ? ` · ${result.publisher} publisher` : ""
+    }`,
   );
   console.log(
     `manifest: ${result.manifestPath}${
@@ -188,9 +199,11 @@ function printPublish(result: WorkshopPublishResult): void {
     }`,
   );
   console.log(`risk: ${result.risk.level} — ${result.risk.reasons.join(", ")}`);
-  console.log(
-    `permissions: network=${result.permissions.network ? "yes" : "no"} filesystem=${result.permissions.filesystem} code=${result.permissions.code ? "yes" : "no"}`,
-  );
+  if (result.permissions) {
+    console.log(
+      `permissions: network=${result.permissions.network ? "yes" : "no"} filesystem=${result.permissions.filesystem} code=${result.permissions.code ? "yes" : "no"}`,
+    );
+  }
   console.log(`files (${result.files.length}):`);
   for (const file of result.files) {
     console.log(`  ${file.path}  ${file.sha256}  ${file.bytes} bytes`);

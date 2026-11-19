@@ -1,19 +1,15 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   type AutopilotConfig,
   type AutopilotSchedule,
-  cnyToMicro,
-  eventEnvelopeSchema,
   isAutoApproveOriginEligible,
-  newId,
-  resolveIterationApplyMode,
   resolveKillSwitch,
   utcDayKey,
 } from "@kit/core";
 import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
+import { JobError, startJob } from "@kit/job";
 import {
   backfillApprovals,
   decideApprovalRecord,
@@ -22,19 +18,14 @@ import {
   recordDecision,
 } from "@kit/manager";
 import { getActiveAutonomyPreset, getOpsGate } from "@kit/ops";
-import {
-  type LoadedPack,
-  buildPackRun,
-  loadPack,
-  simulatePack,
-} from "@kit/pack";
+import { type LoadedPack, loadPack, simulatePack } from "@kit/pack";
 import {
   appendOp,
   initStore,
   loadStoreConfig,
   withStoreLock,
 } from "@kit/store";
-import { createTemporalClient, taskQueue } from "@kit/workflow";
+import { createTemporalClient } from "@kit/workflow";
 import { nextCronOccurrence } from "./cron";
 import { applyAutonomyPreset } from "./preset";
 import { type AutopilotState, ensureState, saveState } from "./state";
@@ -161,12 +152,9 @@ export async function runAutopilotTick(
                 now,
                 runningWorkflows,
                 dryRun: options.dryRun ?? false,
+                repoRoot,
                 store,
                 result,
-                getTemporal: async () => {
-                  temporal ??= await createTemporalClient();
-                  return temporal;
-                },
               });
 
               await processIterations({
@@ -174,12 +162,9 @@ export async function runAutopilotTick(
                 state,
                 now,
                 dryRun: options.dryRun ?? false,
+                repoRoot,
                 store,
                 result,
-                getTemporal: async () => {
-                  temporal ??= await createTemporalClient();
-                  return temporal;
-                },
               });
 
               await processAutoApprovals({
@@ -340,11 +325,11 @@ async function processSchedules(input: {
   now: Date;
   runningWorkflows: Set<string>;
   dryRun: boolean;
+  repoRoot: string;
   store: Awaited<ReturnType<typeof initStore>>;
   result: TickResult;
-  getTemporal: () => Promise<Awaited<ReturnType<typeof createTemporalClient>>>;
 }): Promise<boolean> {
-  const { pack, state, now, result } = input;
+  const { pack, state, now, repoRoot, result } = input;
   let changed = false;
   const simulation = simulatePack(pack.loaded);
 
@@ -371,6 +356,7 @@ async function processSchedules(input: {
     if (Number.isNaN(nextAt.getTime()) || nextAt.getTime() > now.getTime()) {
       continue;
     }
+    const slot = nextValue;
 
     try {
       state.nextRuns[nextKey] = nextCronOccurrence(
@@ -397,12 +383,6 @@ async function processSchedules(input: {
       (workflow) => workflow.id === schedule.workflow,
     );
     const estimate = simulated?.totalCostCny ?? 0;
-    const estimateTokens =
-      simulated?.stages.reduce(
-        (sum, stage) =>
-          sum + stage.estimatedInputTokens + stage.estimatedOutputTokens,
-        0,
-      ) ?? 0;
     if (!withinBudget(state, schedule, estimate)) {
       result.errors.push(
         `${pack.dirName}/${schedule.id}: skipped, daily budget reached`,
@@ -425,50 +405,30 @@ async function processSchedules(input: {
           ? schedule.inputFile
           : path.resolve(pack.dir, schedule.inputFile)
         : undefined;
-      const built = await buildPackRun(pack.loaded, {
-        workflow: schedule.workflow,
-        inputFile,
-        runMode: schedule.mode,
-        stub: process.env.KIT_MODEL_MODE === "stub",
-        origin: { kind: "schedule", triggerId: schedule.id },
-      });
-      const admitted = await input.store.budgetService.admitRun({
-        workspaceId: built.input.workspaceId,
-        runId: built.input.runId,
-        stages: built.input.stages.map((stage) => ({
-          stageId: stage.stageId,
-          stageName: stage.stageName,
-          ...(stage.agentId ? { agentId: stage.agentId } : {}),
-        })),
-        estimateCnyMicro: cnyToMicro(estimate),
-        estimateTokens,
-      });
-      if (!admitted.ok) {
+      const started = await startJob(
+        input.store,
+        {
+          kind: "packRun",
+          packDir: pack.dir,
+          workflow: schedule.workflow,
+          ...(inputFile ? { inputFile } : {}),
+          runMode: schedule.mode,
+          stub: process.env.KIT_MODEL_MODE === "stub",
+          dedupeKey: `autopilot:${pack.dirName}:${schedule.id}:${slot}`,
+          origin: {
+            kind: "schedule",
+            triggerId: schedule.id,
+            actor: "policy:autopilot",
+          },
+        },
+        { repoRoot },
+      );
+      if (started.deduped) {
         result.errors.push(
-          `${pack.dirName}/${schedule.id}: skipped, ${admitted.reason ?? "budget exceeded"}`,
+          `${pack.dirName}/${schedule.id}: skipped, already launched for slot ${slot}`,
         );
         continue;
       }
-      const timestamp = new Date().toISOString();
-      const event = eventEnvelopeSchema.parse({
-        eventId: built.input.eventId,
-        type: built.eventType,
-        schemaVersion: "1.0",
-        occurredAt: timestamp,
-        receivedAt: timestamp,
-        workspaceId: built.input.workspaceId,
-        idempotencyKey: `autopilot:${pack.dirName}:${schedule.id}:${built.input.runId}`,
-        traceId: newId("trc"),
-        payloadRef: "memory://autopilot",
-      });
-      await input.store.events.insert(event);
-
-      const { client } = await input.getTemporal();
-      await client.workflow.start("packWorkflow", {
-        taskQueue,
-        workflowId: `pack-${built.input.runId}`,
-        args: [built.input],
-      });
       state.runsToday += 1;
       state.spentToday =
         Math.round((state.spentToday + estimate) * 10000) / 10000;
@@ -476,10 +436,15 @@ async function processSchedules(input: {
       result.launched.push({
         pack: pack.dirName,
         workflow: schedule.workflow,
-        runId: built.input.runId,
+        runId: started.jobId,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message =
+        error instanceof JobError && error.code === "budget_exceeded"
+          ? `skipped, ${error.message}`
+          : error instanceof Error
+            ? error.message
+            : String(error);
       state.lastError = message;
       result.errors.push(`${pack.dirName}/${schedule.id}: ${message}`);
     }
@@ -493,11 +458,11 @@ async function processIterations(input: {
   state: AutopilotState;
   now: Date;
   dryRun: boolean;
+  repoRoot: string;
   store: Awaited<ReturnType<typeof initStore>>;
   result: TickResult;
-  getTemporal: () => Promise<Awaited<ReturnType<typeof createTemporalClient>>>;
 }): Promise<boolean> {
-  const { pack, state, now, store, result } = input;
+  const { pack, state, now, repoRoot, store, result } = input;
   let changed = false;
 
   for (const iteration of pack.config.iterations) {
@@ -575,68 +540,48 @@ async function processIterations(input: {
     }
 
     const dedupeKey = `autopilot:${pack.dirName}:${iteration.id}:${slot}`;
-    const workflowId = `iteration-${WORKSPACE_ID}-${hash(dedupeKey)}`;
-    const iterationId = newId("it");
     try {
-      const admitted = await store.budgetService.admitRun({
-        workspaceId: WORKSPACE_ID,
-        runId: iterationId,
-        estimateCnyMicro: 0,
-        estimateTokens: 0,
-      });
-      if (!admitted.ok) {
-        result.errors.push(
-          `${pack.dirName}/${iteration.id}: skipped, ${admitted.reason ?? "budget exceeded"}`,
-        );
-        continue;
-      }
-
-      const { client } = await input.getTemporal();
-      const handle = client.workflow.getHandle(workflowId);
-      try {
-        await handle.describe();
+      const started = await startJob(
+        store,
+        {
+          kind: "iteration",
+          packDir: pack.dir,
+          goal: iteration.goal,
+          ...(iteration.acceptance ? { acceptance: iteration.acceptance } : {}),
+          maxTasks: iteration.maxTasks,
+          maxRepair: iteration.maxRepair,
+          runMode: iteration.mode,
+          applyMode: iteration.mode === "LIVE" ? iteration.applyMode : "none",
+          ...(iteration.coder ? { coder: iteration.coder } : {}),
+          stub: false,
+          dedupeKey,
+          origin: {
+            kind: "schedule",
+            triggerId: iteration.id,
+            actor: "policy:autopilot",
+          },
+        },
+        { repoRoot },
+      );
+      if (started.deduped) {
         result.errors.push(
           `${pack.dirName}/${iteration.id}: skipped, already launched for slot ${slot}`,
         );
         continue;
-      } catch {
-        // no existing workflow for this slot
       }
-      await client.workflow.start("iterationWorkflow", {
-        taskQueue,
-        workflowId,
-        workflowIdConflictPolicy: "USE_EXISTING",
-        args: [
-          {
-            iterationId,
-            workspaceId: WORKSPACE_ID,
-            packDir: pack.dir,
-            goal: iteration.goal,
-            ...(iteration.acceptance
-              ? { acceptance: iteration.acceptance }
-              : {}),
-            maxTasks: iteration.maxTasks,
-            maxRepair: iteration.maxRepair,
-            runMode: iteration.mode,
-            applyMode: resolveIterationApplyMode(
-              iteration.mode,
-              iteration.applyMode,
-            ),
-            ...(iteration.coder ? { coder: iteration.coder } : {}),
-            stub: false,
-            dedupeKey,
-            origin: { kind: "schedule", triggerId: iteration.id },
-          },
-        ],
-      });
       state.runsToday += 1;
       result.launched.push({
         pack: pack.dirName,
         workflow: `iteration:${iteration.id}`,
-        runId: iterationId,
+        runId: started.jobId,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message =
+        error instanceof JobError && error.code === "budget_exceeded"
+          ? `skipped, ${error.message}`
+          : error instanceof Error
+            ? error.message
+            : String(error);
       state.lastError = message;
       result.errors.push(`${pack.dirName}/${iteration.id}: ${message}`);
     }
@@ -858,8 +803,15 @@ async function processEvolution(input: {
       repo,
     });
     console.log(
-      `[autopilot] evolution cycle ${record.cycleId} decision=${record.decision} candidatePass=${record.candidatePass}`,
+      `[autopilot] evolution cycle ${record.cycleId} decision=${record.decision} budget=${record.budgetStatus} costCny=${record.costCny} candidatePass=${record.candidatePass}`,
     );
+    if (record.budgetStatus === "budget_exceeded") {
+      // A budget gate must never look like a silent skip: the cycle record
+      // carries `budget_exceeded` and the rationale names the blocking phase.
+      console.warn(
+        `[autopilot] evolution cycle ${record.cycleId} stopped by budget: ${record.rationale}`,
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     input.state.lastError = message;
@@ -922,8 +874,4 @@ async function daySpendCny(
 function addCadence(now: Date, cadence: "daily" | "weekly"): string {
   const days = cadence === "weekly" ? 7 : 1;
   return new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
-}
-
-function hash(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }

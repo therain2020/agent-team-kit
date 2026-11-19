@@ -1,8 +1,16 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { newId } from "@kit/core";
-import { createModelGateway } from "@kit/model";
+import {
+  type EvolutionBudgetLedger,
+  type EvolutionBudgetPhase,
+  type EvolutionBudgetStatus,
+  cnyToMicro,
+  evolutionBudgetPurpose,
+  microToCny,
+  newId,
+} from "@kit/core";
+import { calculateCostCny, createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
 import {
   DEFAULT_STATE,
@@ -17,6 +25,15 @@ import {
   proposeVariant,
   scoreVariant,
 } from "./evolve";
+import {
+  DEFAULT_CONVERGENCE_WINDOW,
+  type FreezeOptions,
+  budgetStop,
+  convergenceGuard,
+  freezeEvolution,
+  frozenRationale,
+  loadFreezeState,
+} from "./freeze";
 import type { EvolutionRepository } from "./repository";
 import {
   type EvolutionSignalRef,
@@ -34,6 +51,37 @@ import {
 } from "./snapshot";
 
 export const DEFAULT_CYCLES = "variants/cycles.jsonl";
+
+/**
+ * One ledger reservation/charge for a cycle phase. A cycle makes at most one
+ * reservation per phase (proposal, score, canary), so a phase is charged once
+ * even though it may issue several model calls.
+ */
+export interface EvolutionBudgetRef {
+  phase: EvolutionBudgetPhase;
+  purpose: string;
+  reservationId: string;
+  chargeId: string | null;
+  budgetId: string | null;
+  estimatedCnyMicro: number;
+  estimatedTokens: number;
+  costCnyMicro: number;
+  tokens: number;
+  overshoot: boolean;
+}
+
+/**
+ * Ledger vs cycle reconciliation. `deltaCnyMicro` is the ledger charge total
+ * minus the micro-CNY the cycle committed; it must be zero for a healthy
+ * cycle, otherwise the cycle record and the ledger disagree.
+ */
+export interface EvolutionBudgetReconciliation {
+  ledgerCnyMicro: number;
+  cycleCnyMicro: number;
+  deltaCnyMicro: number;
+  ok: boolean;
+  chargeIds: string[];
+}
 
 export interface EvolutionCycleRecord {
   cycleId: string;
@@ -54,6 +102,15 @@ export interface EvolutionCycleRecord {
   rationale: string;
   autoApplied: boolean;
   createdAt: string;
+  /**
+   * Outcome of the budget gate: admitted, denied, or no ledger attached.
+   * Optional for records written before the ledger existed; runEvolutionCycle
+   * always writes it.
+   */
+  budgetStatus?: EvolutionBudgetStatus;
+  /** One entry per charged phase (proposal / score / canary). */
+  budgetRefs?: EvolutionBudgetRef[];
+  budgetReconciliation?: EvolutionBudgetReconciliation;
   error?: string;
   evalSnapshotPath?: string;
   evalSnapshotHash?: string;
@@ -71,14 +128,23 @@ export interface CycleOptions {
   autoApply?: boolean;
   force?: boolean;
   budgetCny?: number;
+  budgetTokens?: number;
   archivePath?: string;
   signalsRoot?: string;
   iterationsPath?: string;
   cyclesPath?: string;
   statePath?: string;
+  freezePath?: string;
+  convergenceWindow?: number;
   variantsRoot?: string;
   percent?: number;
   repo?: EvolutionRepository;
+  /**
+   * Shared budget ledger. Defaults to `repo.budget`, so store-backed callers
+   * (CLI, autopilot) ledger every cycle without touching their call sites.
+   */
+  budget?: EvolutionBudgetLedger;
+  workspaceId?: string;
   cyclesRoot?: string;
   hiddenEvalsDir?: string;
   freezeSnapshot?: boolean;
@@ -99,12 +165,198 @@ export async function runEvolutionCycle(
   const statePath = options.statePath ?? DEFAULT_STATE;
   const variantsRoot =
     options.variantsRoot ?? path.join(path.dirname(archivePath), "");
+  const freezePath =
+    options.freezePath ?? path.join(variantsRoot, "freeze.json");
   const repo = options.repo;
   if (repo) {
     await repo.ensureReady();
   }
-  const persistCycle = (record: EvolutionCycleRecord) =>
-    finish(cyclesPath, record, repo);
+  const freezeOptions: FreezeOptions = {
+    freezePath,
+    ...(repo ? { repo } : {}),
+  };
+  const convergenceWindow = Math.max(
+    1,
+    options.convergenceWindow ?? DEFAULT_CONVERGENCE_WINDOW,
+  );
+  const loadRecentCycles = async (
+    limit: number,
+  ): Promise<EvolutionCycleRecord[]> =>
+    repo
+      ? await repo.listCycles(limit)
+      : await loadEvolutionCycles(cyclesPath, limit);
+  const ledger = options.budget ?? repo?.budget;
+  const workspaceId = options.workspaceId ?? repo?.workspaceId ?? "default";
+  const cycleBudgetCnyMicro =
+    options.budgetCny === undefined ? null : cnyToMicro(options.budgetCny);
+  let budgetStatus: EvolutionBudgetStatus = ledger ? "admitted" : "unledgered";
+  const budgetRefs: EvolutionBudgetRef[] = [];
+  let cycleChargedCnyMicro = 0;
+  let budgetOvershoot = false;
+
+  const reconcileBudget = async (): Promise<
+    EvolutionBudgetReconciliation | undefined
+  > => {
+    if (!ledger) {
+      return undefined;
+    }
+    try {
+      const ledgerTotals = await ledger.reconcileEvolution({
+        workspaceId,
+        cycleId,
+      });
+      const cycleCnyMicro = budgetRefs.reduce(
+        (sum, ref) => sum + ref.costCnyMicro,
+        0,
+      );
+      const deltaCnyMicro = ledgerTotals.chargedCnyMicro - cycleCnyMicro;
+      return {
+        ledgerCnyMicro: ledgerTotals.chargedCnyMicro,
+        cycleCnyMicro,
+        deltaCnyMicro,
+        ok: deltaCnyMicro === 0,
+        chargeIds: ledgerTotals.chargeIds,
+      };
+    } catch {
+      // Reconciliation is diagnostic; never mask the cycle result with it.
+      return undefined;
+    }
+  };
+  const persistCycle = async (record: EvolutionCycleRecord) => {
+    const reconciliation = await reconcileBudget();
+    const saved = await finish(
+      cyclesPath,
+      {
+        ...record,
+        budgetStatus,
+        budgetRefs: [...budgetRefs],
+        ...(reconciliation ? { budgetReconciliation: reconciliation } : {}),
+      },
+      repo,
+    );
+    if (saved.decision === "rejected" || saved.decision === "failed") {
+      await maybeFreezeOnConvergence({
+        loadRecentCycles,
+        window: convergenceWindow,
+        freezeOptions,
+      });
+    }
+    return saved;
+  };
+  const budgetExceeded = async (
+    phase: EvolutionBudgetPhase | "admission",
+    reason: string,
+    extra: Partial<EvolutionCycleRecord> = {},
+  ) => {
+    budgetStatus = "budget_exceeded";
+    return await persistCycle({
+      ...baseRecord,
+      ...snapshotFields,
+      ...extra,
+      decision: "skipped",
+      costCny: round(microToCny(cycleChargedCnyMicro)),
+      rationale: `budget_exceeded before ${phase}: ${reason}`,
+    });
+  };
+  /**
+   * Reserve before the phase's model calls and commit the actual usage after
+   * it. A denial stops the cycle before any further model call. If a phase
+   * throws after some calls already ran, the usage recorded by the action is
+   * still committed, so a failed cycle never hides spend; a phase that spent
+   * nothing releases its reservation instead.
+   */
+  const runPhase = async <T>(
+    phase: EvolutionBudgetPhase,
+    estimate: { cnyMicro: number; tokens: number },
+    usage: { costCny: number; tokens: number },
+    action: () => Promise<T>,
+  ): Promise<{ ok: true; value: T } | { ok: false; reason: string }> => {
+    if (budgetOvershoot) {
+      // 60 §7.3: an overshoot is booked truthfully and the run pauses instead
+      // of spending further phases against a breached cap.
+      return {
+        ok: false,
+        reason: "a previous phase overshot the evolution budget",
+      };
+    }
+    if (cycleBudgetCnyMicro !== null) {
+      const remaining = cycleBudgetCnyMicro - cycleChargedCnyMicro;
+      if (estimate.cnyMicro > remaining) {
+        return {
+          ok: false,
+          reason: `${phase} estimate ${microToCny(estimate.cnyMicro)} CNY exceeds the remaining cycle budget ${microToCny(Math.max(0, remaining))} CNY`,
+        };
+      }
+    }
+    if (!ledger) {
+      const value = await action();
+      cycleChargedCnyMicro += cnyToMicro(usage.costCny);
+      return { ok: true, value };
+    }
+    const reservation = await ledger.reserveEvolution({
+      workspaceId,
+      cycleId,
+      phase,
+      amountCnyMicro: estimate.cnyMicro,
+      amountTokens: estimate.tokens,
+    });
+    if (!reservation.ok) {
+      return {
+        ok: false,
+        reason: reservation.message ?? "reservation denied",
+      };
+    }
+    const settle = async (): Promise<void> => {
+      const costCnyMicro = cnyToMicro(usage.costCny);
+      const tokens = Math.max(0, Math.round(usage.tokens));
+      if (!reservation.reservationId) {
+        // Zero-amount reservation: nothing was billed, nothing to reconcile.
+        cycleChargedCnyMicro += costCnyMicro;
+        return;
+      }
+      const committed = await ledger.commitEvolution(
+        reservation.reservationId,
+        { cnyMicro: costCnyMicro, tokens },
+      );
+      if (!committed.ok) {
+        throw new Error(
+          committed.message ?? `evolution budget commit failed for ${phase}`,
+        );
+      }
+      budgetRefs.push({
+        phase,
+        purpose: evolutionBudgetPurpose(phase),
+        reservationId: reservation.reservationId,
+        chargeId: committed.chargeId,
+        budgetId: reservation.budgetId,
+        estimatedCnyMicro: estimate.cnyMicro,
+        estimatedTokens: estimate.tokens,
+        costCnyMicro,
+        tokens,
+        overshoot: committed.overshoot,
+      });
+      if (committed.overshoot) {
+        budgetOvershoot = true;
+      }
+      cycleChargedCnyMicro += costCnyMicro;
+    };
+
+    let value: T;
+    try {
+      value = await action();
+    } catch (error) {
+      if (usage.costCny > 0 || usage.tokens > 0) {
+        await settle().catch(() => undefined);
+      } else if (reservation.reservationId) {
+        await ledger
+          .releaseEvolution(reservation.reservationId)
+          .catch(() => undefined);
+      }
+      throw error;
+    }
+    await settle();
+    return { ok: true, value };
+  };
   let snapshotFields: Partial<EvolutionCycleRecord> = {};
   const baseRecord: EvolutionCycleRecord = {
     cycleId,
@@ -125,17 +377,47 @@ export async function runEvolutionCycle(
     rationale: "",
     autoApplied: false,
     createdAt,
+    budgetStatus,
+    budgetRefs: [],
   };
 
   try {
+    // A freeze is a hard stop: no model calls, no variant writes, no snapshot.
+    // It is checked before the evidence file so a missing input cannot mask it.
+    const freeze = await loadFreezeState(freezeOptions);
+    if (freeze.status === "frozen") {
+      return await persistCycle({
+        ...baseRecord,
+        decision: "skipped",
+        rationale: frozenRationale(freeze),
+      });
+    }
+
+    // Convergence is checked before any spend: once the trailing streak of
+    // no-improvement cycles reaches the window, auto-freeze and stop.
+    const recentCycles = await loadRecentCycles(convergenceWindow + 5);
+    const guard = convergenceGuard(recentCycles, convergenceWindow);
+    if (guard.frozen && guard.hint) {
+      const frozen = await freezeEvolution(
+        { kind: "convergence", reason: guard.hint, actor: "system" },
+        freezeOptions,
+      );
+      return await persistCycle({
+        ...baseRecord,
+        decision: "skipped",
+        rationale: frozenRationale(frozen),
+      });
+    }
+
     if (!existsSync(options.inputFile)) {
       throw new Error(`evidence input missing: ${options.inputFile}`);
     }
     if (options.budgetCny !== undefined && options.budgetCny <= 0) {
+      budgetStatus = "budget_exceeded";
       return await persistCycle({
         ...baseRecord,
         decision: "skipped",
-        rationale: "evolution budget is zero",
+        rationale: "budget_exceeded: evolution budget is zero",
       });
     }
 
@@ -211,6 +493,7 @@ export async function runEvolutionCycle(
       ...(options.hiddenEvalsDir
         ? { hiddenEvalsDir: options.hiddenEvalsDir }
         : {}),
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.freezeSnapshot === undefined
         ? {}
         : { freeze: options.freezeSnapshot }),
@@ -239,13 +522,94 @@ export async function runEvolutionCycle(
       "utf8",
     );
     const currentInstructions = stripFrontmatter(current);
-    const proposal = await proposeInstructions({
-      agentId,
-      currentInstructions,
-      signals,
-      hypothesis,
-      stub: options.stub ?? false,
-    });
+    const evidenceChars = fileChars(options.inputFile);
+    const proposalEstimate = estimateEvolutionCall(
+      hypothesis.length + signals.join("").length + currentInstructions.length,
+      2000,
+    );
+    // A cycle scores baseline + candidate (draft + judge each) and evaluates
+    // the canary against one input (champion + variant, draft + judge each).
+    const scoreEstimate = estimateEvolutionCalls(4, evidenceChars, 2048);
+    const canaryEstimate = estimateEvolutionCalls(2, evidenceChars, 2048);
+    const cycleEstimate = {
+      cnyMicro:
+        proposalEstimate.cnyMicro +
+        scoreEstimate.cnyMicro +
+        canaryEstimate.cnyMicro,
+      tokens:
+        proposalEstimate.tokens + scoreEstimate.tokens + canaryEstimate.tokens,
+    };
+    if (ledger) {
+      const admission = await ledger.admitEvolution({
+        workspaceId,
+        estimateCnyMicro: cycleEstimate.cnyMicro,
+        estimateTokens: cycleEstimate.tokens,
+      });
+      if (!admission.ok) {
+        return await budgetExceeded(
+          "admission",
+          admission.reason ?? "evolution budget is not available",
+          { agentId, hypothesis, signals },
+        );
+      }
+    }
+    if (
+      cycleBudgetCnyMicro !== null &&
+      cycleEstimate.cnyMicro > cycleBudgetCnyMicro
+    ) {
+      return await budgetExceeded(
+        "admission",
+        `estimated cycle cost ${microToCny(cycleEstimate.cnyMicro)} CNY exceeds the configured cycle budget ${microToCny(cycleBudgetCnyMicro)} CNY`,
+        { agentId, hypothesis, signals },
+      );
+    }
+
+    const proposalUsage = { costCny: 0, tokens: 0 };
+    const proposalRun = await runPhase(
+      "proposal",
+      proposalEstimate,
+      proposalUsage,
+      async () => {
+        const result = await proposeInstructions({
+          agentId,
+          currentInstructions,
+          signals,
+          hypothesis,
+          stub: options.stub ?? false,
+        });
+        proposalUsage.costCny = result.costCny;
+        proposalUsage.tokens = result.tokens;
+        return result;
+      },
+    );
+    if (!proposalRun.ok) {
+      return await budgetExceeded("proposal", proposalRun.reason, {
+        agentId,
+        hypothesis,
+        signals,
+      });
+    }
+    const proposal = proposalRun.value;
+
+    // Stop-loss #1: the proposal is the first model call; if it already blows
+    // the cycle budget, stop before any variant or score is written.
+    const proposalStop = budgetStop(
+      { costCny: proposal.costCny, tokens: proposal.tokens },
+      { budgetCny: options.budgetCny, budgetTokens: options.budgetTokens },
+    );
+    if (proposalStop) {
+      budgetStatus = "budget_exceeded";
+      return await persistCycle({
+        ...baseRecord,
+        ...snapshotFields,
+        agentId,
+        hypothesis,
+        signals,
+        costCny: round(proposal.costCny),
+        decision: "skipped",
+        rationale: proposalStop,
+      });
+    }
 
     const stamp = cycleId.replace(/[^a-z0-9]/gi, "").slice(-10);
     const baselineDir = path.join(variantsRoot, `cycle-${stamp}-baseline`);
@@ -283,33 +647,59 @@ export async function runEvolutionCycle(
       });
     }
 
-    const baselineScore = await scoreVariant(
-      baseline.dir,
-      loaded.dir,
-      options.inputFile,
-      agentId,
-      {
-        stub: options.stub,
-        archive: archivePath,
-        evalDir: snapshot.dir,
-        ...(repo ? { repo } : {}),
+    // Baseline and candidate scoring are one phase: both must run for the
+    // comparison to mean anything, so they are reserved and charged together.
+    const scoreUsage = { costCny: 0, tokens: 0 };
+    const scoreRun = await runPhase(
+      "score",
+      scoreEstimate,
+      scoreUsage,
+      async () => {
+        const baselineScore = await scoreVariant(
+          baseline.dir,
+          loaded.dir,
+          options.inputFile,
+          agentId,
+          {
+            stub: options.stub,
+            archive: archivePath,
+            evalDir: snapshot.dir,
+            ...(repo ? { repo } : {}),
+          },
+        );
+        scoreUsage.costCny += baselineScore.costCny;
+        scoreUsage.tokens += baselineScore.tokens;
+        const candidateScore = await scoreVariant(
+          candidate.dir,
+          loaded.dir,
+          options.inputFile,
+          agentId,
+          {
+            stub: options.stub,
+            archive: archivePath,
+            evalDir: snapshot.dir,
+            ...(repo ? { repo } : {}),
+          },
+        );
+        scoreUsage.costCny += candidateScore.costCny;
+        scoreUsage.tokens += candidateScore.tokens;
+        return { baselineScore, candidateScore };
       },
     );
-    const candidateScore = await scoreVariant(
-      candidate.dir,
-      loaded.dir,
-      options.inputFile,
-      agentId,
-      {
-        stub: options.stub,
-        archive: archivePath,
-        evalDir: snapshot.dir,
-        ...(repo ? { repo } : {}),
-      },
-    );
+    if (!scoreRun.ok) {
+      return await budgetExceeded("score", scoreRun.reason, {
+        agentId,
+        hypothesis,
+        signals,
+        baselineName: baseline.meta.name,
+        candidateName: candidate.meta.name,
+      });
+    }
+    const { baselineScore, candidateScore } = scoreRun.value;
 
     let costCny =
       proposal.costCny + baselineScore.costCny + candidateScore.costCny;
+    let tokens = proposal.tokens + baselineScore.tokens + candidateScore.tokens;
     const baselineAvg = averageScore(baselineScore);
     const candidateAvg = averageScore(candidateScore);
     const improved = options.stub
@@ -334,6 +724,20 @@ export async function runEvolutionCycle(
       costCny: round(costCny),
     };
 
+    // Stop-loss #2: scoring spent the second and third model calls.
+    const scoreStop = budgetStop(
+      { costCny, tokens },
+      { budgetCny: options.budgetCny, budgetTokens: options.budgetTokens },
+    );
+    if (scoreStop) {
+      budgetStatus = "budget_exceeded";
+      return await persistCycle({
+        ...withScores,
+        decision: "skipped",
+        rationale: scoreStop,
+      });
+    }
+
     if (!improved) {
       return await persistCycle({
         ...withScores,
@@ -350,21 +754,66 @@ export async function runEvolutionCycle(
       ...(repo ? { repo } : {}),
       evalDir: snapshot.dir,
     });
-    const canary = await evaluateCanary([options.inputFile], {
-      stub: options.stub,
-      archive: archivePath,
-      statePath,
-      evalDir: snapshot.dir,
-      ...(repo ? { repo } : {}),
-    });
+    const canaryUsage = { costCny: 0, tokens: 0 };
+    const canaryRun = await runPhase(
+      "canary",
+      canaryEstimate,
+      canaryUsage,
+      async () => {
+        const value = await evaluateCanary([options.inputFile], {
+          stub: options.stub,
+          archive: archivePath,
+          statePath,
+          evalDir: snapshot.dir,
+          ...(repo ? { repo } : {}),
+        });
+        for (const record of [...value.champion, ...value.variant]) {
+          canaryUsage.costCny += record.costCny;
+          canaryUsage.tokens += record.tokens;
+        }
+        return value;
+      },
+    );
+    if (!canaryRun.ok) {
+      return await budgetExceeded("canary", canaryRun.reason, {
+        agentId,
+        hypothesis,
+        signals,
+        baselineName: baseline.meta.name,
+        candidateName: candidate.meta.name,
+        baselinePass: baselineScore.pass,
+        candidatePass: candidateScore.pass,
+        baselineScore: averageScore(baselineScore),
+        candidateScore: averageScore(candidateScore),
+      });
+    }
+    const canary = canaryRun.value;
     costCny += [...canary.champion, ...canary.variant].reduce(
       (sum, record) => sum + record.costCny,
+      0,
+    );
+    tokens += [...canary.champion, ...canary.variant].reduce(
+      (sum, record) => sum + record.tokens,
       0,
     );
     const updated: EvolutionCycleRecord = {
       ...withScores,
       costCny: round(costCny),
     };
+
+    // Stop-loss #3: the canary evaluation is the last spend of the cycle.
+    const canaryStop = budgetStop(
+      { costCny, tokens },
+      { budgetCny: options.budgetCny, budgetTokens: options.budgetTokens },
+    );
+    if (canaryStop) {
+      budgetStatus = "budget_exceeded";
+      return await persistCycle({
+        ...updated,
+        decision: "skipped",
+        rationale: canaryStop,
+      });
+    }
 
     if (canary.decision.rollback) {
       return await persistCycle({
@@ -430,6 +879,8 @@ export async function loadEvolutionCycles(
             ...record,
             signalRefs: record.signalRefs ?? [],
             signalSources: record.signalSources ?? [],
+            budgetStatus: record.budgetStatus ?? "unledgered",
+            budgetRefs: record.budgetRefs ?? [],
           },
         ];
       } catch {
@@ -445,7 +896,7 @@ async function proposeInstructions(input: {
   signals: string[];
   hypothesis?: string;
   stub: boolean;
-}): Promise<{ instructions: string; costCny: number }> {
+}): Promise<{ instructions: string; costCny: number; tokens: number }> {
   if (input.stub || process.env.KIT_MODEL_MODE === "stub") {
     return {
       instructions: deterministicInstructions(
@@ -453,6 +904,7 @@ async function proposeInstructions(input: {
         input.signals,
       ),
       costCny: 0,
+      tokens: 0,
     };
   }
 
@@ -481,7 +933,74 @@ ${input.signals.length > 0 ? input.signals.map((signal) => `- ${signal}`).join("
   return {
     instructions: response.text.trim().slice(0, 4000),
     costCny: response.usage.costCny ?? 0,
+    tokens: response.usage.inputTokens + response.usage.outputTokens,
   };
+}
+
+/**
+ * After a non-improving cycle is recorded, auto-freeze when the trailing
+ * no-improvement streak reaches the convergence window. The freeze is
+ * idempotent with the start-of-cycle guard; failures here must not invalidate
+ * the cycle that was already persisted.
+ */
+async function maybeFreezeOnConvergence(input: {
+  loadRecentCycles: (limit: number) => Promise<EvolutionCycleRecord[]>;
+  window: number;
+  freezeOptions: FreezeOptions;
+}): Promise<void> {
+  try {
+    const current = await loadFreezeState(input.freezeOptions);
+    if (current.status === "frozen") {
+      return;
+    }
+    const recent = await input.loadRecentCycles(input.window + 5);
+    const guard = convergenceGuard(recent, input.window);
+    if (guard.frozen && guard.hint) {
+      await freezeEvolution(
+        { kind: "convergence", reason: guard.hint, actor: "system" },
+        input.freezeOptions,
+      );
+    }
+  } catch {
+    // Freezes are advisory to the cycle record; a failed write must not turn
+    // an already-persisted cycle into a duplicate failure record.
+  }
+}
+
+/**
+ * Conservative upper bound for a single model call, mirroring the engine's
+ * estimator: 1 char ≈ 1 token plus 500 overhead, and the requested output
+ * bound. Sized for the most expensive alias so the reservation never under-reserves.
+ */
+function estimateEvolutionCall(
+  inputChars: number,
+  maxOutputTokens: number,
+): { cnyMicro: number; tokens: number } {
+  return estimateEvolutionCalls(1, inputChars, maxOutputTokens);
+}
+
+function estimateEvolutionCalls(
+  calls: number,
+  inputChars: number,
+  maxOutputTokens: number,
+): { cnyMicro: number; tokens: number } {
+  const inputTokens = Math.max(1, Math.ceil(inputChars) + 500);
+  const outputTokens = Math.max(1, Math.ceil(maxOutputTokens));
+  const count = Math.max(1, Math.ceil(calls));
+  return {
+    cnyMicro: cnyToMicro(
+      calculateCostCny("deepseek-pro", inputTokens, outputTokens) * count,
+    ),
+    tokens: (inputTokens + outputTokens) * count,
+  };
+}
+
+function fileChars(file: string): number {
+  try {
+    return statSync(file).size;
+  } catch {
+    return 0;
+  }
 }
 
 function deterministicInstructions(current: string, signals: string[]): string {

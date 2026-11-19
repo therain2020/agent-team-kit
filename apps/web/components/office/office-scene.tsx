@@ -6,6 +6,7 @@ import {
 } from "@/components/office/factory-floor";
 import { NewMissionDialog } from "@/components/office/new-mission-dialog";
 import { OfficeChat } from "@/components/office/office-chat";
+import { OfficeListView } from "@/components/office/office-list-view";
 import {
   StageDrawer,
   type StageTarget,
@@ -14,12 +15,18 @@ import {
   PixelAgent,
   PixelClockControls,
   PixelMotionProvider,
+  PixelProgress,
   TOOL_BUBBLE_MS,
 } from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SinceLabel, WorldStatus } from "@/components/world/world-status";
+import { factoryRunHref } from "@/lib/approvals-view";
+import {
+  type MissionPrefill,
+  missionPrefillForAgent,
+} from "@/lib/mission-prefill";
 import type { OfficeData } from "@/lib/office";
 import {
   type LiveAgent,
@@ -29,6 +36,7 @@ import {
   deriveLiveMissions,
   missionRunIds,
 } from "@/lib/office-live";
+import type { OfficeView } from "@/lib/office-view";
 import { pixelStateFromStatus } from "@/lib/pixel-events";
 import { useDocumentVisible } from "@/lib/use-document-visible";
 import { useTicker } from "@/lib/use-ticker";
@@ -55,7 +63,13 @@ import {
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 /**
  * Office floor v2 (issue #156): the pixel factory is back, rebuilt on the
@@ -113,6 +127,7 @@ export function OfficeScene(props: {
   initialMessages: UIMessage[];
   stubMode: boolean;
   initialPanel?: "agent" | "chat";
+  initialView?: OfficeView;
 }) {
   return (
     <PixelMotionProvider>
@@ -126,11 +141,13 @@ function OfficeSceneBody({
   initialMessages,
   stubMode,
   initialPanel = "agent",
+  initialView = "floor",
 }: {
   data: OfficeData;
   initialMessages: UIMessage[];
   stubMode: boolean;
   initialPanel?: "agent" | "chat";
+  initialView?: OfficeView;
 }) {
   const t = useTranslations("office");
   const router = useRouter();
@@ -140,6 +157,7 @@ function OfficeSceneBody({
   const [selectedId, setSelectedId] = useState(
     active?.agents[0]?.id ?? "manager",
   );
+  const [view, setView] = useState<OfficeView>(initialView);
   const [locked, setLocked] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tab, setTab] = useState<"agent" | "chat">(initialPanel);
@@ -147,6 +165,9 @@ function OfficeSceneBody({
   const [missionIntent, setMissionIntent] = useState<string | undefined>(
     undefined,
   );
+  const [missionPrefill, setMissionPrefill] = useState<
+    MissionPrefill | undefined
+  >(undefined);
   const [optimistic, setOptimistic] = useState<OptimisticMission[]>([]);
   const [stageTarget, setStageTarget] = useState<StageTarget | null>(null);
   const [crates, setCrates] = useState<WorldCrate[]>([]);
@@ -334,6 +355,20 @@ function OfficeSceneBody({
     window.history.replaceState(null, "", url);
   }
 
+  function selectView(next: OfficeView) {
+    setView(next);
+    if (typeof window === "undefined") {
+      return;
+    }
+    const url = new URL(window.location.href);
+    if (next === "list") {
+      url.searchParams.set("view", "list");
+    } else {
+      url.searchParams.delete("view");
+    }
+    window.history.replaceState(null, "", url);
+  }
+
   function selectAgent(id: string) {
     setSelectedId(id);
     setLocked((current) => (selectedId === id ? !current : true));
@@ -419,6 +454,27 @@ function OfficeSceneBody({
           ) : null}
           <WorldStatus />
           <PixelClockControls ticker={ticker} />
+          <fieldset
+            className="flex min-w-0 border border-zinc-700"
+            aria-label={t("viewToggleHint")}
+          >
+            {(["floor", "list"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => selectView(option)}
+                aria-pressed={view === option}
+                className={cn(
+                  "px-2 py-1 font-mono text-[10px] uppercase",
+                  view === option
+                    ? "bg-zinc-800 text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-300",
+                )}
+              >
+                {option === "floor" ? t("viewFloor") : t("viewList")}
+              </button>
+            ))}
+          </fieldset>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button asChild size="sm" variant="ghost">
@@ -437,6 +493,7 @@ function OfficeSceneBody({
             size="sm"
             onClick={() => {
               setMissionIntent(undefined);
+              setMissionPrefill(undefined);
               setMissionOpen(true);
             }}
           >
@@ -450,27 +507,38 @@ function OfficeSceneBody({
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]">
         <div className="min-w-0 space-y-3">
-          <FactoryFloor
-            packName={active.name}
-            manager={manager}
-            employees={employees}
-            agents={agents}
-            ticker={ticker}
-            visible={visible}
-            selectedId={selected?.id ?? null}
-            locked={locked}
-            hoveredId={hoveredId}
-            bubbles={bubbles}
-            crates={crates}
-            stamp={stamp}
-            reverseSeq={reverseSeq}
-            flow={flow}
-            suspended={stageTarget !== null}
-            onHover={setHoveredId}
-            onSelect={selectAgent}
-            onOpen={openStage}
-            onEscape={handleEscape}
-          />
+          {view === "list" ? (
+            <div className="rounded-none border-2 border-px-line bg-px-bg p-3">
+              <OfficeListView
+                agents={agents}
+                selectedId={selected?.id ?? null}
+                onSelect={selectAgent}
+                onOpen={openStage}
+              />
+            </div>
+          ) : (
+            <FactoryFloor
+              packName={active.name}
+              manager={manager}
+              employees={employees}
+              agents={agents}
+              ticker={ticker}
+              visible={visible}
+              selectedId={selected?.id ?? null}
+              locked={locked}
+              hoveredId={hoveredId}
+              bubbles={bubbles}
+              crates={crates}
+              stamp={stamp}
+              reverseSeq={reverseSeq}
+              flow={flow}
+              suspended={stageTarget !== null}
+              onHover={setHoveredId}
+              onSelect={selectAgent}
+              onOpen={openStage}
+              onEscape={handleEscape}
+            />
+          )}
         </div>
 
         <div className="flex min-h-[34rem] flex-col rounded-xl border border-border bg-card">
@@ -519,6 +587,11 @@ function OfficeSceneBody({
               }}
               onChat={() => selectPanel("chat")}
               onOpenStage={openStage}
+              onStartMission={(agent) => {
+                setMissionIntent(undefined);
+                setMissionPrefill(missionPrefillForAgent(agent));
+                setMissionOpen(true);
+              }}
             />
           ) : null}
         </div>
@@ -530,6 +603,7 @@ function OfficeSceneBody({
           setMissionOpen(open);
           if (!open) {
             setMissionIntent(undefined);
+            setMissionPrefill(undefined);
           }
         }}
         packDir={active.dirName}
@@ -537,6 +611,7 @@ function OfficeSceneBody({
         agents={agents}
         roleRules={active.roleRules}
         initialIntent={missionIntent}
+        prefill={missionPrefill}
         onStarted={(mission) =>
           setOptimistic((current) =>
             current.some((entry) => entry.runId === mission.runId)
@@ -553,38 +628,11 @@ function OfficeSceneBody({
         onRerun={(workflow) => {
           setStageTarget(null);
           setMissionIntent(t("rerunIntent", { workflow: workflow ?? "—" }));
+          setMissionPrefill(undefined);
           setMissionOpen(true);
         }}
       />
     </div>
-  );
-}
-
-/**
- * Visual progress for the current run stage. Decorative: the status chip and
- * the stage/percent text carry the same information for screen readers.
- */
-function ProgressBar({
-  progress,
-  className,
-}: {
-  progress?: number;
-  className?: string;
-}) {
-  if (typeof progress !== "number") {
-    return null;
-  }
-  const percent = Math.round(Math.min(1, Math.max(0, progress)) * 100);
-  return (
-    <span
-      className={cn("block h-1 w-full rounded bg-zinc-800", className)}
-      aria-hidden="true"
-    >
-      <span
-        className="block h-full rounded bg-emerald-400/80 motion-safe:transition-[width] motion-safe:duration-500"
-        style={{ width: `${percent}%` }}
-      />
-    </span>
   );
 }
 
@@ -642,6 +690,7 @@ function AgentPanel({
   team,
   onSelectAgent,
   onOpenStage,
+  onStartMission,
 }: {
   agent: LiveAgent;
   tick: number;
@@ -650,11 +699,67 @@ function AgentPanel({
   team: LiveAgent[];
   onSelectAgent: (id: string) => void;
   onOpenStage: (agent: LiveAgent) => void;
+  /** Opens the mission dialog seeded with this agent's role (97 §3.3). */
+  onStartMission: (agent: LiveAgent) => void;
 }) {
   const t = useTranslations("office");
+  const router = useRouter();
   const status = STATUS_STYLE[agent.status];
+  const runHref = agent.runId
+    ? `/world?run=${encodeURIComponent(agent.runId)}`
+    : null;
+  const approvalHref =
+    agent.runId && (agent.status === "blocked" || agent.status === "waiting")
+      ? factoryRunHref(agent.runId)
+      : null;
+
+  /**
+   * M/R/B only fire while focus is inside the panel, so they never shadow the
+   * floor's J/K/Enter or the global console shortcuts. The handler sits on the
+   * panel region and receives bubbled key events from its buttons and links.
+   */
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (
+      event.defaultPrevented ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.altKey
+    ) {
+      return;
+    }
+    const target = event.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    const key = event.key.toLowerCase();
+    if (key === "m") {
+      event.preventDefault();
+      onStartMission(agent);
+      return;
+    }
+    if (key === "r" && runHref) {
+      event.preventDefault();
+      router.push(runHref);
+      return;
+    }
+    if (key === "b" && approvalHref) {
+      event.preventDefault();
+      router.push(approvalHref);
+    }
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">
+    <section
+      aria-label={t("panelLabel", { agent: agent.id })}
+      onKeyDown={handleKeyDown}
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3"
+    >
       <div className="flex items-start gap-3">
         <div className="rounded-lg border border-border bg-zinc-950/60 p-1.5">
           <PixelAgent
@@ -701,7 +806,7 @@ function AgentPanel({
         <div className="mt-2 rounded border border-border/70 px-2 py-1.5 text-[10px]">
           <p className="text-zinc-500">{t("currentStage")}</p>
           <p className="mt-0.5 font-mono text-zinc-300">{agent.stageId}</p>
-          <ProgressBar progress={agent.progress} className="mt-1.5" />
+          <PixelProgress progress={agent.progress} className="mt-1.5" />
           {typeof agent.progress === "number" ? (
             <p className="mt-1 text-right font-mono text-[9px] text-zinc-500">
               {Math.round(agent.progress * 100)}%
@@ -758,6 +863,16 @@ function AgentPanel({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => onStartMission(agent)}
+          aria-keyshortcuts="M"
+        >
+          <Plus className="size-3.5" />
+          {t("startMission")}
+          <ShortcutKey>M</ShortcutKey>
+        </Button>
         <Button size="sm" variant="outline" onClick={onChat}>
           <MessageSquare className="size-3.5" />
           {t("askManager")}
@@ -766,6 +881,24 @@ function AgentPanel({
           <Bot className="size-3.5" />
           {t("openStageDetail")}
         </Button>
+        {runHref ? (
+          <Button size="sm" variant="ghost" asChild>
+            <Link href={runHref} aria-keyshortcuts="R">
+              <ArrowUpRight className="size-3.5" />
+              {t("openRun")}
+              <ShortcutKey>R</ShortcutKey>
+            </Link>
+          </Button>
+        ) : null}
+        {approvalHref ? (
+          <Button size="sm" variant="outline" asChild>
+            <Link href={approvalHref} aria-keyshortcuts="B">
+              <ShieldCheck className="size-3.5" />
+              {t("handleApproval")}
+              <ShortcutKey>B</ShortcutKey>
+            </Link>
+          </Button>
+        ) : null}
         <Button size="sm" variant="ghost" asChild>
           <Link
             href={`/packs/${encodeURIComponent(packDir)}/studio?agent=${encodeURIComponent(agent.id)}`}
@@ -774,22 +907,25 @@ function AgentPanel({
             {t("editAgent")}
           </Link>
         </Button>
-        {agent.runId ? (
-          <Button size="sm" variant="ghost" asChild>
-            <Link href={`/world?run=${encodeURIComponent(agent.runId)}`}>
-              <ArrowUpRight className="size-3.5" />
-              {t("openRun")}
-            </Link>
-          </Button>
-        ) : null}
       </div>
+
+      <p className="mt-2 text-[10px] text-zinc-500">{t("panelShortcuts")}</p>
 
       <div className="mt-auto pt-3">
         <p className="text-[9px] leading-relaxed text-zinc-600">
           {t("agentHint")}
         </p>
       </div>
-    </div>
+    </section>
+  );
+}
+
+/** Visible key hint next to a quick action; the shortcut is on the control. */
+function ShortcutKey({ children }: { children: string }) {
+  return (
+    <kbd className="rounded border border-zinc-700 bg-zinc-900 px-1 font-mono text-[9px] leading-4 text-zinc-400">
+      {children}
+    </kbd>
   );
 }
 
@@ -902,7 +1038,7 @@ function TaskCard({ mission }: { mission: LiveMission }) {
           ) : null}
         </p>
       ) : null}
-      <ProgressBar progress={mission.progress} className="mt-1" />
+      <PixelProgress progress={mission.progress} className="mt-1" />
       <div className="mt-1.5 flex flex-wrap gap-1">
         {mission.sellers.length > 0 ? (
           <span className="rounded border border-sky-500/25 bg-sky-500/5 px-1 py-0.5 text-[9px] text-sky-300">

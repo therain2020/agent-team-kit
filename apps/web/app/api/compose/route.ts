@@ -1,7 +1,12 @@
 import { sameOriginError } from "@/lib/http";
 import { jobErrorResponse } from "@/lib/job-api";
 import { getRepoRoot } from "@/lib/paths";
-import { type AgentDraftValues, type ComposeKind, composeJob } from "@kit/job";
+import {
+  type AgentDraftValues,
+  type ComposeKind,
+  composeJob,
+  parseWorkflowDraftStages,
+} from "@kit/job";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -19,6 +24,8 @@ export async function POST(request: Request) {
     packDir?: unknown;
     agentId?: unknown;
     current?: unknown;
+    templateId?: unknown;
+    currentStages?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -31,24 +38,31 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, or agent",
+          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, or workflow",
       },
       { status: 400 },
     );
   }
-  if (typeof body.packDir !== "string" || !body.packDir.trim()) {
+  // A `pack` draft scaffolds a brand-new pack, so it has no existing directory.
+  const packDir = typeof body.packDir === "string" ? body.packDir : "";
+  if (kind !== "pack" && !packDir.trim()) {
     return NextResponse.json({ error: "packDir is required" }, { status: 400 });
   }
 
   const current = parseAgentCurrent(body.current);
+  const currentStages = parseWorkflowDraftStages(body.currentStages);
   try {
     const result = await composeJob({
       kind,
       intent: typeof body.intent === "string" ? body.intent : "",
-      packDir: body.packDir,
+      packDir,
       repoRoot: getRepoRoot(),
       ...(typeof body.agentId === "string" ? { agentId: body.agentId } : {}),
+      ...(typeof body.templateId === "string"
+        ? { templateId: body.templateId }
+        : {}),
       ...(current ? { current } : {}),
+      ...(currentStages ? { currentStages } : {}),
     });
     return NextResponse.json(result);
   } catch (error) {
@@ -62,7 +76,9 @@ function parseKind(value: unknown): ComposeKind | undefined {
     value === "approvalPolicy" ||
     value === "autopilot" ||
     value === "evolutionCycle" ||
-    value === "agent"
+    value === "agent" ||
+    value === "pack" ||
+    value === "workflow"
     ? value
     : undefined;
 }

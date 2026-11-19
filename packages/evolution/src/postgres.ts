@@ -9,15 +9,20 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { newId } from "@kit/core";
+import { type EvolutionBudgetLedger, newId } from "@kit/core";
 import { type SqlClient, type initStore, withStoreLock } from "@kit/store";
 import {
   type CanaryState,
   type EvolutionDecisionRecord,
   normalizeCanaryStatus,
 } from "./canary";
-import type { EvolutionCycleRecord } from "./cycle";
+import type {
+  EvolutionBudgetReconciliation,
+  EvolutionBudgetRef,
+  EvolutionCycleRecord,
+} from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
+import type { EvolutionFreezeState } from "./freeze";
 import type {
   EvolutionRepository,
   StoredCanaryState,
@@ -84,6 +89,9 @@ interface CycleRow {
   rationale: string;
   auto_applied: boolean;
   error: string | null;
+  budget_status: string | null;
+  budget_refs: EvolutionBudgetRef[] | string | null;
+  budget_reconciliation: EvolutionBudgetReconciliation | string | null;
   eval_snapshot_path: string | null;
   eval_snapshot_hash: string | null;
   evaluator_hash: string | null;
@@ -118,9 +126,23 @@ interface DecisionRow {
   created_at: Date | string;
 }
 
+interface FreezeRow {
+  workspace_id: string;
+  status: string;
+  kind: string | null;
+  reason: string | null;
+  actor: string | null;
+  since: Date | string | null;
+  lift_condition: string | null;
+  lifted_at: Date | string | null;
+  lifted_by: string | null;
+  lift_reason: string | null;
+}
+
 export class StoreEvolutionRepository implements EvolutionRepository {
   readonly kind: "postgres" | "sqlite";
   readonly workspaceId: string;
+  readonly budget: EvolutionBudgetLedger;
   private readonly variantsRoot: string;
   private readonly archivePath: string;
   private readonly cyclesPath: string;
@@ -133,6 +155,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
   ) {
     this.kind = store.driver;
     this.workspaceId = options.workspaceId ?? "default";
+    this.budget = store.budgetService;
     this.variantsRoot = path.resolve(options.variantsRoot ?? "variants");
     this.archivePath = path.resolve(
       options.archivePath ?? path.join(this.variantsRoot, "archive.jsonl"),
@@ -425,6 +448,59 @@ export class StoreEvolutionRepository implements EvolutionRepository {
     return rows.length > 0;
   }
 
+  async getFreeze(): Promise<EvolutionFreezeState | null> {
+    await this.ensureReady();
+    const rows = await this.store.sql<FreezeRow[]>`
+      SELECT * FROM evolution_freeze
+      WHERE workspace_id = ${this.workspaceId}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    return row ? mapFreeze(row) : null;
+  }
+
+  async setFreeze(state: EvolutionFreezeState): Promise<void> {
+    await this.ensureReady();
+    const now = new Date().toISOString();
+    await this.store.sql`
+      INSERT INTO evolution_freeze (
+        workspace_id, status, kind, reason, actor, since, lift_condition,
+        lifted_at, lifted_by, lift_reason, updated_at
+      ) VALUES (
+        ${this.workspaceId}, ${state.status}, ${state.kind ?? null},
+        ${state.reason ?? null}, ${state.actor ?? null},
+        ${state.since ?? null}, ${state.liftCondition ?? null},
+        ${state.liftedAt ?? null}, ${state.liftedBy ?? null},
+        ${state.liftReason ?? null}, ${now}
+      )
+      ON CONFLICT (workspace_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        kind = EXCLUDED.kind,
+        reason = EXCLUDED.reason,
+        actor = EXCLUDED.actor,
+        since = EXCLUDED.since,
+        lift_condition = EXCLUDED.lift_condition,
+        lifted_at = EXCLUDED.lifted_at,
+        lifted_by = EXCLUDED.lifted_by,
+        lift_reason = EXCLUDED.lift_reason,
+        updated_at = EXCLUDED.updated_at
+    `;
+  }
+
+  /**
+   * Production spend (charged runs) since the given ISO timestamp, used to
+   * report the evolution cost share against the 70 §6 budget cap.
+   */
+  async sumRunCostCny(since: string): Promise<number> {
+    const rows = await this.store.sql<Array<{ total: string | number | null }>>`
+      SELECT COALESCE(SUM(cost_cny_micro), 0) / 1000000.0 AS total
+      FROM budget_charges
+      WHERE workspace_id = ${this.workspaceId}
+        AND created_at >= ${since}
+    `;
+    return Number(rows[0]?.total ?? 0);
+  }
+
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
     return await withStoreLock(this.store, key, fn);
   }
@@ -587,6 +663,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         baseline_variant_id, candidate_variant_id, baseline_name, candidate_name,
         baseline_pass, candidate_pass, baseline_score, candidate_score,
         cost_cny, decision, rationale, auto_applied, error,
+        budget_status, budget_refs, budget_reconciliation,
         eval_snapshot_path, eval_snapshot_hash, evaluator_hash,
         evaluator_approval_ref, created_at
       ) VALUES (
@@ -598,7 +675,14 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         ${record.candidateName}, ${record.baselinePass}, ${record.candidatePass},
         ${record.baselineScore}, ${record.candidateScore}, ${record.costCny},
         ${record.decision}, ${record.rationale}, ${record.autoApplied},
-        ${record.error ?? null}, ${record.evalSnapshotPath ?? null},
+        ${record.error ?? null}, ${record.budgetStatus ?? "unledgered"},
+        ${this.store.sql.json(record.budgetRefs ?? [])},
+        ${
+          record.budgetReconciliation
+            ? this.store.sql.json(record.budgetReconciliation)
+            : null
+        },
+        ${record.evalSnapshotPath ?? null},
         ${record.evalSnapshotHash ?? null}, ${record.evaluatorHash ?? null},
         ${record.evaluatorApprovalRef ?? null}, ${record.createdAt}
       )
@@ -802,7 +886,47 @@ function mapDecision(row: DecisionRow): EvolutionDecisionRecord {
   };
 }
 
+function mapFreeze(row: FreezeRow): EvolutionFreezeState {
+  const status = row.status === "frozen" ? "frozen" : "active";
+  const base: EvolutionFreezeState = {
+    workspaceId: row.workspace_id,
+    status,
+  };
+  if (status === "frozen") {
+    const since = toIso(row.since);
+    return {
+      ...base,
+      kind: isFreezeKind(row.kind) ? row.kind : "manual",
+      ...(row.reason ? { reason: row.reason } : {}),
+      ...(row.actor ? { actor: row.actor } : {}),
+      ...(since ? { since } : {}),
+      ...(row.lift_condition ? { liftCondition: row.lift_condition } : {}),
+    };
+  }
+  const liftedAt = toIso(row.lifted_at);
+  return {
+    ...base,
+    ...(liftedAt ? { liftedAt } : {}),
+    ...(row.lifted_by ? { liftedBy: row.lifted_by } : {}),
+    ...(row.lift_reason ? { liftReason: row.lift_reason } : {}),
+  };
+}
+
+function isFreezeKind(
+  value: string | null,
+): value is NonNullable<EvolutionFreezeState["kind"]> {
+  return (
+    value === "incident" ||
+    value === "manual" ||
+    value === "convergence" ||
+    value === "divergence"
+  );
+}
+
 function mapCycle(row: CycleRow): EvolutionCycleRecord {
+  const budgetReconciliation = parseOptionalJson<EvolutionBudgetReconciliation>(
+    row.budget_reconciliation ?? null,
+  );
   return {
     cycleId: row.cycle_id,
     packDir: row.pack_dir,
@@ -830,7 +954,12 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
     decision: row.decision as EvolutionCycleRecord["decision"],
     rationale: row.rationale,
     autoApplied: Boolean(row.auto_applied),
+    budgetStatus:
+      (row.budget_status as EvolutionCycleRecord["budgetStatus"] | null) ??
+      "unledgered",
+    budgetRefs: parseJsonArray<EvolutionBudgetRef>(row.budget_refs ?? null),
     createdAt: toIso(row.created_at) ?? new Date().toISOString(),
+    ...(budgetReconciliation ? { budgetReconciliation } : {}),
     ...(row.error ? { error: row.error } : {}),
     ...(row.eval_snapshot_path
       ? { evalSnapshotPath: row.eval_snapshot_path }
@@ -882,6 +1011,23 @@ async function readJsonl<T>(file: string): Promise<T[]> {
         return [];
       }
     });
+}
+
+function parseOptionalJson<T>(value: T | string | null): T | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed !== null && typeof parsed === "object"
+      ? (parsed as T)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseJsonArray<T>(value: T[] | string | null): T[] {
