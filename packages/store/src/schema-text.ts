@@ -679,6 +679,82 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS incidents (
+  incident_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  detected_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  timeline JSONB NOT NULL DEFAULT '[]'::jsonb,
+  postmortem JSONB NOT NULL,
+  degradation_mode_id TEXT,
+  regression_case_ref TEXT,
+  evolution_signal_ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_workspace
+  ON incidents(workspace_id, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incidents_status
+  ON incidents(workspace_id, status);
+
+CREATE TABLE IF NOT EXISTS runbooks (
+  runbook_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  steps JSONB NOT NULL,
+  owner TEXT NOT NULL,
+  verification JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_runbooks_mode
+  ON runbooks(workspace_id, mode_id);
+
+CREATE TABLE IF NOT EXISTS runbook_drills (
+  drill_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  runbook_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  executed_at TIMESTAMPTZ NOT NULL,
+  executed_by TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_runbook_drills_runbook
+  ON runbook_drills(runbook_id, executed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runbook_drills_workspace
+  ON runbook_drills(workspace_id, executed_at DESC);
+
+CREATE TABLE IF NOT EXISTS recovery_drills (
+  drill_id TEXT PRIMARY KEY,
+  executed_at TIMESTAMPTZ NOT NULL,
+  executed_by TEXT NOT NULL,
+  script TEXT NOT NULL,
+  rto_target_minutes INTEGER NOT NULL,
+  rpo_target_minutes INTEGER NOT NULL,
+  measured_rto_minutes INTEGER,
+  measured_rpo_minutes INTEGER,
+  kitd_rollback_ref TEXT,
+  integrity_pass BOOLEAN NOT NULL DEFAULT false,
+  outcome TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_recovery_drills_executed
+  ON recovery_drills(executed_at DESC);
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -1354,4 +1430,80 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN assignee TEXT;
 ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
+
+CREATE TABLE IF NOT EXISTS incidents (
+  incident_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  detected_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  timeline TEXT NOT NULL DEFAULT '[]',
+  postmortem TEXT NOT NULL,
+  degradation_mode_id TEXT,
+  regression_case_ref TEXT,
+  evolution_signal_ref TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_workspace
+  ON incidents(workspace_id, detected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incidents_status
+  ON incidents(workspace_id, status);
+
+CREATE TABLE IF NOT EXISTS runbooks (
+  runbook_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  steps TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  verification TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_runbooks_mode
+  ON runbooks(workspace_id, mode_id);
+
+CREATE TABLE IF NOT EXISTS runbook_drills (
+  drill_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  runbook_id TEXT NOT NULL,
+  mode_id TEXT NOT NULL,
+  executed_at TEXT NOT NULL,
+  executed_by TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_runbook_drills_runbook
+  ON runbook_drills(runbook_id, executed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runbook_drills_workspace
+  ON runbook_drills(workspace_id, executed_at DESC);
+
+CREATE TABLE IF NOT EXISTS recovery_drills (
+  drill_id TEXT PRIMARY KEY,
+  executed_at TEXT NOT NULL,
+  executed_by TEXT NOT NULL,
+  script TEXT NOT NULL,
+  rto_target_minutes INTEGER NOT NULL,
+  rpo_target_minutes INTEGER NOT NULL,
+  measured_rto_minutes INTEGER,
+  measured_rpo_minutes INTEGER,
+  kitd_rollback_ref TEXT,
+  integrity_pass INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_recovery_drills_executed
+  ON recovery_drills(executed_at DESC);
 `;

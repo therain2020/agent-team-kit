@@ -12,13 +12,16 @@ import {
   PostgresAutopilotStateStore,
   PostgresBlobRepository,
   PostgresDegradationStore,
+  PostgresDrillStore,
   PostgresEventStore,
+  PostgresIncidentStore,
   PostgresKillSwitchStore,
   PostgresLastKnownGoodStore,
   PostgresManagerSessionStore,
   PostgresManifestStore,
   PostgresRunRequestStore,
   PostgresRunStore,
+  PostgresRunbookStore,
   PostgresStageStore,
 } from "./repositories";
 import {
@@ -26,13 +29,16 @@ import {
   SqliteAutopilotStateStore,
   SqliteBlobRepository,
   SqliteDegradationStore,
+  SqliteDrillStore,
   SqliteEventStore,
+  SqliteIncidentStore,
   SqliteKillSwitchStore,
   SqliteLastKnownGoodStore,
   SqliteManagerSessionStore,
   SqliteManifestStore,
   SqliteRunRequestStore,
   SqliteRunStore,
+  SqliteRunbookStore,
   SqliteStageStore,
 } from "./repositories.sqlite";
 import { createS3Client } from "./s3";
@@ -63,6 +69,9 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
           lkg: new PostgresLastKnownGoodStore(handle.db),
           managerSessions: new PostgresManagerSessionStore(handle.db),
           killSwitches: new PostgresKillSwitchStore(handle.db),
+          incidents: new PostgresIncidentStore(handle.db),
+          runbooks: new PostgresRunbookStore(handle.db),
+          drills: new PostgresDrillStore(handle.db),
         }
       : {
           events: new SqliteEventStore(handle.db),
@@ -77,6 +86,9 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
           lkg: new SqliteLastKnownGoodStore(handle.db),
           managerSessions: new SqliteManagerSessionStore(handle.db),
           killSwitches: new SqliteKillSwitchStore(handle.db),
+          incidents: new SqliteIncidentStore(handle.db),
+          runbooks: new SqliteRunbookStore(handle.db),
+          drills: new SqliteDrillStore(handle.db),
         };
 
   const { blobs, artifactStore } = repositories;

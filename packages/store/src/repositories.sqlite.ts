@@ -3,10 +3,14 @@ import type {
   Blob,
   DegradationScope,
   EventEnvelope,
+  Incident,
   KillSwitch,
   Manifest,
+  RecoveryDrill,
   Run,
   RunStatus,
+  Runbook,
+  RunbookDrill,
   Stage,
 } from "@kit/core";
 import { switchLastKnownGood } from "@kit/core";
@@ -36,8 +40,12 @@ import {
   fromDegradationAuditRow,
   fromDegradationRow,
   fromEventRow,
+  fromIncidentRow,
   fromKillSwitchRow,
   fromLastKnownGoodRow,
+  fromRecoveryDrillRow,
+  fromRunbookDrillRow,
+  fromRunbookRow,
   fromManifestRow,
   fromRunRow,
   fromStageRow,
@@ -46,10 +54,14 @@ import {
   toDegradationAuditRow,
   toDegradationRow,
   toEventRow,
+  toIncidentRow,
   toKillSwitchRow,
   toLastKnownGoodRow,
   toManifestRow,
+  toRecoveryDrillRow,
   toRunRow,
+  toRunbookDrillRow,
+  toRunbookRow,
   toStageRow,
 } from "./repositories";
 import type {
@@ -66,7 +78,10 @@ import type {
   DegradationAuditRecord,
   DegradationStateRecord,
   DegradationStore,
+  DrillStore,
   EventStore,
+  IncidentListOptions,
+  IncidentStore,
   KillSwitchActivation,
   KillSwitchStore,
   LastKnownGoodStore,
@@ -79,6 +94,8 @@ import type {
   RunRequestRecord,
   RunRequestStore,
   RunStore,
+  RunbookListOptions,
+  RunbookStore,
   StageStore,
 } from "./repositories";
 import type * as sqliteSchema from "./schema.sqlite";
@@ -90,11 +107,15 @@ import {
   blobs,
   degradationAudit,
   degradationState,
+  incidents,
   killSwitches,
   lastKnownGood,
   managerSessions,
   manifests,
+  recoveryDrills,
   runRequests,
+  runbookDrills,
+  runbooks,
   runs,
   stages,
 } from "./schema.sqlite";
@@ -1347,5 +1368,195 @@ export class SqliteKillSwitchStore implements KillSwitchStore {
       .orderBy(desc(killSwitches.updatedAt))
       .limit(Math.max(1, Math.min(limit, 200)));
     return rows.map(fromKillSwitchRow);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Incident / Runbook / Drills (61 §2, §3.4, §5)
+// ---------------------------------------------------------------------------
+
+export class SqliteIncidentStore implements IncidentStore {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async create(incident: Incident): Promise<void> {
+    await this.db
+      .insert(incidents)
+      .values(toIncidentRow(incident))
+      .onConflictDoNothing();
+  }
+
+  async get(incidentId: string): Promise<Incident | null> {
+    const [row] = await this.db
+      .select()
+      .from(incidents)
+      .where(eq(incidents.incidentId, incidentId))
+      .limit(1);
+    return row ? fromIncidentRow(row) : null;
+  }
+
+  async list(
+    workspaceId: string,
+    options: IncidentListOptions = {},
+  ): Promise<Incident[]> {
+    const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
+    const conditions: SQL[] = [eq(incidents.workspaceId, workspaceId)];
+    if (options.status) {
+      conditions.push(eq(incidents.status, options.status));
+    }
+    const rows = await this.db
+      .select()
+      .from(incidents)
+      .where(and(...conditions))
+      .orderBy(desc(incidents.detectedAt))
+      .limit(limit);
+    return rows.map(fromIncidentRow);
+  }
+
+  async update(incident: Incident): Promise<boolean> {
+    const rows = await this.db
+      .update(incidents)
+      .set({
+        ...toIncidentRow(incident),
+        version: sql`${incidents.version} + 1`,
+      })
+      .where(
+        and(
+          eq(incidents.incidentId, incident.incidentId),
+          eq(incidents.version, incident.version ?? 0),
+        ),
+      )
+      .returning({ version: incidents.version });
+    const row = rows[0];
+    if (!row) {
+      return false;
+    }
+    incident.version = Number(row.version);
+    return true;
+  }
+}
+
+export class SqliteRunbookStore implements RunbookStore {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async upsert(runbook: Runbook): Promise<void> {
+    const values = toRunbookRow(runbook);
+    await this.db
+      .insert(runbooks)
+      .values(values)
+      .onConflictDoUpdate({ target: [runbooks.runbookId], set: values });
+  }
+
+  async get(runbookId: string): Promise<Runbook | null> {
+    const [row] = await this.db
+      .select()
+      .from(runbooks)
+      .where(eq(runbooks.runbookId, runbookId))
+      .limit(1);
+    return row ? fromRunbookRow(row) : null;
+  }
+
+  async list(
+    workspaceId: string,
+    options: RunbookListOptions = {},
+  ): Promise<Runbook[]> {
+    const limit = Math.max(1, Math.min(options.limit ?? 100, 200));
+    const conditions: SQL[] = [eq(runbooks.workspaceId, workspaceId)];
+    if (options.modeId) {
+      conditions.push(eq(runbooks.modeId, options.modeId));
+    }
+    if (options.status) {
+      conditions.push(eq(runbooks.status, options.status));
+    }
+    const rows = await this.db
+      .select()
+      .from(runbooks)
+      .where(and(...conditions))
+      .orderBy(asc(runbooks.modeId))
+      .limit(limit);
+    return rows.map(fromRunbookRow);
+  }
+
+  async update(runbook: Runbook): Promise<boolean> {
+    const rows = await this.db
+      .update(runbooks)
+      .set({
+        ...toRunbookRow(runbook),
+        version: sql`${runbooks.version} + 1`,
+      })
+      .where(
+        and(
+          eq(runbooks.runbookId, runbook.runbookId),
+          eq(runbooks.version, runbook.version ?? 0),
+        ),
+      )
+      .returning({ version: runbooks.version });
+    const row = rows[0];
+    if (!row) {
+      return false;
+    }
+    runbook.version = Number(row.version);
+    return true;
+  }
+}
+
+export class SqliteDrillStore implements DrillStore {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async recordRunbookDrill(drill: RunbookDrill): Promise<void> {
+    await this.db
+      .insert(runbookDrills)
+      .values(toRunbookDrillRow(drill))
+      .onConflictDoNothing();
+  }
+
+  async listRunbookDrills(
+    runbookId: string,
+    limit = 50,
+  ): Promise<RunbookDrill[]> {
+    const rows = await this.db
+      .select()
+      .from(runbookDrills)
+      .where(eq(runbookDrills.runbookId, runbookId))
+      .orderBy(desc(runbookDrills.executedAt))
+      .limit(Math.max(1, Math.min(limit, 200)));
+    return rows.map(fromRunbookDrillRow);
+  }
+
+  async listRunbookDrillsByWorkspace(
+    workspaceId: string,
+    limit = 200,
+  ): Promise<RunbookDrill[]> {
+    const rows = await this.db
+      .select()
+      .from(runbookDrills)
+      .where(eq(runbookDrills.workspaceId, workspaceId))
+      .orderBy(desc(runbookDrills.executedAt))
+      .limit(Math.max(1, Math.min(limit, 500)));
+    return rows.map(fromRunbookDrillRow);
+  }
+
+  async recordRecoveryDrill(drill: RecoveryDrill): Promise<void> {
+    await this.db
+      .insert(recoveryDrills)
+      .values(toRecoveryDrillRow(drill))
+      .onConflictDoNothing();
+  }
+
+  async listRecoveryDrills(limit = 50): Promise<RecoveryDrill[]> {
+    const rows = await this.db
+      .select()
+      .from(recoveryDrills)
+      .orderBy(desc(recoveryDrills.executedAt))
+      .limit(Math.max(1, Math.min(limit, 200)));
+    return rows.map(fromRecoveryDrillRow);
+  }
+
+  async latestRecoveryDrill(): Promise<RecoveryDrill | null> {
+    const [row] = await this.db
+      .select()
+      .from(recoveryDrills)
+      .orderBy(desc(recoveryDrills.executedAt))
+      .limit(1);
+    return row ? fromRecoveryDrillRow(row) : null;
   }
 }

@@ -1,9 +1,17 @@
 import type {
   DegradationTrigger,
+  DrillOutcome,
   ExitCriteria,
+  IncidentSeverity,
+  IncidentStatus,
+  IncidentTimelineEntry,
   LkgArtifactRef,
+  Postmortem,
   Producer,
   QualityFloor,
+  RunbookStatus,
+  RunbookStep,
+  RunbookVerification,
 } from "@kit/core";
 import {
   index,
@@ -341,4 +349,101 @@ export const budgetCharges = sqliteTable(
   (table) => [
     uniqueIndex("budget_charges_reservation_idx").on(table.reservationId),
   ],
+);
+
+/** Incident records (61 §2, §3.4). */
+export const incidents = sqliteTable(
+  "incidents",
+  {
+    incidentId: text("incident_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    title: text("title").notNull(),
+    severity: text("severity").$type<IncidentSeverity>().notNull(),
+    detectedAt: text("detected_at").notNull(),
+    status: text("status").$type<IncidentStatus>().notNull(),
+    owner: text("owner").notNull(),
+    timeline: text("timeline", { mode: "json" })
+      .$type<IncidentTimelineEntry[]>()
+      .notNull(),
+    postmortem: text("postmortem", { mode: "json" })
+      .$type<Postmortem>()
+      .notNull(),
+    degradationModeId: text("degradation_mode_id"),
+    regressionCaseRef: text("regression_case_ref"),
+    evolutionSignalRef: text("evolution_signal_ref"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    version: integer("version").notNull().default(0),
+  },
+  (table) => [
+    index("idx_incidents_workspace").on(table.workspaceId, table.detectedAt),
+    index("idx_incidents_status").on(table.workspaceId, table.status),
+  ],
+);
+
+/** Runbooks, one per degradation mode (61 §3.2). */
+export const runbooks = sqliteTable(
+  "runbooks",
+  {
+    runbookId: text("runbook_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    modeId: text("mode_id").notNull(),
+    trigger: text("trigger").notNull(),
+    steps: text("steps", { mode: "json" }).$type<RunbookStep[]>().notNull(),
+    owner: text("owner").notNull(),
+    verification: text("verification", { mode: "json" })
+      .$type<RunbookVerification[]>()
+      .notNull(),
+    status: text("status").$type<RunbookStatus>().notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    version: integer("version").notNull().default(0),
+  },
+  (table) => [index("idx_runbooks_mode").on(table.workspaceId, table.modeId)],
+);
+
+/** Per-runbook drill records (61 §5). */
+export const runbookDrills = sqliteTable(
+  "runbook_drills",
+  {
+    drillId: text("drill_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    runbookId: text("runbook_id").notNull(),
+    modeId: text("mode_id").notNull(),
+    executedAt: text("executed_at").notNull(),
+    executedBy: text("executed_by").notNull(),
+    outcome: text("outcome").$type<DrillOutcome>().notNull(),
+    notes: text("notes").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("idx_runbook_drills_runbook").on(table.runbookId, table.executedAt),
+    index("idx_runbook_drills_workspace").on(
+      table.workspaceId,
+      table.executedAt,
+    ),
+  ],
+);
+
+/** RTO/RPO recovery drills reusing `smoke:recovery` + kitd rollback (D-38). */
+export const recoveryDrills = sqliteTable(
+  "recovery_drills",
+  {
+    drillId: text("drill_id").primaryKey(),
+    executedAt: text("executed_at").notNull(),
+    executedBy: text("executed_by").notNull(),
+    script: text("script").notNull(),
+    rtoTargetMinutes: integer("rto_target_minutes").notNull(),
+    rpoTargetMinutes: integer("rpo_target_minutes").notNull(),
+    measuredRtoMinutes: integer("measured_rto_minutes"),
+    measuredRpoMinutes: integer("measured_rpo_minutes"),
+    kitdRollbackRef: text("kitd_rollback_ref"),
+    integrityPass: integer("integrity_pass", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    outcome: text("outcome").$type<DrillOutcome>().notNull(),
+    notes: text("notes").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("idx_recovery_drills_executed").on(table.executedAt)],
 );
