@@ -29,6 +29,7 @@ import {
   toolPackSchema,
   workflowDefinitionSchema,
 } from "@kit/core";
+import type { ComponentLibrary, ResolvedComponent } from "@kit/pack";
 import { splitFrontmatter } from "@kit/pack";
 import { parse } from "yaml";
 import { scanWorkshopSecrets } from "./security";
@@ -589,6 +590,60 @@ export function isComponentBound(
   ref: Pick<ComponentRef, "kind" | "id">,
 ): boolean {
   return boundComponentKeys(lock).includes(componentKey(ref));
+}
+
+/**
+ * Production {@link ComponentLibrary} adapter for the pack assembler (plan 88
+ * §3.1 / M3b). Resolves a component to a pinned, validated snapshot (entry text
+ * plus supporting files) and reads/writes the pack's `components.lock.json`.
+ * Kept in `@kit/workshop` because it owns the component read model; the
+ * assembler in `@kit/pack` consumes it through the port so the two packages do
+ * not form a dependency cycle.
+ */
+export function workshopComponentLibrary(root?: string): ComponentLibrary {
+  return {
+    async resolve(kind, id) {
+      const result = await loadComponent(kind, id, root);
+      if (!result.ok) {
+        return { ok: false, issues: result.issues };
+      }
+      const component = result.component;
+      const ref = await buildComponentRef(kind, id, root, {
+        fallbackVersion: component.version ?? undefined,
+      });
+      const entryText = await readFile(
+        path.join(component.dir, component.entry),
+        "utf8",
+      );
+      const files: Array<{ path: string; content: string }> = [];
+      if (component.spec.kind === "skillpack") {
+        for (const file of component.spec.data.files) {
+          files.push({
+            path: file,
+            content: await readFile(path.join(component.dir, file), "utf8"),
+          });
+        }
+      }
+      const resolved: ResolvedComponent = {
+        kind,
+        id,
+        version: ref.version,
+        ref,
+        spec: component.spec,
+        entryText,
+        files,
+      };
+      return { ok: true, component: resolved };
+    },
+    async readLock(packDir) {
+      const read = await readAssemblyLock(packDir);
+      return { ok: read.ok, lock: read.lock, issues: read.issues };
+    },
+    async writeLock(packDir, lock) {
+      const write = await writeAssemblyLock(packDir, lock);
+      return { ok: write.ok, issues: write.issues };
+    },
+  };
 }
 
 export type AssetKind = "pipeline" | "source" | "template";
