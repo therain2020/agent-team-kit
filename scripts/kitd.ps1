@@ -1,9 +1,14 @@
 param(
   [Parameter(Position = 0)]
-  [ValidateSet("status", "check", "up", "down", "snapshot", "rollback", "watch", "install-task")]
+  [ValidateSet("status", "check", "up", "down", "snapshot", "rollback", "lkg", "watch", "install-task")]
   [string]$Command = "status",
   [string]$Repo = "D:\GitHub\agent-team-kit",
   [string]$LkgTag = "lkg-0.9.0-preview",
+  [string]$LkgArtifactId = "",
+  [int]$LkgArtifactVersion = 1,
+  [string]$LkgVerifiedBy = "",
+  [string]$LkgWorkspace = "default",
+  [string]$LkgTarget = "workspace-artifacts",
   [switch]$DryRun,
   [int]$FailuresBeforeRollback = 3,
   [int]$IntervalSeconds = 30,
@@ -203,6 +208,54 @@ function Invoke-Rollback {
   Write-Output "rolled back to $LkgTag (preserved recovery/$stamp)"
 }
 
+function Invoke-LkgSwitch {
+  if ([string]::IsNullOrWhiteSpace($LkgArtifactId)) {
+    throw "the lkg command requires -LkgArtifactId"
+  }
+  $verifiedBy = $LkgVerifiedBy
+  if ([string]::IsNullOrWhiteSpace($verifiedBy)) {
+    $verifiedBy = "kitd"
+  }
+  $detail = "workspace=$LkgWorkspace target=$LkgTarget artifact=$LkgArtifactId@$LkgArtifactVersion verifier=$verifiedBy"
+
+  if ($DryRun) {
+    Push-Location $Repo
+    try {
+      & bun run scripts/lkg-switch.ts --workspace $LkgWorkspace --target $LkgTarget --artifact $LkgArtifactId --version $LkgArtifactVersion --verified-by $verifiedBy
+    } finally {
+      Pop-Location
+    }
+    Write-Audit "lkg-switch" "dry-run" $detail
+    Write-Output "dry-run: snapshot then switch artifact LKG $LkgArtifactId@$LkgArtifactVersion (no changes)"
+    return
+  }
+
+  Write-Audit "lkg-switch" "start" $detail
+  # Snapshot first: the repo bundle + tag is the rollback point for the switch.
+  Invoke-Snapshot
+  Push-Location $Repo
+  try {
+    & bun run scripts/lkg-switch.ts --workspace $LkgWorkspace --target $LkgTarget --artifact $LkgArtifactId --version $LkgArtifactVersion --verified-by $verifiedBy --execute
+    if ($LASTEXITCODE -ne 0) {
+      throw "artifact LKG switch failed"
+    }
+  } finally {
+    Pop-Location
+  }
+
+  $lkgFile = Join-Path $StateDir "lkg-artifacts.txt"
+  @(
+    "artifact=$LkgArtifactId",
+    "version=$LkgArtifactVersion",
+    "workspace=$LkgWorkspace",
+    "target=$LkgTarget",
+    "verifier=$verifiedBy",
+    "at=$((Get-Date).ToUniversalTime().ToString('o'))"
+  ) | Set-Content -Path $lkgFile -Encoding UTF8
+  Write-Audit "lkg-switch" "ok" $detail
+  Write-Output "artifact LKG switched: $LkgArtifactId@$LkgArtifactVersion (snapshot taken, audited)"
+}
+
 function Invoke-Check {
   $health = Get-Health
   if ($health.ok) {
@@ -250,6 +303,9 @@ switch ($Command) {
   }
   "rollback" {
     Invoke-Rollback
+  }
+  "lkg" {
+    Invoke-LkgSwitch
   }
   "watch" {
     Write-Audit "watch" "start" "interval=$IntervalSeconds failures=$FailuresBeforeRollback web=$Web"

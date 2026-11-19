@@ -9,6 +9,7 @@ import type {
   RunStatus,
   Stage,
 } from "@kit/core";
+import { switchLastKnownGood } from "@kit/core";
 import {
   type SQL,
   and,
@@ -36,6 +37,7 @@ import {
   fromDegradationRow,
   fromEventRow,
   fromKillSwitchRow,
+  fromLastKnownGoodRow,
   fromManifestRow,
   fromRunRow,
   fromStageRow,
@@ -45,6 +47,7 @@ import {
   toDegradationRow,
   toEventRow,
   toKillSwitchRow,
+  toLastKnownGoodRow,
   toManifestRow,
   toRunRow,
   toStageRow,
@@ -66,6 +69,8 @@ import type {
   EventStore,
   KillSwitchActivation,
   KillSwitchStore,
+  LastKnownGoodStore,
+  LastKnownGoodSwitch,
   ManagerSessionRecord,
   ManagerSessionRejectionInput,
   ManagerSessionStore,
@@ -86,6 +91,7 @@ import {
   degradationAudit,
   degradationState,
   killSwitches,
+  lastKnownGood,
   managerSessions,
   manifests,
   runRequests,
@@ -977,6 +983,108 @@ function fromSqliteAutopilotRow(
     updatedAt: row.updatedAt,
     version: Number(row.version ?? 0),
   };
+}
+
+export class SqliteLastKnownGoodStore implements LastKnownGoodStore {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async get(lkgId: string) {
+    const [row] = await this.db
+      .select()
+      .from(lastKnownGood)
+      .where(eq(lastKnownGood.lkgId, lkgId))
+      .limit(1);
+    return row ? fromLastKnownGoodRow(row) : null;
+  }
+
+  async listActive(workspaceId?: string) {
+    const rows = await this.db
+      .select()
+      .from(lastKnownGood)
+      .where(
+        workspaceId
+          ? and(
+              eq(lastKnownGood.status, "active"),
+              eq(lastKnownGood.workspaceId, workspaceId),
+            )
+          : eq(lastKnownGood.status, "active"),
+      )
+      .orderBy(desc(lastKnownGood.verifiedAt));
+    return rows.map(fromLastKnownGoodRow);
+  }
+
+  async history(workspaceId: string, targetKey: string, limit = 50) {
+    const rows = await this.db
+      .select()
+      .from(lastKnownGood)
+      .where(
+        and(
+          eq(lastKnownGood.workspaceId, workspaceId),
+          eq(lastKnownGood.targetKey, targetKey),
+        ),
+      )
+      .orderBy(desc(lastKnownGood.createdAt))
+      .limit(Math.max(1, Math.min(limit, 200)));
+    return rows.map(fromLastKnownGoodRow);
+  }
+
+  async switch(record: LastKnownGoodSwitch["record"]) {
+    // better-sqlite3 transactions are synchronous: use the sync builders so
+    // the supersede + insert pair commits atomically.
+    return this.db.transaction((tx) => {
+      const existingRow = tx
+        .select()
+        .from(lastKnownGood)
+        .where(eq(lastKnownGood.lkgId, record.lkgId))
+        .limit(1)
+        .get();
+      if (existingRow) {
+        return {
+          record: fromLastKnownGoodRow(existingRow),
+          previous: [],
+          changed: false,
+        };
+      }
+
+      const activeRows = tx
+        .select()
+        .from(lastKnownGood)
+        .where(
+          and(
+            eq(lastKnownGood.workspaceId, record.workspaceId),
+            eq(lastKnownGood.targetKey, record.targetKey),
+            eq(lastKnownGood.status, "active"),
+          ),
+        )
+        .all();
+      const transition = switchLastKnownGood({
+        previous: activeRows.map(fromLastKnownGoodRow),
+        next: record,
+      });
+      for (const previous of transition.previous) {
+        tx.update(lastKnownGood)
+          .set({
+            status: "superseded",
+            supersededBy: transition.next.lkgId,
+          })
+          .where(eq(lastKnownGood.lkgId, previous.lkgId))
+          .run();
+      }
+      const insertedRow = tx
+        .insert(lastKnownGood)
+        .values(toLastKnownGoodRow(transition.next))
+        .returning()
+        .get();
+      if (!insertedRow) {
+        throw new Error("failed to insert last-known-good");
+      }
+      return {
+        record: fromLastKnownGoodRow(insertedRow),
+        previous: transition.previous,
+        changed: true,
+      };
+    });
+  }
 }
 
 export class SqliteDegradationStore implements DegradationStore {

@@ -4,6 +4,7 @@ import { type BlobClient, FsBlobClient, S3BlobClient } from "./blob";
 import { BudgetService } from "./budget-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
 import { createDb } from "./db";
+import { LastKnownGoodService } from "./lkg-service";
 import { ensureSchema } from "./migrate";
 import {
   PostgresArtifactStore,
@@ -12,6 +13,7 @@ import {
   PostgresDegradationStore,
   PostgresEventStore,
   PostgresKillSwitchStore,
+  PostgresLastKnownGoodStore,
   PostgresManagerSessionStore,
   PostgresManifestStore,
   PostgresRunRequestStore,
@@ -25,6 +27,7 @@ import {
   SqliteDegradationStore,
   SqliteEventStore,
   SqliteKillSwitchStore,
+  SqliteLastKnownGoodStore,
   SqliteManagerSessionStore,
   SqliteManifestStore,
   SqliteRunRequestStore,
@@ -56,6 +59,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
           autopilotState: new PostgresAutopilotStateStore(handle.db),
           runRequests: new PostgresRunRequestStore(handle.db, opLog),
           degradation: new PostgresDegradationStore(handle.db),
+          lkg: new PostgresLastKnownGoodStore(handle.db),
           managerSessions: new PostgresManagerSessionStore(handle.db),
           killSwitches: new PostgresKillSwitchStore(handle.db),
         }
@@ -69,6 +73,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
           autopilotState: new SqliteAutopilotStateStore(handle.db),
           runRequests: new SqliteRunRequestStore(handle.db, opLog),
           degradation: new SqliteDegradationStore(handle.db),
+          lkg: new SqliteLastKnownGoodStore(handle.db),
           managerSessions: new SqliteManagerSessionStore(handle.db),
           killSwitches: new SqliteKillSwitchStore(handle.db),
         };
@@ -85,6 +90,9 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     ...repositories,
     blobClient,
     artifactService: new ArtifactService(blobs, artifactStore, blobClient, {
+      sql: handle.sql,
+    }),
+    lkgService: new LastKnownGoodService(repositories.lkg, {
       sql: handle.sql,
     }),
     approvals: new ApprovalService({

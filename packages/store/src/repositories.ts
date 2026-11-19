@@ -9,6 +9,7 @@ import type {
   EventEnvelope,
   ExitCriteria,
   KillSwitch,
+  LastKnownGood,
   Manifest,
   QualityFloor,
   Run,
@@ -18,7 +19,7 @@ import type {
   Stage,
   StageStatus,
 } from "@kit/core";
-import { newId } from "@kit/core";
+import { newId, switchLastKnownGood } from "@kit/core";
 import {
   type SQL,
   and,
@@ -41,6 +42,7 @@ import {
   degradationAudit,
   degradationState,
   killSwitches,
+  lastKnownGood,
   managerSessions,
   manifests,
   runRequests,
@@ -165,6 +167,28 @@ export interface ArtifactStore {
   ): Promise<ArtifactAncestryNode[]>;
   /** Re-materializes edges from manifests.input_refs + artifacts.supersedes. */
   backfillEdges(): Promise<ArtifactEdgeBackfillResult>;
+}
+
+export interface LastKnownGoodSwitch {
+  record: LastKnownGood;
+  previous: LastKnownGood[];
+  changed: boolean;
+}
+
+/**
+ * The active LKG pin per workspace target. The table keeps every registered
+ * pin so a switch can be audited and reversed.
+ */
+export interface LastKnownGoodStore {
+  get(lkgId: string): Promise<LastKnownGood | null>;
+  listActive(workspaceId?: string): Promise<LastKnownGood[]>;
+  history(
+    workspaceId: string,
+    targetKey: string,
+    limit?: number,
+  ): Promise<LastKnownGood[]>;
+  /** Supersedes the active pins of the record's workspace target. */
+  switch(record: LastKnownGood): Promise<LastKnownGoodSwitch>;
 }
 
 export interface AutopilotStateRecord {
@@ -487,6 +511,40 @@ export function fromArtifactRow(
     supersedes: row.supersedes,
     supersededBy: row.supersededBy,
     createdAt: row.createdAt,
+  };
+}
+
+export function toLastKnownGoodRow(record: LastKnownGood) {
+  return {
+    lkgId: record.lkgId,
+    workspaceId: record.workspaceId,
+    targetKey: record.targetKey,
+    artifactRefs: record.artifactRefs,
+    verifiedAt: record.verifiedAt,
+    verifier: record.verifier,
+    status: record.status,
+    supersedes: record.supersedes,
+    supersededBy: record.supersededBy,
+    createdAt: record.createdAt,
+    createdBy: record.createdBy,
+  };
+}
+
+export function fromLastKnownGoodRow(
+  row: typeof lastKnownGood.$inferSelect,
+): LastKnownGood {
+  return {
+    lkgId: row.lkgId,
+    workspaceId: row.workspaceId,
+    targetKey: row.targetKey,
+    artifactRefs: row.artifactRefs,
+    verifiedAt: row.verifiedAt,
+    verifier: row.verifier,
+    status: row.status as LastKnownGood["status"],
+    supersedes: row.supersedes ?? null,
+    supersededBy: row.supersededBy ?? null,
+    createdAt: row.createdAt,
+    createdBy: row.createdBy,
   };
 }
 
@@ -1164,6 +1222,107 @@ export class PostgresArtifactStore implements ArtifactStore {
         to: { artifactId: row.toId, version: row.toVersion },
         relation: row.relation as ArtifactEdgeRelation,
       }));
+  }
+}
+
+export class PostgresLastKnownGoodStore implements LastKnownGoodStore {
+  constructor(private readonly db: Database) {}
+
+  async get(lkgId: string): Promise<LastKnownGood | null> {
+    const [row] = await this.db
+      .select()
+      .from(lastKnownGood)
+      .where(eq(lastKnownGood.lkgId, lkgId))
+      .limit(1);
+    return row ? fromLastKnownGoodRow(row) : null;
+  }
+
+  async listActive(workspaceId?: string): Promise<LastKnownGood[]> {
+    const rows = await this.db
+      .select()
+      .from(lastKnownGood)
+      .where(
+        workspaceId
+          ? and(
+              eq(lastKnownGood.status, "active"),
+              eq(lastKnownGood.workspaceId, workspaceId),
+            )
+          : eq(lastKnownGood.status, "active"),
+      )
+      .orderBy(desc(lastKnownGood.verifiedAt));
+    return rows.map(fromLastKnownGoodRow);
+  }
+
+  async history(
+    workspaceId: string,
+    targetKey: string,
+    limit = 50,
+  ): Promise<LastKnownGood[]> {
+    const rows = await this.db
+      .select()
+      .from(lastKnownGood)
+      .where(
+        and(
+          eq(lastKnownGood.workspaceId, workspaceId),
+          eq(lastKnownGood.targetKey, targetKey),
+        ),
+      )
+      .orderBy(desc(lastKnownGood.createdAt))
+      .limit(Math.max(1, Math.min(limit, 200)));
+    return rows.map(fromLastKnownGoodRow);
+  }
+
+  async switch(record: LastKnownGood): Promise<LastKnownGoodSwitch> {
+    return this.db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(lastKnownGood)
+        .where(eq(lastKnownGood.lkgId, record.lkgId))
+        .limit(1);
+      if (existing) {
+        return {
+          record: fromLastKnownGoodRow(existing),
+          previous: [],
+          changed: false,
+        };
+      }
+
+      const activeRows = await tx
+        .select()
+        .from(lastKnownGood)
+        .where(
+          and(
+            eq(lastKnownGood.workspaceId, record.workspaceId),
+            eq(lastKnownGood.targetKey, record.targetKey),
+            eq(lastKnownGood.status, "active"),
+          ),
+        );
+      const transition = switchLastKnownGood({
+        previous: activeRows.map(fromLastKnownGoodRow),
+        next: record,
+      });
+      for (const previous of transition.previous) {
+        await tx
+          .update(lastKnownGood)
+          .set({
+            status: "superseded",
+            supersededBy: transition.next.lkgId,
+          })
+          .where(eq(lastKnownGood.lkgId, previous.lkgId));
+      }
+      const [inserted] = await tx
+        .insert(lastKnownGood)
+        .values(toLastKnownGoodRow(transition.next))
+        .returning();
+      if (!inserted) {
+        throw new Error("failed to insert last-known-good");
+      }
+      return {
+        record: fromLastKnownGoodRow(inserted),
+        previous: transition.previous,
+        changed: true,
+      };
+    });
   }
 }
 

@@ -162,6 +162,13 @@
   "degradation": {
     "title": "降级与只读模式",
     "description": "显式切换到降级或只读模式；每次进入、退出与被阻断的执行都会留痕审计。",
+    "lkgTitle": "最后已知良好产物",
+    "lkgEmpty": "尚未登记产物级 LKG。",
+    "lkgVerified": "已复验",
+    "lkgStale": "仅内部",
+    "lkgVerifier": "复验人 {verifier}",
+    "lkgExpires": "到期 {expires}",
+    "lkgNote": "降级期间对外交付回退到 LKG；超过 7 天未复验的 LKG 自动降为仅内部可查。",
     "activeTitle": "当前生效",
     "empty": "当前没有降级或只读模式。",
     "enterTitle": "进入模式",
