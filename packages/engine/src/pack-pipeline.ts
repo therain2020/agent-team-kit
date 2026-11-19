@@ -68,6 +68,7 @@ export async function runPackPipeline(
       name: stage.stageName,
       ...(stage.agentId ? { agentId: stage.agentId } : {}),
     })),
+    ...(input.origin ? { origin: input.origin } : {}),
     ...(input.budget ? { budget: input.budget } : {}),
   });
 

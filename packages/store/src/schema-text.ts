@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS runs (
   workflow_version TEXT NOT NULL,
   run_mode TEXT NOT NULL,
   status TEXT NOT NULL,
+  origin_kind TEXT,
+  trigger_id TEXT,
+  trigger_run_id TEXT,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
@@ -136,6 +139,13 @@ ALTER TABLE autopilot_state
 
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS repo_root TEXT;
 
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS origin_kind TEXT;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS trigger_id TEXT;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS trigger_run_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS origin_kind TEXT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS trigger_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS trigger_run_id TEXT;
+
 CREATE TABLE IF NOT EXISTS kill_switches (
   switch_id TEXT PRIMARY KEY,
   scope TEXT NOT NULL,
@@ -199,6 +209,8 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   agent_id TEXT NOT NULL,
   hypothesis TEXT NOT NULL,
   signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+  signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb,
   baseline_variant_id TEXT,
   candidate_variant_id TEXT,
   baseline_name TEXT NOT NULL DEFAULT '',
@@ -266,6 +278,10 @@ ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS evaluator_hash TEXT;
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS evaluator_approval_ref TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE evolution_state
   ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
@@ -290,6 +306,9 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   workflow_id TEXT,
   workspace_id TEXT NOT NULL DEFAULT 'default',
   repo_root TEXT,
+  origin_kind TEXT,
+  trigger_id TEXT,
+  trigger_run_id TEXT,
   goal TEXT NOT NULL,
   acceptance TEXT,
   run_mode TEXT NOT NULL,
@@ -592,6 +611,7 @@ CREATE INDEX IF NOT EXISTS idx_budget_charges_run ON budget_charges(workspace_id
 CREATE INDEX IF NOT EXISTS idx_budget_charges_run_timeline
   ON budget_charges(workspace_id, run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_origin ON runs(workspace_id, origin_kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_manifests_run ON manifests(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
@@ -602,6 +622,7 @@ CREATE INDEX IF NOT EXISTS idx_evolution_cycles_created ON evolution_cycles(work
 CREATE INDEX IF NOT EXISTS idx_evolution_decisions_created ON evolution_decisions(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_merge_tickets_status ON merge_tickets(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_runs_updated ON iteration_runs(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_iteration_runs_origin ON iteration_runs(workspace_id, origin_kind, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_id, task_id);
 CREATE INDEX IF NOT EXISTS idx_iteration_events_run ON iteration_events(iteration_id, event_id);
 CREATE INDEX IF NOT EXISTS idx_iteration_events_turn ON iteration_events(iteration_id, task_id, turn, step);
@@ -661,6 +682,9 @@ CREATE TABLE IF NOT EXISTS runs (
   workflow_version TEXT NOT NULL,
   run_mode TEXT NOT NULL,
   status TEXT NOT NULL,
+  origin_kind TEXT,
+  trigger_id TEXT,
+  trigger_run_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
@@ -829,6 +853,8 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   agent_id TEXT NOT NULL,
   hypothesis TEXT NOT NULL,
   signals TEXT NOT NULL DEFAULT '[]',
+  signal_refs TEXT NOT NULL DEFAULT '[]',
+  signal_sources TEXT NOT NULL DEFAULT '[]',
   baseline_variant_id TEXT,
   candidate_variant_id TEXT,
   baseline_name TEXT NOT NULL DEFAULT '',
@@ -909,6 +935,9 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   workflow_id TEXT,
   workspace_id TEXT NOT NULL DEFAULT 'default',
   repo_root TEXT,
+  origin_kind TEXT,
+  trigger_id TEXT,
+  trigger_run_id TEXT,
   goal TEXT NOT NULL,
   acceptance TEXT,
   run_mode TEXT NOT NULL,
@@ -1165,10 +1194,19 @@ ALTER TABLE stages ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE iteration_runs ADD COLUMN repo_root TEXT;
 
+ALTER TABLE runs ADD COLUMN origin_kind TEXT;
+ALTER TABLE runs ADD COLUMN trigger_id TEXT;
+ALTER TABLE runs ADD COLUMN trigger_run_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN origin_kind TEXT;
+ALTER TABLE iteration_runs ADD COLUMN trigger_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN trigger_run_id TEXT;
+
 ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_path TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_approval_ref TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN signal_refs TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE evolution_cycles ADD COLUMN signal_sources TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS budgets (
@@ -1229,6 +1267,7 @@ CREATE INDEX IF NOT EXISTS idx_budget_charges_run ON budget_charges(workspace_id
 CREATE INDEX IF NOT EXISTS idx_budget_charges_run_timeline
   ON budget_charges(workspace_id, run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_origin ON runs(workspace_id, origin_kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_manifests_run ON manifests(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
@@ -1239,6 +1278,7 @@ CREATE INDEX IF NOT EXISTS idx_evolution_cycles_created ON evolution_cycles(work
 CREATE INDEX IF NOT EXISTS idx_evolution_decisions_created ON evolution_decisions(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_merge_tickets_status ON merge_tickets(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_runs_updated ON iteration_runs(workspace_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_iteration_runs_origin ON iteration_runs(workspace_id, origin_kind, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_iteration_tasks_run ON iteration_tasks(iteration_id, task_id);
 CREATE INDEX IF NOT EXISTS idx_iteration_events_run ON iteration_events(iteration_id, event_id);
 CREATE INDEX IF NOT EXISTS idx_iteration_events_turn ON iteration_events(iteration_id, task_id, turn, step);

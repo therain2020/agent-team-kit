@@ -115,3 +115,56 @@ export function progressPercent(run: WorldRunView): number {
   const value = Number.isFinite(run.progress) ? run.progress : 0;
   return Math.round(Math.min(1, Math.max(0, value)) * 100);
 }
+
+export interface WorldSearchParams {
+  /** Raw `?tab=` value ("" when absent): `runs`, `iterations`, `activity`, `atlas`… */
+  tab: string;
+  /** `?run=` drill-down target, trimmed; undefined when absent. */
+  runId?: string;
+  /** `?artifact=` evidence/drill-down key, trimmed; undefined when absent. */
+  artifactKey?: string;
+}
+
+/**
+ * Normalises the `/world` query string into one surface descriptor. The URL
+ * owns open/close state (issue #161), so this stays pure: SSR, the drawer
+ * shell and the Atlas overlay all read the same parsed shape.
+ */
+export function parseWorldSearchParams(input: {
+  tab?: string | string[];
+  run?: string | string[];
+  artifact?: string | string[];
+}): WorldSearchParams {
+  const runId = firstValue(input.run);
+  const artifactKey = firstValue(input.artifact);
+  return {
+    tab: firstValue(input.tab) ?? "",
+    ...(runId ? { runId } : {}),
+    ...(artifactKey ? { artifactKey } : {}),
+  };
+}
+
+function firstValue(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const trimmed = raw?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+/**
+ * Deep link for the Atlas overlay on `/world` (99 §3). Atlas is a `/world`
+ * drill-down, not a first-class route (issue #160), so every entry point —
+ * the run drawer button, the run selector, the evidence chain — builds its
+ * href here and the URL stays shareable.
+ */
+export function atlasHref(
+  options: { runId?: string | null; artifactKey?: string | null } = {},
+): string {
+  const parts = ["tab=atlas"];
+  if (options.runId) {
+    parts.push(`run=${encodeURIComponent(options.runId)}`);
+  }
+  if (options.artifactKey) {
+    parts.push(`artifact=${encodeURIComponent(options.artifactKey)}`);
+  }
+  return `/world?${parts.join("&")}`;
+}

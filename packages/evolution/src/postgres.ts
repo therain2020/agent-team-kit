@@ -23,6 +23,7 @@ import type {
   StoredCanaryState,
   StoredVariant,
 } from "./repository";
+import type { EvolutionSignalRef } from "./signals";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -68,6 +69,8 @@ interface CycleRow {
   agent_id: string;
   hypothesis: string;
   signals: string[] | string;
+  signal_refs: EvolutionSignalRef[] | string | null;
+  signal_sources: string[] | string | null;
   baseline_variant_id: string | null;
   candidate_variant_id: string | null;
   baseline_name: string;
@@ -568,6 +571,9 @@ export class StoreEvolutionRepository implements EvolutionRepository {
   private async appendCycleInternal(
     record: EvolutionCycleRecord,
   ): Promise<void> {
+    // Legacy cycles.jsonl imports predate signalRefs/signalSources.
+    const signalRefs = record.signalRefs ?? [];
+    const signalSources = record.signalSources ?? [];
     const baselineId = record.baselineName
       ? await this.variantIdByName(record.baselineName)
       : null;
@@ -577,6 +583,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
     await this.store.sql`
       INSERT INTO evolution_cycles (
         cycle_id, workspace_id, pack_dir, agent_id, hypothesis, signals,
+        signal_refs, signal_sources,
         baseline_variant_id, candidate_variant_id, baseline_name, candidate_name,
         baseline_pass, candidate_pass, baseline_score, candidate_score,
         cost_cny, decision, rationale, auto_applied, error,
@@ -585,6 +592,8 @@ export class StoreEvolutionRepository implements EvolutionRepository {
       ) VALUES (
         ${record.cycleId}, ${this.workspaceId}, ${record.packDir}, ${record.agentId},
         ${record.hypothesis}, ${this.store.sql.json(record.signals)},
+        ${this.store.sql.json(signalRefs)},
+        ${this.store.sql.json(signalSources)},
         ${baselineId}, ${candidateId}, ${record.baselineName},
         ${record.candidateName}, ${record.baselinePass}, ${record.candidatePass},
         ${record.baselineScore}, ${record.candidateScore}, ${record.costCny},
@@ -803,6 +812,8 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
       typeof row.signals === "string"
         ? (JSON.parse(row.signals) as string[])
         : row.signals,
+    signalRefs: parseJsonArray<EvolutionSignalRef>(row.signal_refs),
+    signalSources: parseJsonArray<string>(row.signal_sources),
     baselineName: row.baseline_name,
     candidateName: row.candidate_name,
     baselinePass:
@@ -871,6 +882,21 @@ async function readJsonl<T>(file: string): Promise<T[]> {
         return [];
       }
     });
+}
+
+function parseJsonArray<T>(value: T[] | string | null): T[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 function toIso(value: Date | string | null): string | null {

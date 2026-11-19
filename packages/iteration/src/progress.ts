@@ -45,13 +45,16 @@ export async function startIteration(
   const now = new Date().toISOString();
   await store.sql`
     INSERT INTO iteration_runs (
-      iteration_id, workflow_id, workspace_id, repo_root, goal, acceptance,
+      iteration_id, workflow_id, workspace_id, repo_root, origin_kind,
+      trigger_id, trigger_run_id, goal, acceptance,
       run_mode, apply_mode, status, phase, plan_artifact_id, started_at,
       updated_at
     ) VALUES (
       ${input.iterationId},
       ${input.workflowId ?? `iteration-${input.iterationId}`},
-      ${input.workspaceId}, ${input.repoRoot ?? null}, ${input.goal},
+      ${input.workspaceId}, ${input.repoRoot ?? null},
+      ${input.origin?.kind ?? null}, ${input.origin?.triggerId ?? null},
+      ${input.origin?.triggerRunId ?? null}, ${input.goal},
       ${input.acceptance ?? null},
       ${input.runMode}, ${input.applyMode}, 'running', 'planned',
       ${planArtifactId}, ${now}, ${now}
@@ -59,6 +62,12 @@ export async function startIteration(
     ON CONFLICT (iteration_id) DO UPDATE SET
       workflow_id = EXCLUDED.workflow_id,
       repo_root = COALESCE(EXCLUDED.repo_root, iteration_runs.repo_root),
+      origin_kind = COALESCE(EXCLUDED.origin_kind, iteration_runs.origin_kind),
+      trigger_id = COALESCE(EXCLUDED.trigger_id, iteration_runs.trigger_id),
+      trigger_run_id = COALESCE(
+        EXCLUDED.trigger_run_id,
+        iteration_runs.trigger_run_id
+      ),
       goal = EXCLUDED.goal,
       acceptance = EXCLUDED.acceptance,
       run_mode = EXCLUDED.run_mode,

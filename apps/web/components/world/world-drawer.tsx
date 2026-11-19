@@ -19,6 +19,7 @@ import {
   timeUntil,
 } from "@/lib/utils";
 import type { WorldDrawerData } from "@/lib/world-page";
+import { atlasHref } from "@/lib/world-view";
 import {
   Activity,
   ArrowRight,
@@ -27,6 +28,7 @@ import {
   FileText,
   Inbox,
   MessageSquare,
+  Network,
   Play,
   ScrollText,
   X,
@@ -293,6 +295,12 @@ export async function WorldDrawer({
           >
             <MessageSquare className="size-3.5" />
             {t("drawer.askManager")}
+          </Link>
+        </Button>
+        <Button asChild size="sm" variant="outline">
+          <Link href={atlasHref({ runId: data.runId })}>
+            <Network className="size-3.5" />
+            {t("drawer.atlas")}
           </Link>
         </Button>
         <Button asChild size="sm" variant="outline">

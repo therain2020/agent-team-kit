@@ -7,6 +7,7 @@ import {
   type AutopilotSchedule,
   cnyToMicro,
   eventEnvelopeSchema,
+  isAutoApproveOriginEligible,
   newId,
   resolveKillSwitch,
   utcDayKey,
@@ -428,6 +429,7 @@ async function processSchedules(input: {
         inputFile,
         runMode: schedule.mode,
         stub: process.env.KIT_MODEL_MODE === "stub",
+        origin: { kind: "schedule", triggerId: schedule.id },
       });
       const admitted = await input.store.budgetService.admitRun({
         workspaceId: built.input.workspaceId,
@@ -619,6 +621,7 @@ async function processIterations(input: {
             ...(iteration.coder ? { coder: iteration.coder } : {}),
             stub: false,
             dedupeKey,
+            origin: { kind: "schedule", triggerId: iteration.id },
           },
         ],
       });
@@ -685,8 +688,14 @@ async function processAutoApprovals(input: {
   }
 
   let changed = false;
+  const scope = policy.scope ?? "scheduled";
   const paused = await store.runs.list({ status: "paused", limit: 50 });
   for (const run of paused) {
+    // Manual, web, cli and pre-upgrade (`unknown`) runs are never approved by
+    // policy unless the operator explicitly opts into `scope: all`.
+    if (!isAutoApproveOriginEligible(run.originKind, scope)) {
+      continue;
+    }
     if (run.workflowId !== undefined) {
       const workflow = pack.loaded.workflows.find(
         (item) => item.id === run.workflowId,

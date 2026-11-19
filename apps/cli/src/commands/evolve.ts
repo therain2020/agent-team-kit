@@ -285,8 +285,12 @@ export function registerEvolve(program: Command): void {
       "promote automatically after a passed canary",
       false,
     )
-    .option("--force", "run even without archive failure signals", false)
+    .option("--force", "run even without failure signals", false)
     .option("--budget <cny>", "cycle budget in CNY")
+    .option(
+      "--signals-root <dir>",
+      "directory holding iterations.jsonl (default KIT_SIGNALS_ROOT or ~/.agent-team-kit/signals)",
+    )
     .option("--cycles-root <dir>", "external root for frozen eval snapshots")
     .option("--hidden-evals <dir>", "hidden eval directory to freeze")
     .option(
@@ -310,6 +314,7 @@ export function registerEvolve(program: Command): void {
           autoApply: boolean;
           force: boolean;
           budget?: string;
+          signalsRoot?: string;
           cyclesRoot?: string;
           hiddenEvals?: string;
           approveEvaluatorChange: boolean;
@@ -329,6 +334,7 @@ export function registerEvolve(program: Command): void {
               autoApply: options.autoApply,
               force: options.force,
               budgetCny: options.budget ? Number(options.budget) : undefined,
+              signalsRoot: options.signalsRoot,
               cyclesRoot: options.cyclesRoot,
               ...(options.hiddenEvals
                 ? { hiddenEvalsDir: options.hiddenEvals }

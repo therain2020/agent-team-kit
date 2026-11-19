@@ -4,6 +4,35 @@
 promotes anything. The cycle then evaluates the baseline, candidate and canary
 only against that frozen copy.
 
+## Signal sources
+
+A cycle starts from failure signals gathered from three adapters:
+
+- `iterations.jsonl` — per-task fitness written by each iterate run. The file
+  lives under `KIT_SIGNALS_ROOT` (default `~/.agent-team-kit/signals`); override
+  it per invocation with `evolve cycle --signals-root <dir>` or point at a
+  specific file with the `iterationsPath` option. Only tasks where
+  `verified: false` become failure signals.
+- `archive.jsonl` — failed variant scores recorded by earlier cycles.
+- `--signal <text>` — operator-supplied signals.
+
+The adapters merge, deduplicate and truncate to the eight most recent signals
+before the hypothesis is generated. Missing or empty files contribute nothing;
+blank lines, corrupt JSON and structurally invalid records are skipped. A
+duplicate record (same iteration, task and timestamp) is collapsed on first
+occurrence, so replaying or appending the same line twice cannot skew a cycle.
+
+Each cycle record stores `signalRefs` (one entry per used signal: `signalId`,
+source, and for iterations the `iterationId`/`taskId`/`domain`) and
+`signalSources` (the files that contributed, e.g.
+`iterations:/home/me/.agent-team-kit/signals/iterations.jsonl`). The generated
+hypothesis cites the sources and the most recent iterations directly. With no
+signals and no `--force`, the cycle is still skipped.
+
+JSONL files are an adapter layer only. Postgres remains the durable, queryable
+source of truth for evolution records (D-52); a unified evidence layer is
+expected to replace these files later.
+
 ## Snapshot layout
 
 ```

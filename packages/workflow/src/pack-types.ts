@@ -1,4 +1,9 @@
-import type { PackTool, RubricDimension, RunBudgetSpec } from "@kit/core";
+import type {
+  PackTool,
+  RubricDimension,
+  RunBudgetSpec,
+  RunOrigin,
+} from "@kit/core";
 
 export interface StageGate {
   ref: string;
@@ -63,6 +68,7 @@ export interface PackRunInput {
   initialInput: string;
   stages: PackStageSpec[];
   stub: boolean;
+  origin?: RunOrigin;
   maxConcurrency?: number;
   variant?: PackRunVariant;
   budget?: RunBudgetSpec;
@@ -80,6 +86,7 @@ export interface PreparePackRunInput {
   workflowVersion: string;
   runMode: "DRY_RUN" | "LIVE";
   stages: Array<{ stageId: string; name: string; agentId?: string }>;
+  origin?: RunOrigin;
   budget?: RunBudgetSpec;
 }
 

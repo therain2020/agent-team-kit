@@ -3,6 +3,8 @@ import path from "node:path";
 import {
   type CoderId,
   type RunBudgetSpec,
+  type RunOrigin,
+  type RunOriginKind,
   cnyToMicro,
   eventEnvelopeSchema,
   missionAssignmentSchema,
@@ -32,10 +34,12 @@ import {
   type JobApplyMode,
   JobError,
   type JobKind,
+  type JobOriginRecord,
   type JobRunMode,
   type JobSummary,
   type StartJobInput,
   type StartJobResult,
+  normalizeJobOrigin,
 } from "./types";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
@@ -51,10 +55,11 @@ export async function startJob(
 ): Promise<StartJobResult> {
   await assertKillSwitchClear(store, { workspaceId: "default" }, "run");
   const runMode: JobRunMode = input.runMode ?? "DRY_RUN";
+  const origin = normalizeJobOrigin(input.origin);
   const packDir = resolvePackDir(
     options.repoRoot,
     input.packDir,
-    input.origin === "cli",
+    origin.kind === "cli",
   );
   const loaded = await loadPack(packDir);
   if (!loaded.ok) {
@@ -71,13 +76,14 @@ export async function startJob(
     return await startIterationJob(
       store,
       input,
+      origin,
       runMode,
       packDir,
       loaded,
       project,
     );
   }
-  return await startPackRunJob(store, input, runMode, packDir, loaded);
+  return await startPackRunJob(store, input, origin, runMode, packDir, loaded);
 }
 
 export async function listJobs(
@@ -91,6 +97,7 @@ export async function listJobs(
     const rows = filter.status
       ? await store.sql<IterationJobRow[]>`
           SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
+                 origin_kind, trigger_id, trigger_run_id,
                  started_at, updated_at, finished_at
           FROM iteration_runs
           WHERE status = ${filter.status}
@@ -99,6 +106,7 @@ export async function listJobs(
         `
       : await store.sql<IterationJobRow[]>`
           SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
+                 origin_kind, trigger_id, trigger_run_id,
                  started_at, updated_at, finished_at
           FROM iteration_runs
           ORDER BY updated_at DESC
@@ -113,6 +121,7 @@ export async function listJobs(
         phase: row.phase,
         runMode: row.run_mode,
         workflowId: row.workflow_id,
+        ...originSummary(row),
         createdAt: iso(row.started_at),
         updatedAt: iso(row.updated_at),
         finishedAt: row.finished_at ? iso(row.finished_at) : null,
@@ -123,14 +132,16 @@ export async function listJobs(
   if (!filter.kind || filter.kind === "packRun") {
     const rows = filter.status
       ? await store.sql<RunJobRow[]>`
-          SELECT run_id, workflow_id, run_mode, status, created_at, updated_at
+          SELECT run_id, workflow_id, run_mode, status, origin_kind, trigger_id,
+                 trigger_run_id, created_at, updated_at
           FROM runs
           WHERE status = ${filter.status}
           ORDER BY updated_at DESC
           LIMIT ${limit}
         `
       : await store.sql<RunJobRow[]>`
-          SELECT run_id, workflow_id, run_mode, status, created_at, updated_at
+          SELECT run_id, workflow_id, run_mode, status, origin_kind, trigger_id,
+                 trigger_run_id, created_at, updated_at
           FROM runs
           ORDER BY updated_at DESC
           LIMIT ${limit}
@@ -144,6 +155,7 @@ export async function listJobs(
         phase: null,
         runMode: row.run_mode,
         workflowId: row.workflow_id,
+        ...originSummary(row),
         createdAt: iso(row.created_at),
         updatedAt: iso(row.updated_at),
         finishedAt: null,
@@ -164,6 +176,7 @@ export async function getJob(
   if (kind === "iteration") {
     const rows = await store.sql<IterationJobRow[]>`
       SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
+             origin_kind, trigger_id, trigger_run_id,
              started_at, updated_at, finished_at
       FROM iteration_runs WHERE iteration_id = ${jobId} LIMIT 1
     `;
@@ -179,6 +192,7 @@ export async function getJob(
       phase: row.phase,
       runMode: row.run_mode,
       workflowId: row.workflow_id,
+      ...originSummary(row),
       createdAt: iso(row.started_at),
       updatedAt: iso(row.updated_at),
       finishedAt: row.finished_at ? iso(row.finished_at) : null,
@@ -186,7 +200,8 @@ export async function getJob(
   }
 
   const rows = await store.sql<RunJobRow[]>`
-    SELECT run_id, workflow_id, run_mode, status, created_at, updated_at
+    SELECT run_id, workflow_id, run_mode, status, origin_kind, trigger_id,
+           trigger_run_id, created_at, updated_at
     FROM runs WHERE run_id = ${jobId} LIMIT 1
   `;
   const row = rows[0];
@@ -201,6 +216,7 @@ export async function getJob(
     phase: null,
     runMode: row.run_mode,
     workflowId: row.workflow_id,
+    ...originSummary(row),
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     finishedAt: null,
@@ -281,6 +297,7 @@ export async function abortJob(
 async function startPackRunJob(
   store: Store,
   input: StartJobInput,
+  origin: JobOriginRecord,
   runMode: JobRunMode,
   packDir: string,
   loaded: Awaited<ReturnType<typeof loadPack>>,
@@ -298,7 +315,13 @@ async function startPackRunJob(
     throw new JobError("unknown_workflow", `unknown workflow: ${workflowId}`);
   }
 
-  const mission = await resolveMission(store, loaded, input, workflowId);
+  const mission = await resolveMission(
+    store,
+    loaded,
+    input,
+    workflowId,
+    origin,
+  );
   const evidenceText = await resolveEvidence(store, input);
   const missionGoal =
     mission && typeof mission.goal === "string" ? mission.goal : undefined;
@@ -313,6 +336,7 @@ async function startPackRunJob(
       stub: input.stub === true,
       runMode,
       ...(budget ? { budget } : {}),
+      origin: toRunOrigin(origin),
     });
   } catch (error) {
     throw new JobError(
@@ -341,7 +365,7 @@ async function startPackRunJob(
     occurredAt: now,
     receivedAt: now,
     workspaceId: built.input.workspaceId,
-    idempotencyKey: `${input.origin ?? "api"}:${built.input.runId}`,
+    idempotencyKey: `${origin.kind}:${built.input.runId}`,
     traceId: newId("trc"),
     payloadRef: "memory://job",
   });
@@ -413,6 +437,7 @@ async function startPackRunJob(
 async function startIterationJob(
   store: Store,
   input: StartJobInput,
+  origin: JobOriginRecord,
   runMode: JobRunMode,
   packDir: string,
   loaded: Awaited<ReturnType<typeof loadPack>>,
@@ -496,15 +521,18 @@ async function startIterationJob(
     ...(input.budgetCny !== undefined ? { budgetCny: input.budgetCny } : {}),
     ...(budget ? { budget } : {}),
     ...(dedupeKey ? { dedupeKey } : {}),
+    origin: toRunOrigin(origin),
   };
 
   const now = new Date().toISOString();
   await store.sql`
     INSERT INTO iteration_runs (
-      iteration_id, workflow_id, workspace_id, repo_root, goal, acceptance,
+      iteration_id, workflow_id, workspace_id, repo_root, origin_kind,
+      trigger_id, trigger_run_id, goal, acceptance,
       run_mode, apply_mode, status, phase, started_at, updated_at
     ) VALUES (
       ${iterationId}, ${workflowId}, 'default', ${project.path},
+      ${origin.kind}, ${origin.triggerId ?? null}, ${origin.triggerRunId ?? null},
       ${iterationInput.goal}, ${iterationInput.acceptance ?? null},
       ${runMode}, ${applyMode}, 'running', 'queued', ${now}, ${now}
     )
@@ -632,6 +660,7 @@ async function resolveMission(
   loaded: Extract<Awaited<ReturnType<typeof loadPack>>, { ok: true }>,
   input: StartJobInput,
   workflowId: string,
+  origin: JobOriginRecord,
 ): Promise<Record<string, unknown> | null> {
   if (!input.mission) {
     return null;
@@ -708,7 +737,7 @@ async function resolveMission(
     allowCombined,
     mode: input.runMode ?? "DRY_RUN",
     createdAt: new Date().toISOString(),
-    createdBy: `operator:${input.origin ?? "api"}`,
+    createdBy: origin.actor,
   }) as Record<string, unknown>;
 }
 
@@ -784,6 +813,15 @@ function projectRef(project: ProjectTarget): {
   path: string;
 } {
   return { id: project.id, name: project.name, path: project.path };
+}
+
+/** The persisted subset of an origin; the actor only lives in mission/op log. */
+function toRunOrigin(origin: JobOriginRecord): RunOrigin {
+  return {
+    kind: origin.kind,
+    ...(origin.triggerId ? { triggerId: origin.triggerId } : {}),
+    ...(origin.triggerRunId ? { triggerRunId: origin.triggerRunId } : {}),
+  };
 }
 
 function stringList(value: unknown): string[] {
@@ -898,7 +936,13 @@ function isTerminal(status: string): boolean {
   return ["succeeded", "failed", "cancelled", "completed"].includes(status);
 }
 
-interface IterationJobRow {
+interface OriginJobRow {
+  origin_kind: string | null;
+  trigger_id: string | null;
+  trigger_run_id: string | null;
+}
+
+interface IterationJobRow extends OriginJobRow {
   iteration_id: string;
   goal: string | null;
   status: string;
@@ -910,11 +954,24 @@ interface IterationJobRow {
   finished_at: string | Date | null;
 }
 
-interface RunJobRow {
+interface RunJobRow extends OriginJobRow {
   run_id: string;
   workflow_id: string;
   run_mode: string;
   status: string;
   created_at: string | Date;
   updated_at: string | Date;
+}
+
+/** Rows written before the origin migration read back as `unknown`. */
+function originSummary(row: OriginJobRow): {
+  originKind: RunOriginKind;
+  triggerId: string | null;
+  triggerRunId: string | null;
+} {
+  return {
+    originKind: (row.origin_kind as RunOriginKind | null) ?? "unknown",
+    triggerId: row.trigger_id ?? null,
+    triggerRunId: row.trigger_run_id ?? null,
+  };
 }
