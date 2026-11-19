@@ -2,6 +2,7 @@ export * from "./approval-service";
 export * from "./artifact-service";
 export * from "./blob";
 export * from "./budget-service";
+export * from "./circuit-breaker-service";
 export * from "./config";
 export * from "./cost-service";
 export * from "./db";

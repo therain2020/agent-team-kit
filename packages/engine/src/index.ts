@@ -1,3 +1,4 @@
+export * from "./circuit-breaker";
 export * from "./degradation-guard";
 export * from "./heartbeat";
 export * from "./iteration-activities";
