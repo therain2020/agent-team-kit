@@ -77,6 +77,12 @@ interface ExpiredStatsRow {
   newest: string | Date | null;
 }
 
+interface ExpiredStats {
+  total: number;
+  oldest: string | Date | null;
+  newest: string | Date | null;
+}
+
 export async function pruneEventRetention(
   store: EventRetentionStore,
   options: EventRetentionOptions = {},
@@ -155,7 +161,7 @@ async function expiredStats(
   store: EventRetentionStore,
   table: EventRetentionTable,
   cutoff: string,
-): Promise<ExpiredStatsRow> {
+): Promise<ExpiredStats> {
   const rows =
     table === "activity_events"
       ? await store.sql<ExpiredStatsRow[]>`
