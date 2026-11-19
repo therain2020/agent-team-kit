@@ -13,6 +13,8 @@ import {
 } from "@kit/core";
 import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
 import {
+  backfillApprovals,
+  decideApprovalRecord,
   findApprovalRequest,
   findDecisionForRequest,
   recordDecision,
@@ -44,6 +46,8 @@ export interface TickResult {
   nightMode?: boolean;
   nightModeReason?: string;
   blocked?: { scope: string; target: string; reason: string };
+  /** Approval ids moved to `expired` during this tick (SLA maintenance). */
+  expired?: string[];
 }
 
 interface PackContext {
@@ -113,6 +117,9 @@ export async function runAutopilotTick(
       store,
       `kit:autopilot:${WORKSPACE_ID}`,
       async () => {
+        // Approvals maintenance runs before scheduling so backfilled rows and
+        // SLA expiries are visible to the same tick's auto-approval pass.
+        await maintainApprovals(store, now, result);
         for (const pack of packs) {
           try {
             const effective: PackContext = preset
@@ -587,6 +594,38 @@ async function processIterations(input: {
   return changed;
 }
 
+/**
+ * Periodic approvals maintenance, folded into the autopilot tick instead of
+ * spawning another daemon: backfill entities for pre-upgrade paused runs, then
+ * flip rows past their expiry to `expired` (with activity audit).
+ */
+async function maintainApprovals(
+  store: Awaited<ReturnType<typeof initStore>>,
+  now: Date,
+  result: TickResult,
+): Promise<void> {
+  try {
+    await backfillApprovals(store, { workspaceId: WORKSPACE_ID });
+  } catch (error) {
+    result.errors.push(
+      `approvals backfill: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    const expired = await store.approvals.expireDue(now.toISOString());
+    if (expired.length > 0) {
+      result.expired = [
+        ...(result.expired ?? []),
+        ...expired.map((row) => row.approvalId),
+      ];
+    }
+  } catch (error) {
+    result.errors.push(
+      `approvals expiry: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 async function processAutoApprovals(input: {
   pack: PackContext;
   state: AutopilotState;
@@ -658,19 +697,23 @@ async function processAutoApprovals(input: {
       continue;
     }
 
-    const existing = await findDecisionForRequest(
-      store,
-      run.runId,
-      approval.requestId,
-    );
-    if (!existing) {
-      await recordDecision(
-        store,
-        run.runId,
-        "approve",
-        `auto-approved by autopilot (risk ${approval.riskClass}, cost ${cost.toFixed(4)} CNY)`,
-        { requestId: approval.requestId, actor: "policy:autopilot" },
-      );
+    const note = `auto-approved by autopilot (risk ${approval.riskClass}, cost ${cost.toFixed(4)} CNY)`;
+    const recorded = await decideApprovalRecord(store, {
+      runId: run.runId,
+      requestId: approval.requestId,
+      decision: "approve",
+      actor: "policy:autopilot",
+      note,
+    });
+    if (!recorded.ok) {
+      result.errors.push(`${run.runId}: ${recorded.error}`);
+      continue;
+    }
+    if (!recorded.duplicate) {
+      await recordDecision(store, run.runId, "approve", note, {
+        requestId: approval.requestId,
+        actor: "policy:autopilot",
+      });
     }
     await signalApproval(input, run.runId, "approve", approval.requestId);
     result.autoApproved.push(run.runId);

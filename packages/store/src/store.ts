@@ -1,3 +1,4 @@
+import { ApprovalService } from "./approval-service";
 import { ArtifactService } from "./artifact-service";
 import { type BlobClient, FsBlobClient, S3BlobClient } from "./blob";
 import { BudgetService } from "./budget-service";
@@ -81,6 +82,10 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     ...repositories,
     blobClient,
     artifactService: new ArtifactService(blobs, artifactStore, blobClient),
+    approvals: new ApprovalService({
+      sql: handle.sql,
+      driver: handle.driver,
+    }),
     budgetService: new BudgetService({
       sql: handle.sql,
       driver: handle.driver,
