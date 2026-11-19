@@ -9,6 +9,7 @@ export * from "./event";
 export * from "./fs-lock";
 export * from "./git-apply";
 export * from "./ids";
+export * from "./incident";
 export * from "./information";
 export * from "./iteration";
 export * from "./iteration-policy";

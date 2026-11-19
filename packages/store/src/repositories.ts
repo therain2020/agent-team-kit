@@ -8,14 +8,18 @@ import type {
   DegradedModeStatus,
   EventEnvelope,
   ExitCriteria,
+  Incident,
   KillSwitch,
   LastKnownGood,
   Manifest,
   QualityFloor,
+  RecoveryDrill,
   Run,
   RunMode,
   RunOriginKind,
   RunStatus,
+  Runbook,
+  RunbookDrill,
   Sensitivity,
   Stage,
   StageStatus,
@@ -42,11 +46,15 @@ import {
   blobs,
   degradationAudit,
   degradationState,
+  incidents,
   killSwitches,
   lastKnownGood,
   managerSessions,
   manifests,
+  recoveryDrills,
   runRequests,
+  runbookDrills,
+  runbooks,
   runs,
   stages,
 } from "./schema";
@@ -2180,5 +2188,380 @@ export class PostgresKillSwitchStore implements KillSwitchStore {
       .orderBy(desc(killSwitches.updatedAt))
       .limit(Math.max(1, Math.min(limit, 200)));
     return rows.map(fromKillSwitchRow);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Incident / Runbook / Drills (61 §2, §3.4, §5)
+// ---------------------------------------------------------------------------
+
+export interface IncidentListOptions {
+  status?: Incident["status"];
+  limit?: number;
+}
+
+export interface RunbookListOptions {
+  modeId?: string;
+  status?: Runbook["status"];
+  limit?: number;
+}
+
+export interface IncidentStore {
+  create(incident: Incident): Promise<void>;
+  get(incidentId: string): Promise<Incident | null>;
+  list(workspaceId: string, options?: IncidentListOptions): Promise<Incident[]>;
+  /** Optimistic update; returns false and mutates nothing on version conflict. */
+  update(incident: Incident): Promise<boolean>;
+}
+
+export interface RunbookStore {
+  /** Inserts a new runbook or replaces one with the same id. */
+  upsert(runbook: Runbook): Promise<void>;
+  get(runbookId: string): Promise<Runbook | null>;
+  list(workspaceId: string, options?: RunbookListOptions): Promise<Runbook[]>;
+  /** Optimistic update; returns false on version conflict. */
+  update(runbook: Runbook): Promise<boolean>;
+}
+
+export interface DrillStore {
+  recordRunbookDrill(drill: RunbookDrill): Promise<void>;
+  listRunbookDrills(runbookId: string, limit?: number): Promise<RunbookDrill[]>;
+  listRunbookDrillsByWorkspace(
+    workspaceId: string,
+    limit?: number,
+  ): Promise<RunbookDrill[]>;
+  recordRecoveryDrill(drill: RecoveryDrill): Promise<void>;
+  listRecoveryDrills(limit?: number): Promise<RecoveryDrill[]>;
+  latestRecoveryDrill(): Promise<RecoveryDrill | null>;
+}
+
+export function toIncidentRow(record: Incident) {
+  return {
+    incidentId: record.incidentId,
+    workspaceId: record.workspaceId,
+    title: record.title,
+    severity: record.severity,
+    detectedAt: record.detectedAt,
+    status: record.status,
+    owner: record.owner,
+    timeline: record.timeline,
+    postmortem: record.postmortem,
+    degradationModeId: record.degradationModeId,
+    regressionCaseRef: record.regressionCaseRef,
+    evolutionSignalRef: record.evolutionSignalRef,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    version: record.version ?? 0,
+  };
+}
+
+export function fromIncidentRow(row: typeof incidents.$inferSelect): Incident {
+  return {
+    incidentId: row.incidentId,
+    workspaceId: row.workspaceId,
+    title: row.title,
+    severity: row.severity,
+    detectedAt: row.detectedAt,
+    status: row.status,
+    owner: row.owner,
+    timeline: row.timeline,
+    postmortem: row.postmortem,
+    degradationModeId: row.degradationModeId ?? null,
+    regressionCaseRef: row.regressionCaseRef ?? null,
+    evolutionSignalRef: row.evolutionSignalRef ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    version: Number(row.version ?? 0),
+  };
+}
+
+export function toRunbookRow(record: Runbook) {
+  return {
+    runbookId: record.runbookId,
+    workspaceId: record.workspaceId,
+    modeId: record.modeId,
+    trigger: record.trigger,
+    steps: record.steps,
+    owner: record.owner,
+    verification: record.verification,
+    status: record.status,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    version: record.version ?? 0,
+  };
+}
+
+export function fromRunbookRow(row: typeof runbooks.$inferSelect): Runbook {
+  return {
+    runbookId: row.runbookId,
+    workspaceId: row.workspaceId,
+    modeId: row.modeId,
+    trigger: row.trigger,
+    steps: row.steps,
+    owner: row.owner,
+    verification: row.verification,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    version: Number(row.version ?? 0),
+  };
+}
+
+export function toRunbookDrillRow(record: RunbookDrill) {
+  return {
+    drillId: record.drillId,
+    workspaceId: record.workspaceId,
+    runbookId: record.runbookId,
+    modeId: record.modeId,
+    executedAt: record.executedAt,
+    executedBy: record.executedBy,
+    outcome: record.outcome,
+    notes: record.notes,
+    createdAt: record.createdAt,
+  };
+}
+
+export function fromRunbookDrillRow(
+  row: typeof runbookDrills.$inferSelect,
+): RunbookDrill {
+  return {
+    drillId: row.drillId,
+    workspaceId: row.workspaceId,
+    runbookId: row.runbookId,
+    modeId: row.modeId,
+    executedAt: row.executedAt,
+    executedBy: row.executedBy,
+    outcome: row.outcome,
+    notes: row.notes,
+    createdAt: row.createdAt,
+  };
+}
+
+export function toRecoveryDrillRow(record: RecoveryDrill) {
+  return {
+    drillId: record.drillId,
+    executedAt: record.executedAt,
+    executedBy: record.executedBy,
+    script: record.script,
+    rtoTargetMinutes: record.rtoTargetMinutes,
+    rpoTargetMinutes: record.rpoTargetMinutes,
+    measuredRtoMinutes: record.measuredRtoMinutes,
+    measuredRpoMinutes: record.measuredRpoMinutes,
+    kitdRollbackRef: record.kitdRollbackRef,
+    integrityPass: record.integrityPass,
+    outcome: record.outcome,
+    notes: record.notes,
+    createdAt: record.createdAt,
+  };
+}
+
+export function fromRecoveryDrillRow(
+  row: typeof recoveryDrills.$inferSelect,
+): RecoveryDrill {
+  return {
+    drillId: row.drillId,
+    executedAt: row.executedAt,
+    executedBy: row.executedBy,
+    script: row.script,
+    rtoTargetMinutes: Number(row.rtoTargetMinutes),
+    rpoTargetMinutes: Number(row.rpoTargetMinutes),
+    measuredRtoMinutes:
+      row.measuredRtoMinutes === null ? null : Number(row.measuredRtoMinutes),
+    measuredRpoMinutes:
+      row.measuredRpoMinutes === null ? null : Number(row.measuredRpoMinutes),
+    kitdRollbackRef: row.kitdRollbackRef ?? null,
+    integrityPass: Boolean(row.integrityPass),
+    outcome: row.outcome,
+    notes: row.notes,
+    createdAt: row.createdAt,
+  };
+}
+
+export class PostgresIncidentStore implements IncidentStore {
+  constructor(private readonly db: Database) {}
+
+  async create(incident: Incident): Promise<void> {
+    await this.db
+      .insert(incidents)
+      .values(toIncidentRow(incident))
+      .onConflictDoNothing();
+  }
+
+  async get(incidentId: string): Promise<Incident | null> {
+    const [row] = await this.db
+      .select()
+      .from(incidents)
+      .where(eq(incidents.incidentId, incidentId))
+      .limit(1);
+    return row ? fromIncidentRow(row) : null;
+  }
+
+  async list(
+    workspaceId: string,
+    options: IncidentListOptions = {},
+  ): Promise<Incident[]> {
+    const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
+    const conditions: SQL[] = [eq(incidents.workspaceId, workspaceId)];
+    if (options.status) {
+      conditions.push(eq(incidents.status, options.status));
+    }
+    const rows = await this.db
+      .select()
+      .from(incidents)
+      .where(and(...conditions))
+      .orderBy(desc(incidents.detectedAt))
+      .limit(limit);
+    return rows.map(fromIncidentRow);
+  }
+
+  async update(incident: Incident): Promise<boolean> {
+    const rows = await this.db
+      .update(incidents)
+      .set({
+        ...toIncidentRow(incident),
+        version: sql`${incidents.version} + 1`,
+      })
+      .where(
+        and(
+          eq(incidents.incidentId, incident.incidentId),
+          eq(incidents.version, incident.version ?? 0),
+        ),
+      )
+      .returning({ version: incidents.version });
+    const row = rows[0];
+    if (!row) {
+      return false;
+    }
+    incident.version = Number(row.version);
+    return true;
+  }
+}
+
+export class PostgresRunbookStore implements RunbookStore {
+  constructor(private readonly db: Database) {}
+
+  async upsert(runbook: Runbook): Promise<void> {
+    const values = toRunbookRow(runbook);
+    await this.db
+      .insert(runbooks)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [runbooks.runbookId],
+        set: values,
+      });
+  }
+
+  async get(runbookId: string): Promise<Runbook | null> {
+    const [row] = await this.db
+      .select()
+      .from(runbooks)
+      .where(eq(runbooks.runbookId, runbookId))
+      .limit(1);
+    return row ? fromRunbookRow(row) : null;
+  }
+
+  async list(
+    workspaceId: string,
+    options: RunbookListOptions = {},
+  ): Promise<Runbook[]> {
+    const limit = Math.max(1, Math.min(options.limit ?? 100, 200));
+    const conditions: SQL[] = [eq(runbooks.workspaceId, workspaceId)];
+    if (options.modeId) {
+      conditions.push(eq(runbooks.modeId, options.modeId));
+    }
+    if (options.status) {
+      conditions.push(eq(runbooks.status, options.status));
+    }
+    const rows = await this.db
+      .select()
+      .from(runbooks)
+      .where(and(...conditions))
+      .orderBy(asc(runbooks.modeId))
+      .limit(limit);
+    return rows.map(fromRunbookRow);
+  }
+
+  async update(runbook: Runbook): Promise<boolean> {
+    const rows = await this.db
+      .update(runbooks)
+      .set({
+        ...toRunbookRow(runbook),
+        version: sql`${runbooks.version} + 1`,
+      })
+      .where(
+        and(
+          eq(runbooks.runbookId, runbook.runbookId),
+          eq(runbooks.version, runbook.version ?? 0),
+        ),
+      )
+      .returning({ version: runbooks.version });
+    const row = rows[0];
+    if (!row) {
+      return false;
+    }
+    runbook.version = Number(row.version);
+    return true;
+  }
+}
+
+export class PostgresDrillStore implements DrillStore {
+  constructor(private readonly db: Database) {}
+
+  async recordRunbookDrill(drill: RunbookDrill): Promise<void> {
+    await this.db
+      .insert(runbookDrills)
+      .values(toRunbookDrillRow(drill))
+      .onConflictDoNothing();
+  }
+
+  async listRunbookDrills(
+    runbookId: string,
+    limit = 50,
+  ): Promise<RunbookDrill[]> {
+    const rows = await this.db
+      .select()
+      .from(runbookDrills)
+      .where(eq(runbookDrills.runbookId, runbookId))
+      .orderBy(desc(runbookDrills.executedAt))
+      .limit(Math.max(1, Math.min(limit, 200)));
+    return rows.map(fromRunbookDrillRow);
+  }
+
+  async listRunbookDrillsByWorkspace(
+    workspaceId: string,
+    limit = 200,
+  ): Promise<RunbookDrill[]> {
+    const rows = await this.db
+      .select()
+      .from(runbookDrills)
+      .where(eq(runbookDrills.workspaceId, workspaceId))
+      .orderBy(desc(runbookDrills.executedAt))
+      .limit(Math.max(1, Math.min(limit, 500)));
+    return rows.map(fromRunbookDrillRow);
+  }
+
+  async recordRecoveryDrill(drill: RecoveryDrill): Promise<void> {
+    await this.db
+      .insert(recoveryDrills)
+      .values(toRecoveryDrillRow(drill))
+      .onConflictDoNothing();
+  }
+
+  async listRecoveryDrills(limit = 50): Promise<RecoveryDrill[]> {
+    const rows = await this.db
+      .select()
+      .from(recoveryDrills)
+      .orderBy(desc(recoveryDrills.executedAt))
+      .limit(Math.max(1, Math.min(limit, 200)));
+    return rows.map(fromRecoveryDrillRow);
+  }
+
+  async latestRecoveryDrill(): Promise<RecoveryDrill | null> {
+    const [row] = await this.db
+      .select()
+      .from(recoveryDrills)
+      .orderBy(desc(recoveryDrills.executedAt))
+      .limit(1);
+    return row ? fromRecoveryDrillRow(row) : null;
   }
 }

@@ -1,9 +1,17 @@
 import type {
   DegradationTrigger,
+  DrillOutcome,
   ExitCriteria,
+  IncidentSeverity,
+  IncidentStatus,
+  IncidentTimelineEntry,
   LkgArtifactRef,
+  Postmortem,
   Producer,
   QualityFloor,
+  RunbookStatus,
+  RunbookStep,
+  RunbookVerification,
 } from "@kit/core";
 import {
   bigint,
@@ -529,4 +537,126 @@ export const providerBills = pgTable(
       table.periodEnd,
     ),
   ],
+);
+
+/** Incident records (61 §2, §3.4). */
+export const incidents = pgTable(
+  "incidents",
+  {
+    incidentId: text("incident_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    title: text("title").notNull(),
+    severity: text("severity").$type<IncidentSeverity>().notNull(),
+    detectedAt: timestamp("detected_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    status: text("status").$type<IncidentStatus>().notNull(),
+    owner: text("owner").notNull(),
+    timeline: jsonb("timeline")
+      .$type<IncidentTimelineEntry[]>()
+      .notNull()
+      .default([]),
+    postmortem: jsonb("postmortem").$type<Postmortem>().notNull(),
+    degradationModeId: text("degradation_mode_id"),
+    regressionCaseRef: text("regression_case_ref"),
+    evolutionSignalRef: text("evolution_signal_ref"),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    version: integer("version").notNull().default(0),
+  },
+  (table) => [
+    index("idx_incidents_workspace").on(table.workspaceId, table.detectedAt),
+    index("idx_incidents_status").on(table.workspaceId, table.status),
+  ],
+);
+
+/** Runbooks, one per degradation mode (61 §3.2). */
+export const runbooks = pgTable(
+  "runbooks",
+  {
+    runbookId: text("runbook_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    modeId: text("mode_id").notNull(),
+    trigger: text("trigger").notNull(),
+    steps: jsonb("steps").$type<RunbookStep[]>().notNull(),
+    owner: text("owner").notNull(),
+    verification: jsonb("verification")
+      .$type<RunbookVerification[]>()
+      .notNull()
+      .default([]),
+    status: text("status").$type<RunbookStatus>().notNull(),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    version: integer("version").notNull().default(0),
+  },
+  (table) => [index("idx_runbooks_mode").on(table.workspaceId, table.modeId)],
+);
+
+/** Per-runbook drill records (61 §5). */
+export const runbookDrills = pgTable(
+  "runbook_drills",
+  {
+    drillId: text("drill_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    runbookId: text("runbook_id").notNull(),
+    modeId: text("mode_id").notNull(),
+    executedAt: timestamp("executed_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    executedBy: text("executed_by").notNull(),
+    outcome: text("outcome").$type<DrillOutcome>().notNull(),
+    notes: text("notes").notNull().default(""),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [
+    index("idx_runbook_drills_runbook").on(table.runbookId, table.executedAt),
+    index("idx_runbook_drills_workspace").on(
+      table.workspaceId,
+      table.executedAt,
+    ),
+  ],
+);
+
+/** RTO/RPO recovery drills reusing `smoke:recovery` + kitd rollback (D-38). */
+export const recoveryDrills = pgTable(
+  "recovery_drills",
+  {
+    drillId: text("drill_id").primaryKey(),
+    executedAt: timestamp("executed_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    executedBy: text("executed_by").notNull(),
+    script: text("script").notNull(),
+    rtoTargetMinutes: integer("rto_target_minutes").notNull(),
+    rpoTargetMinutes: integer("rpo_target_minutes").notNull(),
+    measuredRtoMinutes: integer("measured_rto_minutes"),
+    measuredRpoMinutes: integer("measured_rpo_minutes"),
+    kitdRollbackRef: text("kitd_rollback_ref"),
+    integrityPass: boolean("integrity_pass").notNull().default(false),
+    outcome: text("outcome").$type<DrillOutcome>().notNull(),
+    notes: text("notes").notNull().default(""),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [index("idx_recovery_drills_executed").on(table.executedAt)],
 );
