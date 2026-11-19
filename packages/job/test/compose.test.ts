@@ -370,9 +370,10 @@ describe("stage graph validation", () => {
   });
 
   it("rejects self dependencies", () => {
-    const result = validateStageGraph([{ ...base, depends: ["research"] }], [
-      "echo",
-    ]);
+    const result = validateStageGraph(
+      [{ ...base, depends: ["research"] }],
+      ["echo"],
+    );
     expect(result.ok).toBe(false);
     expect(result.errors.join(" ")).toContain("cannot depend on itself");
   });

@@ -101,9 +101,7 @@ export function validateStageGraph(
       stage.agent !== undefined &&
       !agents.has(stage.agent)
     ) {
-      errors.push(
-        `stage ${stage.id} references unknown agent: ${stage.agent}`,
-      );
+      errors.push(`stage ${stage.id} references unknown agent: ${stage.agent}`);
     }
     if (stage.revisionAgent && !agents.has(stage.revisionAgent)) {
       errors.push(
@@ -118,9 +116,7 @@ export function validateStageGraph(
         continue;
       }
       if (uniqueDepends.has(dependency)) {
-        errors.push(
-          `stage ${stage.id} lists dependency twice: ${dependency}`,
-        );
+        errors.push(`stage ${stage.id} lists dependency twice: ${dependency}`);
         continue;
       }
       uniqueDepends.add(dependency);
