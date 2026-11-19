@@ -101,6 +101,7 @@ describe("hidden eval suites", () => {
       path.join(root, "..-escape"),
     );
     expect(defaultHiddenEvalsDir("  ", root)).toBe(path.join(root, "default"));
-    expect(defaultHiddenEvalsRoot()).toContain("hidden-evals");
+
+    expect(path.isAbsolute(defaultHiddenEvalsRoot())).toBe(true);
   });
 });
