@@ -55,6 +55,8 @@ metadata:
   name: demo-team
   version: 1.0.0
   description: Demo team
+  compatibility:
+    kit: ">=0.1 <2.0"
 manager:
   agent: agents/echo.md
 agents:
