@@ -209,6 +209,8 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   agent_id TEXT NOT NULL,
   hypothesis TEXT NOT NULL,
   signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+  signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb,
   baseline_variant_id TEXT,
   candidate_variant_id TEXT,
   baseline_name TEXT NOT NULL DEFAULT '',
@@ -276,6 +278,10 @@ ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS evaluator_hash TEXT;
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS evaluator_approval_ref TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE evolution_state
   ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
@@ -438,6 +444,25 @@ CREATE INDEX IF NOT EXISTS idx_run_projection_status
 CREATE INDEX IF NOT EXISTS idx_run_projection_updated
   ON run_projection(workspace_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS last_known_good (
+  lkg_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  artifact_refs JSONB NOT NULL,
+  verified_at TIMESTAMPTZ NOT NULL,
+  verifier TEXT NOT NULL,
+  status TEXT NOT NULL,
+  supersedes TEXT,
+  superseded_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  created_by TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lkg_active
+  ON last_known_good(workspace_id, target_key, status);
+CREATE INDEX IF NOT EXISTS idx_lkg_verified
+  ON last_known_good(verified_at DESC);
+
 CREATE TABLE IF NOT EXISTS degradation_state (
   scope TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
@@ -467,6 +492,20 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS event_spool (
+  spool_id BIGSERIAL PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  subject TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'P2',
+  payload TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  enqueued_at TIMESTAMPTZ NOT NULL,
+  delivered_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_spool_pending
+  ON event_spool(delivered_at, spool_id);
 
 CREATE TABLE IF NOT EXISTS ops_settings (
   workspace_id TEXT PRIMARY KEY,
@@ -833,6 +872,8 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   agent_id TEXT NOT NULL,
   hypothesis TEXT NOT NULL,
   signals TEXT NOT NULL DEFAULT '[]',
+  signal_refs TEXT NOT NULL DEFAULT '[]',
+  signal_sources TEXT NOT NULL DEFAULT '[]',
   baseline_variant_id TEXT,
   candidate_variant_id TEXT,
   baseline_name TEXT NOT NULL DEFAULT '',
@@ -1053,6 +1094,25 @@ CREATE INDEX IF NOT EXISTS idx_run_projection_status
 CREATE INDEX IF NOT EXISTS idx_run_projection_updated
   ON run_projection(workspace_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS last_known_good (
+  lkg_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  artifact_refs TEXT NOT NULL,
+  verified_at TEXT NOT NULL,
+  verifier TEXT NOT NULL,
+  status TEXT NOT NULL,
+  supersedes TEXT,
+  superseded_by TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lkg_active
+  ON last_known_good(workspace_id, target_key, status);
+CREATE INDEX IF NOT EXISTS idx_lkg_verified
+  ON last_known_good(verified_at DESC);
+
 CREATE TABLE IF NOT EXISTS degradation_state (
   scope TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
@@ -1082,6 +1142,20 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS event_spool (
+  spool_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE,
+  subject TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'P2',
+  payload TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  enqueued_at TEXT NOT NULL,
+  delivered_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_spool_pending
+  ON event_spool(delivered_at, spool_id);
 
 CREATE TABLE IF NOT EXISTS ops_settings (
   workspace_id TEXT PRIMARY KEY,
@@ -1169,6 +1243,8 @@ ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_path TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_approval_ref TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN signal_refs TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE evolution_cycles ADD COLUMN signal_sources TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS budgets (

@@ -1,7 +1,7 @@
 import { sameOriginError } from "@/lib/http";
 import { jobErrorResponse } from "@/lib/job-api";
 import { getRepoRoot } from "@/lib/paths";
-import { type ComposeKind, composeJob } from "@kit/job";
+import { type AgentDraftValues, type ComposeKind, composeJob } from "@kit/job";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -17,6 +17,8 @@ export async function POST(request: Request) {
     kind?: unknown;
     intent?: unknown;
     packDir?: unknown;
+    agentId?: unknown;
+    current?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -29,7 +31,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "kind must be mission, packRun, approvalPolicy, autopilot, or evolutionCycle",
+          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, or agent",
       },
       { status: 400 },
     );
@@ -38,12 +40,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "packDir is required" }, { status: 400 });
   }
 
+  const current = parseAgentCurrent(body.current);
   try {
     const result = await composeJob({
       kind,
       intent: typeof body.intent === "string" ? body.intent : "",
       packDir: body.packDir,
       repoRoot: getRepoRoot(),
+      ...(typeof body.agentId === "string" ? { agentId: body.agentId } : {}),
+      ...(current ? { current } : {}),
     });
     return NextResponse.json(result);
   } catch (error) {
@@ -56,7 +61,41 @@ function parseKind(value: unknown): ComposeKind | undefined {
     value === "packRun" ||
     value === "approvalPolicy" ||
     value === "autopilot" ||
-    value === "evolutionCycle"
+    value === "evolutionCycle" ||
+    value === "agent"
     ? value
     : undefined;
+}
+
+function parseAgentCurrent(
+  value: unknown,
+): Partial<AgentDraftValues> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const current: Partial<AgentDraftValues> = {};
+  if (typeof record.description === "string") {
+    current.description = record.description;
+  }
+  if (typeof record.model === "string") {
+    current.model = record.model;
+  }
+  if (typeof record.role === "string") {
+    current.role = record.role as AgentDraftValues["role"];
+  }
+  if (typeof record.instructions === "string") {
+    current.instructions = record.instructions;
+  }
+  if (Array.isArray(record.tools)) {
+    current.tools = record.tools.filter(
+      (item): item is string => typeof item === "string",
+    );
+  }
+  if (Array.isArray(record.skills)) {
+    current.skills = record.skills.filter(
+      (item): item is string => typeof item === "string",
+    );
+  }
+  return Object.keys(current).length > 0 ? current : undefined;
 }

@@ -1,3 +1,9 @@
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 export interface IterationSignal {
   at: string;
   iterationId: string;
@@ -9,6 +15,173 @@ export interface IterationSignal {
   risk: "low" | "medium" | "high";
   tokens: number;
   error?: string;
+}
+
+export type SignalSourceKind = "iterations" | "archive" | "manual";
+
+/**
+ * Traceable pointer from an evolution cycle back to the failure signal that
+ * motivated it. The cycle record is the durable copy: JSONL files stay an
+ * adapter layer and never become the source of truth (D-52).
+ */
+export interface EvolutionSignalRef {
+  signalId: string;
+  source: SignalSourceKind;
+  signal: string;
+  iterationId?: string;
+  taskId?: string;
+  domain?: string;
+  variantId?: string;
+  agentId?: string;
+}
+
+export interface IterationSignalFile {
+  path: string;
+  signals: IterationSignal[];
+  lines: number;
+  corrupt: number;
+  duplicates: number;
+}
+
+const RISK_LEVELS = new Set(["low", "medium", "high"]);
+
+export function defaultSignalsRoot(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return (
+    env.KIT_SIGNALS_ROOT ??
+    path.join(os.homedir(), ".agent-team-kit", "signals")
+  );
+}
+
+export function defaultIterationsPath(root?: string): string {
+  return path.join(root ?? defaultSignalsRoot(), "iterations.jsonl");
+}
+
+/**
+ * Reads `iterations.jsonl` defensively. Missing files, blank lines and
+ * corrupt JSON are skipped; duplicate records (same iteration, task and
+ * timestamp) are collapsed on first occurrence. The result is deterministic
+ * regardless of how many times the file was appended to.
+ */
+export async function readIterationSignals(
+  file: string = defaultIterationsPath(),
+): Promise<IterationSignalFile> {
+  const empty: IterationSignalFile = {
+    path: file,
+    signals: [],
+    lines: 0,
+    corrupt: 0,
+    duplicates: 0,
+  };
+
+  if (!existsSync(file)) {
+    return empty;
+  }
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    return empty;
+  }
+
+  const signals: IterationSignal[] = [];
+  const seen = new Set<string>();
+  let lines = 0;
+  let corrupt = 0;
+  let duplicates = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    lines += 1;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      corrupt += 1;
+      continue;
+    }
+    if (!isIterationSignal(parsed)) {
+      corrupt += 1;
+      continue;
+    }
+    const id = iterationSignalId(parsed);
+    if (seen.has(id)) {
+      duplicates += 1;
+      continue;
+    }
+    seen.add(id);
+    signals.push(parsed);
+  }
+  return { path: file, signals, lines, corrupt, duplicates };
+}
+
+export function isIterationSignal(value: unknown): value is IterationSignal {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.at === "string" &&
+    typeof record.iterationId === "string" &&
+    record.iterationId.length > 0 &&
+    typeof record.taskId === "string" &&
+    record.taskId.length > 0 &&
+    typeof record.domain === "string" &&
+    typeof record.coder === "string" &&
+    typeof record.verified === "boolean" &&
+    typeof record.applied === "boolean" &&
+    typeof record.risk === "string" &&
+    RISK_LEVELS.has(record.risk) &&
+    typeof record.tokens === "number" &&
+    Number.isFinite(record.tokens) &&
+    (record.error === undefined || typeof record.error === "string")
+  );
+}
+
+export function hashSignalId(input: string, prefix = "sig"): string {
+  const digest = createHash("sha256").update(input).digest("hex").slice(0, 16);
+  return `${prefix}_${digest}`;
+}
+
+export function iterationSignalId(
+  signal: Pick<IterationSignal, "iterationId" | "taskId" | "at">,
+): string {
+  return hashSignalId(`${signal.iterationId}|${signal.taskId}|${signal.at}`);
+}
+
+export function describeIterationSignal(signal: IterationSignal): string {
+  const failure = signal.error ? `: ${signal.error}` : "";
+  return `${signal.iterationId}/${signal.taskId} ${signal.domain}: verification failed${failure}`;
+}
+
+export function iterationSignalRef(
+  signal: IterationSignal,
+): EvolutionSignalRef {
+  return {
+    signalId: iterationSignalId(signal),
+    source: "iterations",
+    signal: describeIterationSignal(signal),
+    iterationId: signal.iterationId,
+    taskId: signal.taskId,
+    domain: signal.domain,
+  };
+}
+
+export function dedupeSignalRefs(
+  refs: readonly EvolutionSignalRef[],
+): EvolutionSignalRef[] {
+  const seen = new Set<string>();
+  const result: EvolutionSignalRef[] = [];
+  for (const ref of refs) {
+    if (seen.has(ref.signalId)) {
+      continue;
+    }
+    seen.add(ref.signalId);
+    result.push(ref);
+  }
+  return result;
 }
 
 export interface DomainFitness {

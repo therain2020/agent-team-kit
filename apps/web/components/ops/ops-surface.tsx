@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import type { AutopilotOverview } from "@/lib/autopilot";
 import type { BudgetOverview } from "@/lib/budgets";
 import type { KillSwitchState } from "@/lib/kill-switch";
+import type { LkgView } from "@/lib/lkg";
 import type { OpsConsoleData } from "@/lib/ops";
 import {
   OPS_SECTIONS,
@@ -43,6 +44,7 @@ export interface OpsSurfaceData {
   budgets: BudgetOverview;
   killSwitch: KillSwitchState;
   autopilot: AutopilotOverview;
+  lkg: LkgView[];
 }
 
 const SECTION_META: Record<
@@ -273,6 +275,7 @@ export function OpsSurface({
           modes={initial.modes}
           audit={initial.audit}
           dependencies={initial.dependencies}
+          lkg={initial.lkg}
         />
       </OpsSectionBlock>
 

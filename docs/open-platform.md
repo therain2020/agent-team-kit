@@ -91,6 +91,28 @@ The console at `/autopilot` has a master kill switch, per-pack toggles, budget
 usage, next run times, and recent automatic decisions. `KIT_AUTOPILOT_DISABLED=1`
 is an environment-level kill switch.
 
+### Iteration apply mode and the substrate boundary
+
+`applyMode` (`none`, `low`, `low-medium`) is resolved by the same policy module
+(`packages/core/src/iteration-policy.ts`) for CLI iterations, autopilot
+iterations, and autonomy presets. LIVE iterations honor the configured mode; dry
+runs never apply. An autonomy preset that raises the mode to `low-medium` still
+cannot cross the substrate boundary:
+
+| Changed files | Auto-apply |
+|---|---|
+| `docs/**`, tests, `apps/web/messages/**` | allowed after checks (`low`) |
+| ordinary feature/server code | only in `low-medium` after checks + build |
+| `packs/*/workflows/**`, `team.yaml`, `autopilot.yaml`, `policies.yaml`, `iteration.yaml` | never auto; forced high, approval required |
+| `packs/*/agents/**`, `packs/*/skills/**`, `skills/**` | never; blocked change proposal only |
+| secrets, `.git`, sandbox escapes | blocked outright |
+
+A blocked substrate change still preserves its diff artifact, verification
+evidence, and blocked reason on the merge ticket and `apply` artifact, so
+evolution can evaluate and promote it through the normal freeze → canary →
+promotion gate. Pending low/medium changes remain visible in `kit job changes`
+and `kit job apply`.
+
 ## 4. Manager Office
 
 Open `/office`:
@@ -148,17 +170,29 @@ approval:
 
 Evolution improves one role at a time:
 
-1. collect failure signals (gate rationales, overrides, cost anomalies);
+1. collect failure signals from `iterations.jsonl`, `archive.jsonl` and
+   `--signal` (gate rationales, overrides, cost anomalies);
 2. a meta-agent rewrites the role instructions (tools/permissions frozen);
 3. champion and candidate are scored on the same evidence;
 4. only improvements enter the archive and canary;
 5. promotion is manual by default; `autoApply` requires a passed canary and
    creates a backup.
 
+Each iterate run appends per-task fitness to
+`$KIT_SIGNALS_ROOT/iterations.jsonl` (default
+`~/.agent-team-kit/signals/iterations.jsonl`). A failed task there is enough to
+start a cycle without `--force`. Point the cycle at another directory with
+`--signals-root`. Cycle records include `signalRefs` (which iteration/task and
+signal id were used) and `signalSources` (which files contributed), and the
+hypothesis cites its source. Empty files, corrupt lines and duplicate records
+are ignored deterministically.
+
 ```bash
 bun run kit evolve cycle packs/tech-radar \
   --input-file .tmp/evidence.json \
   --agent writer --stub --force
+bun run kit evolve cycle packs/tech-radar \
+  --input-file .tmp/evidence.json --signals-root .tmp/signals
 bun run kit evolve cycles
 ```
 
@@ -207,6 +241,7 @@ for demos and deterministic tests; it cannot auto-promote.
 | `KIT_AUTOPILOT_DISABLED=1` | Global autopilot kill switch |
 | `KIT_AUTOPILOT_INTERVAL_MS` | Daemon tick interval (default 30000) |
 | `KIT_SOURCES_ROOT` | Installed-source directory (default `./sources`) |
+| `KIT_SIGNALS_ROOT` | Iteration signal directory holding `iterations.jsonl` (default `~/.agent-team-kit/signals`) |
 | `KIT_WORKSHOP_ROOT` | Installed-workshop directory (default `./workshop`) |
 | `KIT_WORKSHOP_TRUSTED_KEYS` | Keyring path or inline JSON for workshop signature checks |
 | `KIT_TOOL_MAX_STEPS` / `KIT_TOOL_MAX_CALLS` | Tool loop caps |

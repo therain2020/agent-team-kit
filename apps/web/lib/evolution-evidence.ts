@@ -43,13 +43,13 @@ export async function resolveEvolutionEvidence(
     return parseManualEvidence(text);
   }
 
-  const [failures, signals] = await Promise.all([
+  const [failures, signalFile] = await Promise.all([
     readFailedIterations(),
     readIterationSignals(),
   ]);
   const document = mergeEvidence([
     evidenceFromIterations(failures),
-    evidenceFromSignals(signals),
+    evidenceFromSignals(signalFile.signals),
   ]);
   if (document.sources.length === 0) {
     throw new Error(

@@ -1,0 +1,22 @@
+# Seed artifacts a new workspace must have before its first live run.
+#
+# These are pointers, not payloads. Fill one entry per artifact and keep the
+# referenced artifact versioned so the cold start can be audited and replayed.
+# Typical seed set: policy bundle, rubric, source set, budget, golden-set
+# manifest and the approved starter brief.
+version: 1
+artifacts: []
+
+# Example shape (copy, then replace the placeholders with real values):
+#
+# artifacts:
+#   - id: policy-bundle
+#     title: Cold-start policy bundle
+#     kind: policy
+#     artifact_id: art_example_policy
+#     version: 1
+#     owner: operator:name
+#     status: approved
+#
+# kind: policy | rubric | source-set | budget | golden-set | brief
+# status: draft | approved

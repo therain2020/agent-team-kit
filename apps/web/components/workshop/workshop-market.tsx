@@ -200,15 +200,25 @@ export function WorkshopMarket({
       const payload = (await response.json()) as {
         error?: string;
         name?: string;
+        id?: string;
+        kind?: string;
       };
       if (!response.ok) {
         throw new Error(payload.error ?? t("installFailed"));
       }
-      toast.success(
-        t("installed", { name: payload.name ?? preview.manifest.name }),
-      );
-      closeDialog();
-      router.refresh();
+      const name = payload.name ?? preview.manifest.name;
+      if (payload.kind === "pack" && payload.id) {
+        toast.success(t("installedPack", { name }));
+        closeDialog();
+        // Packs live in the pack library now: hard-navigate so the console
+        // re-renders with the installed pack selected (`/packs/<id>` redirects
+        // to the workshop surface with `?pack=<id>`).
+        window.location.assign(`/packs/${encodeURIComponent(payload.id)}`);
+      } else {
+        toast.success(t("installed", { name }));
+        closeDialog();
+        router.refresh();
+      }
     } catch (problem) {
       toast.error(
         problem instanceof Error ? problem.message : t("installFailed"),

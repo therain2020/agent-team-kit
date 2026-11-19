@@ -1,4 +1,5 @@
 export * from "./artifact";
+export * from "./assets";
 export * from "./autopilot";
 export * from "./budget";
 export * from "./cli-contract";
@@ -8,7 +9,9 @@ export * from "./fs-lock";
 export * from "./git-apply";
 export * from "./ids";
 export * from "./iteration";
+export * from "./iteration-policy";
 export * from "./kill-switch";
+export * from "./lkg";
 export * from "./pack";
 export * from "./policy";
 export * from "./rubric";

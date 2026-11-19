@@ -105,6 +105,9 @@ export interface IterationRiskResult {
   risk: "low" | "medium" | "high";
   reasons: string[];
   forbidden: boolean;
+  /** Protected substrate files force explicit approval (or a proposal). */
+  requiresApproval?: boolean;
+  protectedPaths?: string[];
 }
 
 export interface ApplyTaskActivityInput {
@@ -118,6 +121,7 @@ export interface ApplyTaskActivityInput {
   applyMode: "none" | "low" | "low-medium";
   runMode: "DRY_RUN" | "LIVE";
   diffArtifactId: string;
+  verificationArtifactId?: string;
   baselineSha: string;
   changedFiles: string[];
 }

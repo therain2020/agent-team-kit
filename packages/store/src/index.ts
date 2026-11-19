@@ -5,6 +5,8 @@ export * from "./budget-service";
 export * from "./config";
 export * from "./cost-service";
 export * from "./db";
+export * from "./event-spool";
+export * from "./lkg-service";
 export * from "./locks";
 export * from "./migrate";
 export * from "./op-log";

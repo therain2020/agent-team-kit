@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AssemblyColumn } from "@/components/workshop/assembly-column";
+import { LegacyImportBanner } from "@/components/workshop/legacy-import-banner";
 import { PackLibrary } from "@/components/workshop/pack-library";
 import { SourceShelf } from "@/components/workshop/source-shelf";
 import { WorkshopColumn } from "@/components/workshop/workshop-column";
@@ -58,6 +59,14 @@ export function WorkshopSurface({
   const selected = data.packs.find((pack) => pack.dirName === packDir) ?? null;
   const { visible, scoped } = linkedSourceView(selected, data.sources, scope);
   const installedSources = data.sources.filter((source) => !source.builtin);
+  // Packs still only in workshop/ (installed before packs landed in packs/).
+  const packDirs = new Set(data.packs.map((pack) => pack.dirName));
+  const legacyPacks = workshopInstalled.filter(
+    (record) =>
+      record.kind === "pack" &&
+      !packDirs.has(record.id) &&
+      !packDirs.has(record.dirName),
+  );
 
   function syncUrl(nextTab: WorkshopTab, nextPack?: string) {
     if (typeof window === "undefined") {
@@ -109,6 +118,8 @@ export function WorkshopSurface({
           </div>
         }
       />
+
+      <LegacyImportBanner records={legacyPacks} />
 
       <div className="flex items-center justify-between gap-2 xl:hidden">
         <div

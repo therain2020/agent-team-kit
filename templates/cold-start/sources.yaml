@@ -1,0 +1,21 @@
+# Source inventory for the cold-start window.
+#
+# Keep this list small and owned. Every source needs a name, a URL or topic,
+# a cadence and one owner. When a deployment publishes declarative sources use
+# `apiVersion: agentteam/source/v1` manifests; this file is the operator-level
+# inventory that ties them to owners and schedules.
+version: 1
+sources: []
+
+# Example shape (copy, then replace the placeholders with real values):
+#
+# sources:
+#   - name: example-feed
+#     url: https://example.com/feed
+#     topic: example topic
+#     cadence: daily
+#     owner: operator:name
+#     mode: DRY_RUN
+#
+# cadence: hourly | daily | weekly | on-demand
+# mode: DRY_RUN | LIVE (use DRY_RUN for the whole cold-start window)

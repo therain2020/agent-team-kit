@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   type LoadedPack,
@@ -8,6 +8,18 @@ import {
   simulatePack,
 } from "@kit/pack";
 import { getPacksRoot } from "./paths";
+
+/**
+ * Provenance recorded in `.workshop.json` when a pack is installed straight
+ * from the workshop into `packs/` (plan 88 §3.4).
+ */
+export interface PackWorkshopOrigin {
+  repo: string;
+  commit: string;
+  manifestSha256: string;
+  installedAt: string;
+  trust: "builtin" | "verified" | "community";
+}
 
 export interface PackSummary {
   dirName: string;
@@ -21,6 +33,7 @@ export interface PackSummary {
   warnings: string[];
   workflows: Array<{ id: string; stages: number; estimatedCostCny: number }>;
   errors?: string[];
+  workshop?: PackWorkshopOrigin;
 }
 
 export interface PackDetail {
@@ -39,13 +52,14 @@ export async function listPacks(): Promise<PackSummary[]> {
   const summaries: PackSummary[] = [];
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) {
       continue;
     }
     const dir = path.join(root, entry.name);
     if (!existsSync(path.join(dir, "team.yaml"))) {
       continue;
     }
+    const workshop = await readWorkshopOrigin(dir);
 
     const loaded = await loadPack(dir);
     if (!loaded.ok) {
@@ -61,6 +75,7 @@ export async function listPacks(): Promise<PackSummary[]> {
         warnings: [],
         workflows: [],
         errors: loaded.errors,
+        ...(workshop ? { workshop } : {}),
       });
       continue;
     }
@@ -81,10 +96,43 @@ export async function listPacks(): Promise<PackSummary[]> {
         stages: workflow.stages.length,
         estimatedCostCny: workflow.totalCostCny,
       })),
+      ...(workshop ? { workshop } : {}),
     });
   }
 
   return summaries.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+async function readWorkshopOrigin(
+  dir: string,
+): Promise<PackWorkshopOrigin | null> {
+  const recordPath = path.join(dir, ".workshop.json");
+  if (!existsSync(recordPath)) {
+    return null;
+  }
+  try {
+    const raw = JSON.parse(await readFile(recordPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    if (typeof raw.repo !== "string" || typeof raw.commit !== "string") {
+      return null;
+    }
+    const trust = (raw.trust ?? {}) as Record<string, unknown>;
+    return {
+      repo: raw.repo,
+      commit: raw.commit,
+      manifestSha256:
+        typeof raw.manifestSha256 === "string" ? raw.manifestSha256 : "",
+      installedAt: typeof raw.installedAt === "string" ? raw.installedAt : "",
+      trust:
+        trust.level === "builtin" || trust.level === "verified"
+          ? trust.level
+          : "community",
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function loadPackDetail(
