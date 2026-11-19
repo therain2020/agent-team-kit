@@ -137,7 +137,7 @@ export function CommandPalette() {
       id: "reviewApprovals",
       label: t("reviewApprovals"),
       icon: Inbox,
-      perform: () => go("/inbox"),
+      perform: () => go("/approvals"),
     },
     {
       id: "openKillSwitch",

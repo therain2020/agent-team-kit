@@ -91,6 +91,24 @@ export interface FactoryStageEvidence {
   finishedAt?: string;
 }
 
+/** Approvals-entity facts the drawer needs beyond the run projection. */
+export interface FactoryApprovalInfo {
+  requestId: string;
+  kind: string;
+  requestType?: FactoryRequestType;
+  assignee: string | null;
+  /** CAS version of the approvals entity, sent back on takeover. */
+  version: number;
+  budget: { spentCny: number; limitCny: number | null } | null;
+}
+
+export interface FactoryEvidenceRef {
+  artifactId: string;
+  version: number;
+  stageId: string;
+  relation: string;
+}
+
 export interface FactoryHistoryEntry {
   decisionId?: string;
   requestId?: string;
@@ -127,9 +145,13 @@ export interface FactoryDetail {
     gates: FactoryGateEvidence[];
     artifacts: FactoryArtifactEvidence[];
     stages: FactoryStageEvidence[];
+    /** "Why": what produced and consumed the draft under review (#140). */
+    ancestry: FactoryEvidenceRef[];
     costCny: number;
     tokens: number;
   };
+  /** Null for failed runs; the approval entity only exists while queued. */
+  approval: FactoryApprovalInfo | null;
   history: FactoryHistoryEntry[];
 }
 

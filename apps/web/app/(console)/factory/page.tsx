@@ -1,9 +1,6 @@
-import { FactoryFloor } from "@/components/factory/factory-floor";
-import { loadFactorySnapshot } from "@/lib/factory-server";
+import { redirect } from "next/navigation";
 
-export const dynamic = "force-dynamic";
-
-export default async function FactoryPage() {
-  const snapshot = await loadFactorySnapshot();
-  return <FactoryFloor initialItems={snapshot.items} />;
+/** Bookmarks: /factory is now the line view of /approvals (#162). */
+export default function FactoryRedirect() {
+  redirect("/approvals?view=factory");
 }
