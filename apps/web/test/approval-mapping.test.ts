@@ -14,6 +14,8 @@ const entity: ApprovalEntityView = {
   status: "queued",
   slaDueAt: "2026-11-16T00:00:00.000Z",
   expiresAt: "2026-11-20T00:00:00.000Z",
+  requester: "manager",
+  assignee: null,
   version: 1,
   runStatus: "paused",
 };
@@ -39,6 +41,8 @@ describe("approval API item mapping", () => {
       options: ["approve", "abort"],
       expiresAt: "2026-11-20T00:00:00.000Z",
       status: "queued",
+      requester: "manager",
+      assignee: null,
       version: 1,
       slaDueAt: "2026-11-16T00:00:00.000Z",
       runStatus: "paused",
@@ -69,6 +73,22 @@ describe("approval API item mapping", () => {
     expect(item.riskClass).toBe("medium");
     expect(item.options).toEqual(["approve", "abort"]);
     expect(item.summary).toBe("");
+  });
+
+  it("carries requester and takeover owner through the API shape", () => {
+    const taken = toApiApprovalItem(
+      { ...entity, assignee: "operator:web" },
+      { requestedBy: "manager" },
+    );
+    expect(taken.requester).toBe("manager");
+    expect(taken.assignee).toBe("operator:web");
+
+    const fallback = toApiApprovalItem(
+      { ...entity, requester: undefined, assignee: undefined },
+      { requestedBy: "reviewer" },
+    );
+    expect(fallback.requester).toBe("reviewer");
+    expect(fallback.assignee).toBeNull();
   });
 
   it("uses payload fields the entity does not store", () => {
