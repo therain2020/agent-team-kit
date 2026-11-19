@@ -80,6 +80,31 @@ interface PolicyResult {
   model: "live" | "heuristic";
 }
 
+interface AgentDraftValues {
+  description: string;
+  model: string;
+  role: StudioAgent["role"];
+  instructions: string;
+  tools: string[];
+  skills: string[];
+}
+
+interface AgentDraftResult {
+  values: AgentDraftValues;
+  rationale: string;
+  warnings: string[];
+  model: "live" | "heuristic";
+}
+
+const EMPTY_AGENT_DRAFT: AgentDraftValues = {
+  description: "",
+  model: "deepseek-flash",
+  role: "builder",
+  instructions: "",
+  tools: [],
+  skills: [],
+};
+
 export function PackStudio({
   data,
   initialAgentId,
@@ -115,21 +140,40 @@ export function PackStudio({
   const [policyExcluded, setPolicyExcluded] = useState<Record<string, boolean>>(
     {},
   );
-  const [newAgent, setNewAgent] = useState({
+  const [newAgent, setNewAgent] = useState<{ id: string } & AgentDraftValues>({
     id: "",
-    description: "",
-    model: "deepseek-flash",
-    role: "builder" as StudioAgent["role"],
+    ...EMPTY_AGENT_DRAFT,
   });
+  const [agentIntent, setAgentIntent] = useState("");
+  const [agentDraft, setAgentDraft] = useState<AgentDraftResult | null>(null);
+  const [agentDraftBusy, setAgentDraftBusy] = useState(false);
+  const [newAgentIntent, setNewAgentIntent] = useState("");
+  const [newAgentDraft, setNewAgentDraft] = useState<AgentDraftResult | null>(
+    null,
+  );
+  const [newAgentDraftBusy, setNewAgentDraftBusy] = useState(false);
   const [newWorkflowId, setNewWorkflowId] = useState("workflow-2");
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [managerModel, setManagerModel] = useState("deepseek-pro");
+  const [managerDescription, setManagerDescription] = useState("");
+  const [managerInstructions, setManagerInstructions] = useState("");
   const [managerBusy, setManagerBusy] = useState(false);
+  const [managerIntent, setManagerIntent] = useState("");
+  const [managerDraft, setManagerDraft] = useState<AgentDraftResult | null>(
+    null,
+  );
+  const [managerDraftBusy, setManagerDraftBusy] = useState(false);
   const hasManager = agents.some((agent) => agent.isManager);
 
   const currentWorkflow = data.workflows.find(
     (workflow) => workflow.file === workflowFile,
   );
+
+  function selectAgent(id: string) {
+    setSelectedId(id);
+    setAgentIntent("");
+    setAgentDraft(null);
+  }
 
   function patchAgent(patch: Partial<StudioAgent>) {
     if (!selected) {
@@ -140,6 +184,170 @@ export function PackStudio({
         agent.id === selected.id ? { ...agent, ...patch } : agent,
       ),
     );
+  }
+
+  async function requestAgentDraft(
+    intent: string,
+    agentId: string,
+    current: AgentDraftValues,
+  ): Promise<AgentDraftResult> {
+    const response = await fetch("/api/compose", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "agent",
+        intent,
+        packDir: data.dirName,
+        agentId,
+        current,
+      }),
+    });
+    const payload = (await response.json()) as {
+      values?: AgentDraftValues;
+      rationale?: string;
+      warnings?: string[];
+      model?: "live" | "heuristic";
+      error?: string;
+    };
+    if (!response.ok || !payload.values) {
+      throw new Error(payload.error ?? "failed to draft agent");
+    }
+    return {
+      values: payload.values,
+      rationale: payload.rationale ?? "",
+      warnings: payload.warnings ?? [],
+      model: payload.model === "live" ? "live" : "heuristic",
+    };
+  }
+
+  async function generateAgentDraft() {
+    if (!selected) {
+      return;
+    }
+    if (!agentIntent.trim()) {
+      toast.error(t("agentDraftIntentRequired"));
+      return;
+    }
+    setAgentDraftBusy(true);
+    setError(null);
+    try {
+      setAgentDraft(
+        await requestAgentDraft(agentIntent.trim(), selected.id, {
+          description: selected.description,
+          model: selected.model,
+          role: selected.role,
+          instructions: selected.instructions,
+          tools: selected.tools,
+          skills: selected.skills,
+        }),
+      );
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setAgentDraftBusy(false);
+    }
+  }
+
+  function applyAgentDraft() {
+    if (!agentDraft || !selected) {
+      return;
+    }
+    patchAgent({
+      description: agentDraft.values.description,
+      model: agentDraft.values.model,
+      role: selected.isManager ? "manager" : agentDraft.values.role,
+      instructions: agentDraft.values.instructions,
+      tools: agentDraft.values.tools,
+      skills: agentDraft.values.skills,
+    });
+    toast.success(t("agentDraftApplied"));
+  }
+
+  async function generateNewAgentDraft() {
+    if (!newAgentIntent.trim()) {
+      toast.error(t("agentDraftIntentRequired"));
+      return;
+    }
+    setNewAgentDraftBusy(true);
+    setError(null);
+    try {
+      setNewAgentDraft(
+        await requestAgentDraft(
+          newAgentIntent.trim(),
+          newAgent.id.trim(),
+          {
+            description: newAgent.description,
+            model: newAgent.model,
+            role: newAgent.role,
+            instructions: newAgent.instructions,
+            tools: newAgent.tools,
+            skills: newAgent.skills,
+          },
+        ),
+      );
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setNewAgentDraftBusy(false);
+    }
+  }
+
+  function applyNewAgentDraft() {
+    if (!newAgentDraft) {
+      return;
+    }
+    const values = newAgentDraft.values;
+    setNewAgent((current) => ({
+      ...current,
+      description: values.description,
+      model: values.model,
+      role: values.role === "manager" ? current.role : values.role,
+      instructions: values.instructions,
+      tools: values.tools,
+      skills: values.skills,
+    }));
+    toast.success(t("agentDraftApplied"));
+  }
+
+  async function generateManagerDraft() {
+    if (!managerIntent.trim()) {
+      toast.error(t("agentDraftIntentRequired"));
+      return;
+    }
+    setManagerDraftBusy(true);
+    setError(null);
+    try {
+      setManagerDraft(
+        await requestAgentDraft(managerIntent.trim(), "manager", {
+          description: managerDescription,
+          model: managerModel,
+          role: "manager",
+          instructions: managerInstructions,
+          tools: [],
+          skills: [],
+        }),
+      );
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setManagerDraftBusy(false);
+    }
+  }
+
+  function applyManagerDraft() {
+    if (!managerDraft) {
+      return;
+    }
+    setManagerModel(managerDraft.values.model);
+    setManagerDescription(managerDraft.values.description);
+    setManagerInstructions(managerDraft.values.instructions);
+    toast.success(t("agentDraftApplied"));
   }
 
   async function saveAgent() {
@@ -206,12 +414,9 @@ export function PackStudio({
         throw new Error(payload.error ?? "create failed");
       }
       toast.success(t("agentCreated"));
-      setNewAgent({
-        id: "",
-        description: "",
-        model: "deepseek-flash",
-        role: "builder",
-      });
+      setNewAgent({ id: "", ...EMPTY_AGENT_DRAFT });
+      setNewAgentIntent("");
+      setNewAgentDraft(null);
       router.refresh();
     } catch (problem) {
       const text = problem instanceof Error ? problem.message : String(problem);
@@ -263,7 +468,15 @@ export function PackStudio({
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ model: managerModel }),
+          body: JSON.stringify({
+            model: managerModel,
+            ...(managerDescription.trim()
+              ? { description: managerDescription.trim() }
+              : {}),
+            ...(managerInstructions.trim()
+              ? { instructions: managerInstructions.trim() }
+              : {}),
+          }),
         },
       );
       const payload = (await response.json()) as { error?: string };
@@ -688,7 +901,7 @@ export function PackStudio({
               </p>
               <button
                 type="button"
-                onClick={() => setSelectedId(selected.id)}
+                onClick={() => selectAgent(selected.id)}
                 className="mb-1 flex w-full items-center gap-2 rounded-md bg-zinc-900 px-2 py-1.5 text-left text-xs text-zinc-200"
               >
                 <Bot className="size-3.5 text-emerald-400" />
@@ -703,7 +916,7 @@ export function PackStudio({
                   <button
                     key={agent.id}
                     type="button"
-                    onClick={() => setSelectedId(agent.id)}
+                    onClick={() => selectAgent(agent.id)}
                     className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
                   >
                     <UserCog className="size-3.5" />
@@ -769,6 +982,78 @@ export function PackStudio({
                   <option value="seller">{t("roleSeller")}</option>
                   <option value="specialist">{t("roleSpecialist")}</option>
                 </select>
+                <TokenPicker
+                  values={newAgent.tools}
+                  options={data.catalog.tools.map((tool) => ({
+                    value: tool.name,
+                    description:
+                      tool.source === "toolpack" ? "toolpack" : undefined,
+                  }))}
+                  onChange={(tools) =>
+                    setNewAgent((current) => ({ ...current, tools }))
+                  }
+                  selectLabel={t("addTool")}
+                  customPlaceholder={t("customTool")}
+                  addLabel={t("add")}
+                  unknownLabel={t("unknownTool")}
+                />
+                <TokenPicker
+                  values={newAgent.skills}
+                  options={data.catalog.skills.map((skill) => ({
+                    value: skill,
+                  }))}
+                  onChange={(skills) =>
+                    setNewAgent((current) => ({ ...current, skills }))
+                  }
+                  selectLabel={t("addSkill")}
+                  customPlaceholder={t("customSkill")}
+                  addLabel={t("add")}
+                  unknownLabel={t("unknownSkill")}
+                />
+                <Textarea
+                  value={newAgent.instructions}
+                  onChange={(event) =>
+                    setNewAgent((current) => ({
+                      ...current,
+                      instructions: event.target.value,
+                    }))
+                  }
+                  placeholder={t("instructionsPlaceholder")}
+                  rows={3}
+                  className="text-[11px]"
+                />
+                <div className="space-y-1.5 rounded-md border border-border/60 p-2">
+                  <p className="flex items-center gap-1 text-[10px] text-zinc-400">
+                    <Sparkles className="size-3" />
+                    {t("agentDraftNewTitle")}
+                  </p>
+                  <Textarea
+                    value={newAgentIntent}
+                    onChange={(event) =>
+                      setNewAgentIntent(event.target.value)
+                    }
+                    placeholder={t("agentDraftPlaceholder")}
+                    className="min-h-12 text-[11px]"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => void generateNewAgentDraft()}
+                    disabled={newAgentDraftBusy || saving}
+                  >
+                    <Sparkles className="size-3.5" />
+                    {newAgentDraftBusy
+                      ? t("agentDraftGenerating")
+                      : t("agentDraftGenerate")}
+                  </Button>
+                  {newAgentDraft ? (
+                    <AgentDraftPreview
+                      draft={newAgentDraft}
+                      onApply={applyNewAgentDraft}
+                    />
+                  ) : null}
+                </div>
                 <Button
                   size="sm"
                   className="w-full"
@@ -781,16 +1066,61 @@ export function PackStudio({
             </div>
 
             {!hasManager ? (
-              <div className="rounded-lg border border-border bg-card p-3">
-                <p className="mb-2 text-[11px] text-zinc-300">
-                  {t("noManager")}
-                </p>
+              <div className="space-y-1.5 rounded-lg border border-border bg-card p-3">
+                <p className="text-[11px] text-zinc-300">{t("noManager")}</p>
+                <Input
+                  value={managerDescription}
+                  onChange={(event) =>
+                    setManagerDescription(event.target.value)
+                  }
+                  placeholder={t("agentDescriptionPlaceholder")}
+                  className="h-8 text-[11px]"
+                />
                 <Input
                   value={managerModel}
                   onChange={(event) => setManagerModel(event.target.value)}
                   placeholder="deepseek-pro"
-                  className="mb-1.5 h-8 font-mono text-[11px]"
+                  className="h-8 font-mono text-[11px]"
                 />
+                <Textarea
+                  value={managerInstructions}
+                  onChange={(event) =>
+                    setManagerInstructions(event.target.value)
+                  }
+                  placeholder={t("instructionsPlaceholder")}
+                  rows={3}
+                  className="text-[11px]"
+                />
+                <div className="space-y-1.5 rounded-md border border-border/60 p-2">
+                  <p className="flex items-center gap-1 text-[10px] text-zinc-400">
+                    <Sparkles className="size-3" />
+                    {t("agentDraftTitle")}
+                  </p>
+                  <Textarea
+                    value={managerIntent}
+                    onChange={(event) => setManagerIntent(event.target.value)}
+                    placeholder={t("agentDraftPlaceholder")}
+                    className="min-h-12 text-[11px]"
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => void generateManagerDraft()}
+                    disabled={managerDraftBusy || managerBusy}
+                  >
+                    <Sparkles className="size-3.5" />
+                    {managerDraftBusy
+                      ? t("agentDraftGenerating")
+                      : t("agentDraftGenerate")}
+                  </Button>
+                  {managerDraft ? (
+                    <AgentDraftPreview
+                      draft={managerDraft}
+                      onApply={applyManagerDraft}
+                    />
+                  ) : null}
+                </div>
                 <Button
                   size="sm"
                   variant="outline"
@@ -829,6 +1159,45 @@ export function PackStudio({
                   {t("save")}
                 </Button>
               </div>
+            </div>
+
+            <div className="space-y-2 rounded-md border border-border bg-zinc-950/40 p-3">
+              <div className="flex items-start gap-2">
+                <Sparkles className="mt-0.5 size-4 text-emerald-300" />
+                <div>
+                  <h3 className="text-xs font-medium text-zinc-200">
+                    {t("agentDraftTitle")}
+                  </h3>
+                  <p className="text-[10px] text-zinc-500">
+                    {t("agentDraftHint")}
+                  </p>
+                </div>
+              </div>
+              <Textarea
+                value={agentIntent}
+                onChange={(event) => setAgentIntent(event.target.value)}
+                placeholder={t("agentDraftPlaceholder")}
+                className="min-h-14 text-xs"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void generateAgentDraft()}
+                  disabled={agentDraftBusy || saving}
+                >
+                  <Sparkles className="size-3.5" />
+                  {agentDraftBusy
+                    ? t("agentDraftGenerating")
+                    : t("agentDraftGenerate")}
+                </Button>
+              </div>
+              {agentDraft ? (
+                <AgentDraftPreview
+                  draft={agentDraft}
+                  onApply={applyAgentDraft}
+                />
+              ) : null}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1397,6 +1766,88 @@ function Field({
       {control}
     </label>
   );
+}
+
+function AgentDraftPreview({
+  draft,
+  onApply,
+}: {
+  draft: AgentDraftResult;
+  onApply: () => void;
+}) {
+  const t = useTranslations("studio");
+  const values = draft.values;
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-zinc-950/50 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={draft.model === "live" ? "success" : "outline"}>
+          {draft.model === "live"
+            ? t("agentDraftAi")
+            : t("agentDraftHeuristic")}
+        </Badge>
+        <Badge variant="violet">{roleLabel(values.role, t)}</Badge>
+        <span className="font-mono text-[10px] text-zinc-500">
+          {values.model}
+        </span>
+      </div>
+      {draft.rationale ? (
+        <p className="text-[11px] text-zinc-400">{draft.rationale}</p>
+      ) : null}
+      {draft.warnings.length > 0 ? (
+        <ul className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+          {draft.warnings.map((warning) => (
+            <li key={warning}>· {warning}</li>
+          ))}
+        </ul>
+      ) : null}
+      <dl className="grid gap-x-3 gap-y-1 text-[11px] sm:grid-cols-2">
+        <div className="sm:col-span-2">
+          <dt className="text-zinc-500">{t("agentDescriptionLabel")}</dt>
+          <dd className="text-zinc-200">{values.description}</dd>
+        </div>
+        <div>
+          <dt className="text-zinc-500">{t("tools")}</dt>
+          <dd className="font-mono text-zinc-300">
+            {values.tools.join(", ") || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-zinc-500">{t("skills")}</dt>
+          <dd className="font-mono text-zinc-300">
+            {values.skills.join(", ") || "—"}
+          </dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-zinc-500">{t("instructions")}</dt>
+          <dd>
+            <pre className="max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[10px] text-zinc-300">
+              {values.instructions}
+            </pre>
+          </dd>
+        </div>
+      </dl>
+      <Button size="sm" variant="outline" onClick={onApply}>
+        <CheckCircle2 className="size-3.5" />
+        {t("agentDraftApply")}
+      </Button>
+    </div>
+  );
+}
+
+function roleLabel(
+  role: StudioAgent["role"],
+  t: ReturnType<typeof useTranslations>,
+): string {
+  if (role === "seller") {
+    return t("roleSeller");
+  }
+  if (role === "specialist") {
+    return t("roleSpecialist");
+  }
+  if (role === "manager") {
+    return t("roleManager");
+  }
+  return t("roleBuilder");
 }
 
 function buildApprovalDrafts(data: StudioData): Record<string, ApprovalDraft> {
