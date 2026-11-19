@@ -71,7 +71,7 @@ interface CircuitBreakerRow {
   workspace_id: string;
   state: string;
   consecutive_failures: number | string;
-  window: unknown;
+  sample_window: unknown;
   opened_at: string | Date | null;
   half_open_started_at: string | Date | null;
   half_open_successes: number | string;
@@ -126,7 +126,7 @@ function fromRow(row: CircuitBreakerRow): CircuitBreakerRecord {
     workspaceId: row.workspace_id,
     state: row.state as CircuitState,
     consecutiveFailures: toInt(row.consecutive_failures),
-    window: parseJson<CircuitSample[]>(row.window, []),
+    window: parseJson<CircuitSample[]>(row.sample_window, []),
     openedAt: toIso(row.opened_at),
     halfOpenStartedAt: toIso(row.half_open_started_at),
     halfOpenSuccesses: toInt(row.half_open_successes),
@@ -334,7 +334,7 @@ export class CircuitBreakerService {
     await this.store.sql`
       INSERT INTO circuit_breakers (
         scope_type, scope_key, workspace_id, state, consecutive_failures,
-        window, opened_at, half_open_started_at, half_open_successes,
+        sample_window, opened_at, half_open_started_at, half_open_successes,
         last_trip_at, recovered_at, trip_count, updated_at
       ) VALUES (
         ${record.scopeType}, ${record.scopeKey}, ${record.workspaceId},
@@ -347,7 +347,7 @@ export class CircuitBreakerService {
         workspace_id = EXCLUDED.workspace_id,
         state = EXCLUDED.state,
         consecutive_failures = EXCLUDED.consecutive_failures,
-        window = EXCLUDED.window,
+        sample_window = EXCLUDED.sample_window,
         opened_at = EXCLUDED.opened_at,
         half_open_started_at = EXCLUDED.half_open_started_at,
         half_open_successes = EXCLUDED.half_open_successes,
