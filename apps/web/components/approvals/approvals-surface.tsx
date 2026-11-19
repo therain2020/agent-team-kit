@@ -706,10 +706,7 @@ export function ApprovalsSurface({
       ) : null}
 
       {scopedRunId && !runRequestId ? (
-        <section
-          role="status"
-          className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-8 text-center"
-        >
+        <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-8 text-center">
           <p className="text-sm font-medium text-amber-200">
             {t("runEmptyTitle")}
           </p>

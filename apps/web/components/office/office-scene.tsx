@@ -730,8 +730,7 @@ function AgentPanel({
   }
 
   return (
-    <div
-      role="region"
+    <section
       aria-label={t("panelLabel", { agent: agent.id })}
       onKeyDown={handleKeyDown}
       className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3"
@@ -892,17 +891,14 @@ function AgentPanel({
           {t("agentHint")}
         </p>
       </div>
-    </div>
+    </section>
   );
 }
 
 /** Visible key hint next to a quick action; the shortcut is on the control. */
 function ShortcutKey({ children }: { children: string }) {
   return (
-    <kbd
-      aria-hidden="true"
-      className="rounded border border-zinc-700 bg-zinc-900 px-1 font-mono text-[9px] leading-4 text-zinc-400"
-    >
+    <kbd className="rounded border border-zinc-700 bg-zinc-900 px-1 font-mono text-[9px] leading-4 text-zinc-400">
       {children}
     </kbd>
   );

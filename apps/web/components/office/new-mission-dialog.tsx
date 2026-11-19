@@ -12,8 +12,8 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  applyMissionPrefill,
   type MissionPrefill,
+  applyMissionPrefill,
 } from "@/lib/mission-prefill";
 import type { OptimisticMission } from "@/lib/office-live";
 import type { AgentRole } from "@kit/core";
