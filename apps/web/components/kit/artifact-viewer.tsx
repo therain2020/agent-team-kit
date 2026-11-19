@@ -216,9 +216,7 @@ export function ArtifactViewer({
           {diff ? (
             <div>
               {diffLabel ? (
-                <p className="mb-2 text-[11px] text-px-muted">
-                  {diffLabel}
-                </p>
+                <p className="mb-2 text-[11px] text-px-muted">{diffLabel}</p>
               ) : null}
               <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5">
                 {diff.map((part) => (
