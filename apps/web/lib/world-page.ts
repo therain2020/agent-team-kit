@@ -1,4 +1,8 @@
-import { type AgentState, type RunProjection, getRunProjection } from "@kit/store";
+import {
+  type AgentState,
+  type RunProjection,
+  getRunProjection,
+} from "@kit/store";
 import {
   type RunRow,
   type TaskRow,

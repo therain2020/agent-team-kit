@@ -4,8 +4,8 @@ import {
   WorldDrawer,
   type WorldDrawerTab,
 } from "@/components/world/world-drawer";
-import type { WorldKindFilter } from "@/lib/world-view";
 import { loadWorldDrawerData, loadWorldPageData } from "@/lib/world-page";
+import type { WorldKindFilter } from "@/lib/world-view";
 
 export const dynamic = "force-dynamic";
 

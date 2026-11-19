@@ -1,6 +1,5 @@
 "use client";
 
-import type { AgentState } from "@kit/store";
 import { PageHeader } from "@/components/kit/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +22,7 @@ import {
   runKind,
   splitWorldRuns,
 } from "@/lib/world-view";
+import type { AgentState } from "@kit/store";
 import {
   Activity,
   AlertTriangle,
@@ -33,10 +33,10 @@ import {
   Play,
   Sun,
 } from "lucide-react";
-import { WorldStatus } from "./world-status";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { WorldStatus } from "./world-status";
 
 export interface WorldConsoleProps {
   initialRuns: WorldRunView[];
