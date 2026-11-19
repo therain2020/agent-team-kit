@@ -446,6 +446,9 @@ export async function publishWorkshop(
   }
 
   // ---- shared audit: every kind runs the same checklist ----
+  // Code detection follows the published file set, so an undeclared local
+  // script does not fail the item (it is only a warning under `undeclared`).
+  const publishedDetection = await detectCode(dir, manifest.files);
   const files: WorkshopPublishFile[] = [];
   const texts: WorkshopFileContent[] = [];
   const missing: string[] = [];
@@ -548,7 +551,7 @@ export async function publishWorkshop(
     );
   }
 
-  if (detection.code && !manifest.permissions.code) {
+  if (publishedDetection.code && !manifest.permissions.code) {
     checks.push(
       check(
         "code",
@@ -556,12 +559,12 @@ export async function publishWorkshop(
         "executable code detected but permissions.code is false",
       ),
     );
-  } else if (detection.code) {
+  } else if (publishedDetection.code) {
     checks.push(
       check(
         "code",
         "warn",
-        `executable code: ${detection.reasons.slice(0, 4).join("; ")} — installation requires explicit code consent`,
+        `executable code: ${publishedDetection.reasons.slice(0, 4).join("; ")} — installation requires explicit code consent`,
       ),
     );
   } else {
