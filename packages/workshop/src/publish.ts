@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   ASSET_ENTRY,
@@ -19,6 +18,13 @@ import {
   workflowDefinitionSchema,
   workshopManifestSchema,
 } from "@kit/core";
+import {
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
+  resolveInside,
+  sha256Hex,
+  writeFileAtomic,
+} from "@kit/market";
 import { loadPack, splitFrontmatter } from "@kit/pack";
 import { parse, stringify } from "yaml";
 import { type WorkshopFileContent, scanWorkshopSecrets } from "./security";
@@ -41,8 +47,6 @@ import {
 
 export const WORKSHOP_TOPIC = "agent-team-workshop";
 
-const MAX_FILE_BYTES = 256 * 1024;
-const MAX_TOTAL_BYTES = 5 * 1024 * 1024;
 const ID_PATTERN = /^[a-z][a-z0-9-]*$/;
 const IGNORED_DIRS = new Set([
   ".git",
@@ -458,7 +462,7 @@ export async function publishWorkshop(
   for (const file of manifest.files) {
     let absolute: string;
     try {
-      absolute = safeJoin(dir, file);
+      absolute = resolveInside(dir, file);
     } catch {
       checks.push(check(`path:${file}`, "fail", `unsafe path: ${file}`));
       continue;
@@ -479,7 +483,11 @@ export async function publishWorkshop(
     }
     total += content.length;
     texts.push({ file, content: content.toString("utf8") });
-    files.push({ path: file, bytes: content.length, sha256: sha256(content) });
+    files.push({
+      path: file,
+      bytes: content.length,
+      sha256: sha256Hex(content),
+    });
   }
 
   if (!manifest.files.includes(manifest.entry)) {
@@ -662,7 +670,7 @@ async function validateEntry(
 ): Promise<void> {
   let entryPath: string;
   try {
-    entryPath = safeJoin(dir, manifest.entry);
+    entryPath = resolveInside(dir, manifest.entry);
   } catch {
     return; // the entry/files checks already report unsafe paths
   }
@@ -987,7 +995,7 @@ async function readYaml(
 }
 
 async function readEntry(dir: string, entry: string): Promise<string> {
-  const absolute = safeJoin(dir, entry);
+  const absolute = resolveInside(dir, entry);
   if (!existsSync(absolute)) {
     throw new PublishFailure(`entry file is missing: ${entry}`);
   }
@@ -1036,7 +1044,7 @@ async function detectCode(
       continue;
     }
     try {
-      const text = await readFile(safeJoin(dir, file), "utf8");
+      const text = await readFile(resolveInside(dir, file), "utf8");
       if (CODE_ADAPTER.test(text)) {
         reasons.push(`command adapter: ${file}`);
       }
@@ -1102,24 +1110,6 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function sha256(value: string | Buffer): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
 function isTextContent(content: Buffer): boolean {
   return !content.subarray(0, 8192).includes(0);
-}
-
-function safeJoin(root: string, relative: string): string {
-  const resolved = path.resolve(root, relative);
-  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
-    throw new Error(`unsafe workshop path: ${relative}`);
-  }
-  return resolved;
-}
-
-async function writeFileAtomic(file: string, content: string): Promise<void> {
-  const temporary = `${file}.${process.pid}.tmp`;
-  await writeFile(temporary, content, "utf8");
-  await rename(temporary, file);
 }
