@@ -6,7 +6,6 @@ import {
   type PackTool,
   type WorkshopManifest,
   skillPackSchema,
-  teamPackSchema,
   toolPackSchema,
   workshopManifestSchema,
 } from "@kit/core";
@@ -25,7 +24,8 @@ import {
   writeFileAtomic,
 } from "@kit/market";
 import { loadPack } from "@kit/pack";
-import { parse, stringify } from "yaml";
+import { parse } from "yaml";
+import { WORKSHOP_TOPIC } from "./publish";
 import {
   type WorkshopFileContent,
   type WorkshopPermissionSummary,
@@ -42,10 +42,10 @@ import {
 
 export type { WorkshopManifest } from "@kit/core";
 export * from "./components";
+export * from "./publish";
 export * from "./security";
 export * from "./trust";
 
-const WORKSHOP_TOPIC = "agent-team-workshop";
 const WORKSHOP_KINDS = [
   "pack",
   "workflow",
@@ -56,21 +56,6 @@ const WORKSHOP_KINDS = [
   "source",
   "template",
 ] as const;
-const IGNORED_DIRS = new Set([
-  ".git",
-  ".next",
-  ".turbo",
-  ".tmp",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
-const IGNORED_FILES = new Set(["workshop.yaml", ".workshop.json"]);
-const CODE_FILE =
-  /\.(?:sh|ps1|bat|cmd|js|mjs|cjs|ts|tsx|py|rb|go|rs|java|jar|exe|dll|so|dylib)$/i;
-const CODE_ADAPTER =
-  /(?:adapter\s*:\s*["']?command\b|["']adapter["']\s*:\s*["']command\b)/i;
 
 const searchCache = createMarketSearchCache<WorkshopManifest>();
 
@@ -147,38 +132,6 @@ export interface WorkshopInstallRecord {
     WorkshopManifest,
     "id" | "name" | "version" | "kind" | "description"
   > | null;
-}
-
-export interface WorkshopPublishFile {
-  path: string;
-  bytes: number;
-  sha256: string;
-}
-
-export type WorkshopCheckStatus = "pass" | "warn" | "fail";
-
-export interface WorkshopPublishCheck {
-  id: string;
-  status: WorkshopCheckStatus;
-  detail: string;
-}
-
-export interface WorkshopRisk {
-  level: "low" | "medium" | "high";
-  reasons: string[];
-}
-
-export interface WorkshopPublishResult {
-  dir: string;
-  manifestPath: string;
-  manifest: WorkshopManifest;
-  generated: boolean;
-  written: boolean;
-  files: WorkshopPublishFile[];
-  permissions: WorkshopManifest["permissions"];
-  risk: WorkshopRisk;
-  checks: WorkshopPublishCheck[];
-  ok: boolean;
 }
 
 export function workshopRoot(root?: string): string {
@@ -648,368 +601,6 @@ export async function importInstalledPack(input: {
     repo: typeof record.repo === "string" ? record.repo : "",
     commit: typeof record.commit === "string" ? record.commit : "",
   };
-}
-
-export async function publishWorkshop(
-  input: { dir?: string; write?: boolean } = {},
-): Promise<WorkshopPublishResult> {
-  const dir = path.resolve(input.dir ?? process.cwd());
-  if (!existsSync(dir)) {
-    throw new Error(`workshop directory not found: ${dir}`);
-  }
-
-  const manifestPath = path.join(dir, "workshop.yaml");
-  const checks: WorkshopPublishCheck[] = [];
-  let manifest: WorkshopManifest;
-  let generated = false;
-  let written = false;
-
-  if (existsSync(manifestPath)) {
-    const raw = await readFile(manifestPath, "utf8");
-    let data: unknown;
-    try {
-      data = parse(raw);
-    } catch (error) {
-      throw new Error(
-        `workshop.yaml parse error: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const parsed = workshopManifestSchema.safeParse(data);
-    if (!parsed.success) {
-      throw new Error(
-        `invalid workshop.yaml: ${parsed.error.issues
-          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-          .join("; ")}`,
-      );
-    }
-    manifest = parsed.data;
-    checks.push(check("manifest", "pass", "workshop.yaml is valid"));
-  } else {
-    manifest = await generateManifest(dir, await collectWorkshopFiles(dir));
-    generated = true;
-    checks.push(
-      check("manifest", "pass", "workshop.yaml generated from team.yaml"),
-    );
-  }
-
-  if (manifest.files.includes(manifest.entry)) {
-    checks.push(check("entry", "pass", `entry ${manifest.entry} is listed`));
-  } else {
-    checks.push(check("entry", "fail", "entry must be listed in files"));
-  }
-
-  const files: WorkshopPublishFile[] = [];
-  const missing: string[] = [];
-  const oversize: string[] = [];
-  let total = 0;
-  for (const file of manifest.files) {
-    let absolute: string;
-    try {
-      absolute = safeJoin(dir, file);
-    } catch {
-      checks.push(check(`path:${file}`, "fail", `unsafe path: ${file}`));
-      continue;
-    }
-    if (!existsSync(absolute)) {
-      missing.push(file);
-      continue;
-    }
-    const content = await readFile(absolute);
-    if (!isTextContent(content)) {
-      checks.push(
-        check(`text:${file}`, "fail", `binary file is not supported: ${file}`),
-      );
-      continue;
-    }
-    if (content.length > MAX_FILE_BYTES) {
-      oversize.push(`${file} (${content.length} bytes)`);
-    }
-    total += content.length;
-    files.push({
-      path: file,
-      bytes: content.length,
-      sha256: sha256Hex(content),
-    });
-  }
-
-  if (missing.length === 0) {
-    checks.push(check("files", "pass", `${files.length} declared files found`));
-  } else {
-    checks.push(check("files", "fail", `missing files: ${missing.join(", ")}`));
-  }
-  if (oversize.length > 0) {
-    checks.push(
-      check("file-size", "fail", `files exceed 256KB: ${oversize.join(", ")}`),
-    );
-  }
-  if (total > MAX_TOTAL_BYTES) {
-    checks.push(
-      check("total-size", "fail", `declared files exceed 5MB (${total} bytes)`),
-    );
-  } else {
-    checks.push(
-      check("size", "pass", `${total} bytes across ${files.length} files`),
-    );
-  }
-
-  const localFiles = await collectWorkshopFiles(dir);
-  const undeclared = localFiles.filter(
-    (file) => !manifest.files.includes(file),
-  );
-  if (undeclared.length > 0) {
-    checks.push(
-      check(
-        "undeclared",
-        "warn",
-        `not published (not listed in files): ${undeclared.slice(0, 8).join(", ")}${
-          undeclared.length > 8 ? "…" : ""
-        }`,
-      ),
-    );
-  } else {
-    checks.push(check("undeclared", "pass", "all local files are declared"));
-  }
-
-  const detection = await detectCode(
-    dir,
-    files.map((file) => file.path),
-  );
-  if (detection.code && !manifest.permissions.code) {
-    checks.push(
-      check(
-        "code",
-        "fail",
-        "executable code detected but permissions.code is false",
-      ),
-    );
-  } else if (detection.code) {
-    checks.push(
-      check(
-        "code",
-        "warn",
-        `executable code: ${detection.reasons.slice(0, 4).join("; ")} — installation requires explicit code consent`,
-      ),
-    );
-  } else {
-    checks.push(check("code", "pass", "no executable code detected"));
-  }
-
-  if (
-    manifest.files.some((file) =>
-      /^readme(?:\.md)?$/i.test(path.basename(file)),
-    )
-  ) {
-    checks.push(check("readme", "pass", "README present"));
-  } else {
-    checks.push(
-      check("readme", "warn", "add a README.md so the item is discoverable"),
-    );
-  }
-  if (manifest.license) {
-    checks.push(check("license", "pass", `license ${manifest.license}`));
-  } else {
-    checks.push(check("license", "warn", "add a license to workshop.yaml"));
-  }
-  if (manifest.topics.includes(WORKSHOP_TOPIC)) {
-    checks.push(check("topic", "pass", `topic ${WORKSHOP_TOPIC} declared`));
-  } else {
-    checks.push(
-      check(
-        "topic",
-        "warn",
-        `add the GitHub topic ${WORKSHOP_TOPIC} to the repository`,
-      ),
-    );
-  }
-
-  if (manifest.kind === "pack" && missing.length === 0) {
-    const loaded = await loadPack(dir);
-    checks.push(
-      loaded.ok
-        ? check("pack", "pass", "pack loads and validates")
-        : check("pack", "fail", `pack is invalid: ${loaded.errors.join("; ")}`),
-    );
-  }
-
-  const ok = checks.every((item) => item.status !== "fail");
-  if (generated && input.write !== false && ok) {
-    await writeFileAtomic(manifestPath, stringify(manifest));
-    written = true;
-  }
-
-  return {
-    dir,
-    manifestPath,
-    manifest,
-    generated,
-    written,
-    files,
-    permissions: manifest.permissions,
-    risk: summarizeRisk(manifest),
-    checks,
-    ok,
-  };
-}
-
-async function generateManifest(
-  dir: string,
-  files: string[],
-): Promise<WorkshopManifest> {
-  const teamPath = path.join(dir, "team.yaml");
-  if (!existsSync(teamPath)) {
-    throw new Error(
-      "publish needs team.yaml (pack) or an existing workshop.yaml",
-    );
-  }
-  const team = teamPackSchema.safeParse(
-    parse(await readFile(teamPath, "utf8")),
-  );
-  if (!team.success) {
-    throw new Error(
-      `team.yaml is invalid: ${team.error.issues
-        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-        .join("; ")}`,
-    );
-  }
-
-  const metadata = team.data.metadata;
-  const id = metadata.name.toLowerCase();
-  if (!/^[a-z][a-z0-9-]*$/.test(id)) {
-    throw new Error(
-      `cannot derive a workshop id from pack name "${metadata.name}"`,
-    );
-  }
-
-  const detection = await detectCode(dir, files);
-  const payload: Record<string, unknown> = {
-    apiVersion: "agentteam/v1",
-    kind: "pack",
-    id,
-    name: metadata.name,
-    version: metadata.version,
-    description: metadata.description ?? "",
-    entry: "team.yaml",
-    files,
-    topics: [WORKSHOP_TOPIC],
-    permissions: {
-      network: false,
-      filesystem: "workspace",
-      code: detection.code,
-    },
-  };
-  if (metadata.license) {
-    payload.license = metadata.license;
-  }
-  if (metadata.compatibility) {
-    payload.compatibility = metadata.compatibility;
-  }
-
-  const parsed = workshopManifestSchema.safeParse(payload);
-  if (!parsed.success) {
-    throw new Error(
-      `generated manifest is invalid: ${parsed.error.issues
-        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-        .join("; ")}`,
-    );
-  }
-  return parsed.data;
-}
-
-async function collectWorkshopFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-
-  async function walk(current: string, prefix: string): Promise<void> {
-    const entries = await readdir(current, { withFileTypes: true });
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.name.startsWith(".")) {
-        continue;
-      }
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        if (IGNORED_DIRS.has(entry.name)) {
-          continue;
-        }
-        await walk(path.join(current, entry.name), relative);
-      } else if (entry.isFile()) {
-        if (IGNORED_FILES.has(relative)) {
-          continue;
-        }
-        files.push(relative);
-      }
-    }
-  }
-
-  await walk(dir, "");
-  return files.sort();
-}
-
-async function detectCode(
-  dir: string,
-  files: string[],
-): Promise<{ code: boolean; reasons: string[] }> {
-  const reasons: string[] = [];
-  for (const file of files) {
-    if (CODE_FILE.test(file)) {
-      reasons.push(`executable file: ${file}`);
-      continue;
-    }
-    if (!/\.(?:ya?ml|json)$/i.test(file)) {
-      continue;
-    }
-    try {
-      const text = await readFile(safeJoin(dir, file), "utf8");
-      if (CODE_ADAPTER.test(text)) {
-        reasons.push(`command adapter: ${file}`);
-      }
-    } catch {
-      // unreadable files are reported by the file checks
-    }
-  }
-  return { code: reasons.length > 0, reasons };
-}
-
-function summarizeRisk(manifest: WorkshopManifest): WorkshopRisk {
-  const reasons: string[] = [];
-  if (manifest.permissions.code) {
-    reasons.push("declares executable code");
-  }
-  if (manifest.permissions.network) {
-    reasons.push("requests network access");
-  }
-  if (manifest.permissions.filesystem === "workspace") {
-    reasons.push("can write inside the workspace");
-  } else if (manifest.permissions.filesystem === "readonly") {
-    reasons.push("read-only filesystem access");
-  }
-  if (reasons.length === 0) {
-    reasons.push("declarative data only");
-  }
-  const level = manifest.permissions.code
-    ? "high"
-    : manifest.permissions.network || manifest.permissions.filesystem !== "none"
-      ? "medium"
-      : "low";
-  return { level, reasons };
-}
-
-function check(
-  id: string,
-  status: WorkshopCheckStatus,
-  detail: string,
-): WorkshopPublishCheck {
-  return { id, status, detail };
-}
-
-function isTextContent(content: Buffer): boolean {
-  return !content.subarray(0, 8192).includes(0);
-}
-
-function safeJoin(root: string, relative: string): string {
-  const resolved = path.resolve(root, relative);
-  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
-    throw new Error(`unsafe workshop path: ${relative}`);
-  }
-  return resolved;
 }
 
 function parseKind(value: unknown): WorkshopManifest["kind"] | "unknown" {
