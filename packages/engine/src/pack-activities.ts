@@ -8,7 +8,7 @@ import {
   coderSandboxRoot,
   runCoderTask,
 } from "@kit/coder";
-import { cnyToMicro, newId } from "@kit/core";
+import { cnyToMicro, newId, runModeAllowsOutbound } from "@kit/core";
 import { deliverArtifact } from "@kit/delivery";
 import {
   type ModelMessage,
@@ -22,6 +22,7 @@ import {
   type OpLogEntry,
   appendOp,
   initStore,
+  verifyArtifactVersion,
 } from "@kit/store";
 import {
   type Tool,
@@ -41,6 +42,7 @@ import type {
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { heartbeat } from "./heartbeat";
 import { assertKillSwitchClear } from "./kill-switch";
+import { createSideEffectGateway } from "./side-effect-gateway";
 import {
   type TranscriptToolCall,
   type TranscriptTurn,
@@ -52,7 +54,7 @@ import {
   summarizeToolArgs,
   summarizeToolResult,
 } from "./stage-dossier";
-import { writeLeaseOptions } from "./write-lease";
+import { assertWriteLeaseActive, writeLeaseOptions } from "./write-lease";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -291,6 +293,7 @@ export async function closeEngineStore(): Promise<void> {
 export async function preparePackRun(
   input: PreparePackRunInput,
 ): Promise<void> {
+  assertWriteLeaseActive();
   const store = await getStore();
   await assertKillSwitchClear(store, { workspaceId: input.workspaceId }, "run");
   const now = new Date().toISOString();
@@ -414,6 +417,7 @@ export async function executePackStage(
 async function executePackStageInner(
   input: PackStageExecutionInput,
 ): Promise<PackStageExecutionResult> {
+  assertWriteLeaseActive();
   const store = await getStore();
   await assertKillSwitchClear(
     store,
@@ -432,6 +436,42 @@ async function executePackStageInner(
   );
 
   if (existing) {
+    // Resume-from-artifact is the local checkpoint (61 §3.5): verify sha256
+    // and Manifest integrity before reusing the committed version.
+    const integrity = await verifyArtifactVersion(
+      store,
+      existing.artifactId,
+      existing.version,
+    );
+    if (!integrity.ok) {
+      const reason = `artifact integrity check failed: ${integrity.problems
+        .map((problem) => `${problem.code}=${problem.detail}`)
+        .join("; ")}`;
+      await safeOp(store, {
+        workspaceId: input.workspaceId,
+        entityKind: "stage",
+        entityId: input.stageId,
+        op: "stage.integrity.failed",
+        actor: "engine",
+        origin: "system",
+        payload: {
+          runId: input.runId,
+          artifactId: existing.artifactId,
+          problems: integrity.problems,
+        },
+      });
+      await safeActivity(store, {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        stageId: input.stageId,
+        agentId: input.agentId,
+        kind: "stage.integrity.failed",
+        status: "failed",
+        summary: reason.slice(0, 500),
+        payload: { artifactId: existing.artifactId },
+      });
+      throw new Error(reason);
+    }
     const text = await readArtifactText(store, existing);
     await store.stages.updateStatus(
       input.stageId,
@@ -546,6 +586,7 @@ async function executePackStageInner(
   }
 
   heartbeat();
+  assertWriteLeaseActive();
 
   let text = draftText;
   let costAmount = 0;
@@ -670,6 +711,7 @@ async function executePackStageInner(
   }
 
   heartbeat();
+  assertWriteLeaseActive();
 
   const inputRefs = (
     input.inputArtifactIds?.length
@@ -816,6 +858,7 @@ async function executePackStageInner(
 export async function finishPackRun(input: {
   runId: string;
 }): Promise<void> {
+  assertWriteLeaseActive();
   const store = await getStore();
   await store.runs.updateStatus(
     input.runId,
@@ -874,6 +917,7 @@ export async function deliverPackRun(input: {
   channel: "im" | "email" | "local_file" | "webhook";
   runMode: "DRY_RUN" | "LIVE";
 }): Promise<void> {
+  assertWriteLeaseActive();
   const store = await getStore();
   await assertKillSwitchClear(
     store,
@@ -900,36 +944,82 @@ export async function deliverPackRun(input: {
       payload: { action: "delivery", channel: input.channel },
     });
   } else {
-    try {
-      const artifact = await store.artifactStore.findById(input.artifactId);
-      if (!artifact) {
-        throw new Error(`artifact not found: ${input.artifactId}`);
-      }
-      const manifest = await store.manifests.get(artifact.manifestId);
-      const blob = await store.blobs.findById(artifact.blobId);
-      if (!blob) {
-        throw new Error(`blob not found for artifact ${input.artifactId}`);
-      }
-      const bytes = await store.blobClient.get(blob.storageKey);
-      const markdown = new TextDecoder().decode(bytes);
-
-      result = await deliverArtifact({
-        channel: input.channel,
+    // 20 §2.4: delivery is a real side effect. It only leaves the process
+    // when the run mode permits it; otherwise the gateway records the refusal
+    // and returns a stub so non-LIVE runs never deliver.
+    const gateway = createSideEffectGateway({ store });
+    const outcome = await gateway.run<
+      Awaited<ReturnType<typeof deliverArtifact>>
+    >(
+      {
+        workspaceId: input.workspaceId,
         runId: input.runId,
-        artifactId: input.artifactId,
-        title: manifest
-          ? `${input.runId} · ${manifest.stageId}`
-          : input.artifactId,
-        markdown,
         runMode: input.runMode,
+        action: `delivery.${input.channel}`,
+        target: input.channel,
+      },
+      {
+        execute: async () => {
+          try {
+            const artifact = await store.artifactStore.findById(
+              input.artifactId,
+            );
+            if (!artifact) {
+              throw new Error(`artifact not found: ${input.artifactId}`);
+            }
+            const manifest = await store.manifests.get(artifact.manifestId);
+            const blob = await store.blobs.findById(artifact.blobId);
+            if (!blob) {
+              throw new Error(
+                `blob not found for artifact ${input.artifactId}`,
+              );
+            }
+            const bytes = await store.blobClient.get(blob.storageKey);
+            const markdown = new TextDecoder().decode(bytes);
+
+            return await deliverArtifact({
+              channel: input.channel,
+              runId: input.runId,
+              artifactId: input.artifactId,
+              title: manifest
+                ? `${input.runId} · ${manifest.stageId}`
+                : input.artifactId,
+              markdown,
+              runMode: input.runMode,
+            });
+          } catch (error) {
+            return {
+              ok: false,
+              channel: input.channel,
+              skipped: false,
+              detail: error instanceof Error ? error.message : String(error),
+            };
+          }
+        },
+        stub: () => ({
+          ok: true,
+          channel: input.channel,
+          skipped: true,
+          detail: `stub: real ${input.channel} delivery refused in ${input.runMode} run`,
+        }),
+      },
+    );
+    result = outcome.value;
+
+    if (!outcome.executed) {
+      await safeActivity(store, {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        agentId: "ops",
+        kind: "ops.side_effect.blocked",
+        status: "blocked",
+        summary: `delivery refused: ${input.runMode} run`,
+        payload: {
+          action: "delivery",
+          channel: input.channel,
+          runMode: input.runMode,
+        },
       });
-    } catch (error) {
-      result = {
-        ok: false,
-        channel: input.channel,
-        skipped: false,
-        detail: error instanceof Error ? error.message : String(error),
-      };
     }
   }
 
@@ -1317,6 +1407,7 @@ async function runAgentWithTools(input: {
 
   for (let step = 0; step < maxSteps; step += 1) {
     heartbeat();
+    assertWriteLeaseActive();
     await assertKillSwitchClear(
       input.store,
       {
@@ -1765,6 +1856,7 @@ async function gateWithRevisions(
 export async function requestApproval(
   input: RequestApprovalInput,
 ): Promise<RequestApprovalResult> {
+  assertWriteLeaseActive();
   const store = await getStore();
   const runCostCny = await calculateRunCost(store, input.runId);
   const gate = await getOpsGate(store, new Date(), input.workspaceId);
@@ -1931,6 +2023,24 @@ async function createApprovalRequest(
   let notifyError: string | undefined;
   if (gate.readOnly) {
     notifyError = `skipped: ${gate.reason ?? "night mode"}`;
+  } else if (input.notify?.webhook && !runModeAllowsOutbound(input.runMode)) {
+    // 20 §2.4: non-LIVE runs deny outbound. Refuse the approval webhook and
+    // leave an audit trail instead of sending it.
+    notifyError = `refused: outbound blocked in ${input.runMode} run`;
+    await safeOp(store, {
+      workspaceId: input.workspaceId,
+      entityKind: "approval",
+      entityId: requestId,
+      op: "approval.notify.blocked",
+      actor: "engine",
+      origin: "system",
+      payload: {
+        runId: input.runId,
+        requestType: input.requestType,
+        runMode: input.runMode,
+        reason: "outbound_refused",
+      },
+    });
   } else if (input.notify?.webhook) {
     try {
       await notifyApprovalWebhook(input.notify, request);

@@ -1,4 +1,5 @@
 export * from "./approval-service";
+export * from "./artifact-integrity";
 export * from "./artifact-service";
 export * from "./blob";
 export * from "./budget-service";
