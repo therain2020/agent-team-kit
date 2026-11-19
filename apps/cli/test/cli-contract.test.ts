@@ -14,6 +14,7 @@ import {
 import { initStore, loadStoreConfig } from "@kit/store";
 import { Command } from "commander";
 import { afterEach, describe, expect, it } from "vitest";
+import { registerAgent } from "../src/commands/agent";
 import { registerApprove } from "../src/commands/approve";
 import { registerAutonomy } from "../src/commands/autonomy";
 import { registerBootstrap } from "../src/commands/bootstrap";
@@ -165,6 +166,7 @@ function buildProgram(): Command {
   registerWatch(program);
   registerWorkshop(program);
   registerAutonomy(program);
+  registerAgent(program);
   return program;
 }
 
@@ -212,6 +214,7 @@ describe("command registry coverage", () => {
       ["autonomy", "rollback"],
       ["publish"],
       ["event", "emit"],
+      ["agent", "approvals", "decide"],
     ];
     for (const path of paths) {
       const command = findCommand(program, ...path);

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
+import { registerAgent } from "./commands/agent";
 import { registerApprove } from "./commands/approve";
 import { registerAutonomy } from "./commands/autonomy";
 import { registerBootstrap } from "./commands/bootstrap";
@@ -77,6 +78,7 @@ registerSignals(program);
 registerWatch(program);
 registerWorkshop(program);
 registerAutonomy(program);
+registerAgent(program);
 
 // Unhandled action rejections are classified into the shared error-code table.
 // `--json` may live after a subcommand, so inspect argv for the envelope shape.

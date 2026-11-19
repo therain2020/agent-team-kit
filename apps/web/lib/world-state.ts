@@ -1,4 +1,10 @@
-import type { AgentState, RunProjection } from "@kit/store";
+import type {
+  AgentState,
+  RunProjection,
+  WorldDelta,
+  WorldSnapshot,
+  WorldSnapshotResult,
+} from "@kit/store";
 import type { FactoryItem } from "./factory";
 
 /**
@@ -7,28 +13,16 @@ import type { FactoryItem } from "./factory";
  * Everything in this module is a pure function over the `/api/world` payloads
  * so the reducer can be unit tested without a browser or a database. The
  * network plumbing lives in `world-client.ts`; the server read model is
- * `lib/world.ts`. Types are shared with the server route.
+ * `lib/world.ts`. The payload types are owned by `@kit/store` so the console,
+ * `/api/world` and `kit agent world` share one definition.
  */
-
-export interface WorldSnapshot {
-  runs: RunProjection[];
-  agents: AgentState[];
-  computedAt: string;
-}
-
-export interface WorldSnapshotResult {
-  snapshot: WorldSnapshot;
-  /** `MAX(activity_events.event_id)` at snapshot time; resume streams here. */
-  seq: number;
-  etag: string;
-}
-
-export interface WorldDelta {
-  seq: number;
-  runs: RunProjection[];
-  agents: AgentState[];
-  eventCount: number;
-}
+export type {
+  AgentState,
+  RunProjection,
+  WorldDelta,
+  WorldSnapshot,
+  WorldSnapshotResult,
+};
 
 /** Connection state shown next to the floor (97 §3.2). */
 export type WorldConnectionStatus = "live" | "reconnecting" | "offline";
