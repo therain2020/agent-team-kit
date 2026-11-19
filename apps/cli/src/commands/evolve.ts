@@ -1,13 +1,19 @@
 import path from "node:path";
 import { CliError } from "@kit/core";
 import {
+  DEFAULT_CONVERGENCE_WINDOW,
+  type EvolutionFreezeKind,
   StoreEvolutionRepository,
   canaryStatus,
   compareVariants,
+  convergenceGuard,
   defaultCyclesRoot,
   evaluateCanary,
+  evolutionCostReport,
+  freezeEvolution,
   initVariant,
   loadEvolutionCycles,
+  loadFreezeState,
   promoteVariant,
   proposeVariant,
   rollbackCanary,
@@ -15,6 +21,7 @@ import {
   scoreVariant,
   setCanaryTraffic,
   startCanary,
+  unfreezeEvolution,
   verifyEvalSnapshot,
 } from "@kit/evolution";
 import { initStore, loadStoreConfig } from "@kit/store";
@@ -287,6 +294,16 @@ export function registerEvolve(program: Command): void {
     )
     .option("--force", "run even without failure signals", false)
     .option("--budget <cny>", "cycle budget in CNY")
+    .option("--budget-tokens <n>", "cycle token budget cap")
+    .option(
+      "--convergence-window <n>",
+      "consecutive no-improvement cycles before an auto-freeze",
+      String(DEFAULT_CONVERGENCE_WINDOW),
+    )
+    .option(
+      "--freeze-file <path>",
+      "freeze state file (default variants/freeze.json)",
+    )
     .option(
       "--signals-root <dir>",
       "directory holding iterations.jsonl (default KIT_SIGNALS_ROOT or ~/.agent-team-kit/signals)",
@@ -314,6 +331,9 @@ export function registerEvolve(program: Command): void {
           autoApply: boolean;
           force: boolean;
           budget?: string;
+          budgetTokens?: string;
+          convergenceWindow: string;
+          freezeFile?: string;
           signalsRoot?: string;
           cyclesRoot?: string;
           hiddenEvals?: string;
@@ -323,6 +343,17 @@ export function registerEvolve(program: Command): void {
         },
       ) => {
         const json = wantsJson(options);
+        const convergenceWindow = Number(options.convergenceWindow);
+        if (!Number.isInteger(convergenceWindow) || convergenceWindow < 1) {
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              "convergence-window must be a positive integer",
+            ),
+          );
+          return;
+        }
         try {
           const record = await withEvolutionRepo((repo) =>
             runEvolutionCycle({
@@ -334,6 +365,11 @@ export function registerEvolve(program: Command): void {
               autoApply: options.autoApply,
               force: options.force,
               budgetCny: options.budget ? Number(options.budget) : undefined,
+              ...(options.budgetTokens
+                ? { budgetTokens: Number(options.budgetTokens) }
+                : {}),
+              convergenceWindow,
+              ...(options.freezeFile ? { freezePath: options.freezeFile } : {}),
               signalsRoot: options.signalsRoot,
               cyclesRoot: options.cyclesRoot,
               ...(options.hiddenEvals
@@ -370,6 +406,162 @@ export function registerEvolve(program: Command): void {
       );
       emitResult(json, cycles);
     });
+
+  evolve
+    .command("freeze")
+    .description(
+      "Freeze evolution: incident, manual, convergence or divergence stop",
+    )
+    .requiredOption("--reason <text>", "why evolution is frozen")
+    .option(
+      "--kind <kind>",
+      "incident | manual | convergence | divergence",
+      "manual",
+    )
+    .option("--actor <actor>", "operator identity", "operator:cli")
+    .option(
+      "--lift-condition <text>",
+      "what must happen before the freeze can be lifted",
+    )
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        reason: string;
+        kind: string;
+        actor: string;
+        liftCondition?: string;
+        idempotencyKey?: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        const kind = parseFreezeKind(options.kind);
+        if (!kind) {
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              "kind must be incident, manual, convergence, or divergence",
+            ),
+          );
+          return;
+        }
+        try {
+          const state = await withEvolutionRepo((repo) =>
+            freezeEvolution(
+              {
+                kind,
+                reason: options.reason,
+                actor: options.actor,
+                ...(options.liftCondition
+                  ? { liftCondition: options.liftCondition }
+                  : {}),
+              },
+              { repo },
+            ),
+          );
+          emitResult(json, withIdempotencyKey(state, options.idempotencyKey));
+        } catch (error) {
+          reportError("freeze", error, json);
+        }
+      },
+    );
+
+  evolve
+    .command("unfreeze")
+    .description("Lift the evolution freeze")
+    .option("--reason <text>", "why evolution is resumed")
+    .option("--actor <actor>", "operator identity", "operator:cli")
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        reason?: string;
+        actor: string;
+        idempotencyKey?: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        try {
+          const state = await withEvolutionRepo((repo) =>
+            unfreezeEvolution(
+              {
+                ...(options.reason ? { reason: options.reason } : {}),
+                actor: options.actor,
+              },
+              { repo },
+            ),
+          );
+          emitResult(json, withIdempotencyKey(state, options.idempotencyKey));
+        } catch (error) {
+          reportError("unfreeze", error, json);
+        }
+      },
+    );
+
+  evolve
+    .command("status")
+    .description(
+      "Show freeze state, convergence streak and evolution cost share",
+    )
+    .option("--days <n>", "cost window in days", "30")
+    .option("--cycles <n>", "recent cycles to consider", "50")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: { days: string; cycles: string; json?: boolean }) => {
+        const json = wantsJson(options);
+        const days = Number(options.days);
+        const limit = Number(options.cycles);
+        if (!Number.isFinite(days) || days <= 0) {
+          emitError(
+            json,
+            new CliError("usage", "days must be a positive number"),
+          );
+          return;
+        }
+        if (!Number.isInteger(limit) || limit < 1) {
+          emitError(
+            json,
+            new CliError("usage", "cycles must be a positive integer"),
+          );
+          return;
+        }
+        try {
+          const data = await withEvolutionRepo(async (repo) => {
+            const freeze = await loadFreezeState({ repo });
+            const cycles = await loadEvolutionCycles(undefined, limit, repo);
+            const guard = convergenceGuard(cycles, DEFAULT_CONVERGENCE_WINDOW);
+            const since = new Date(
+              Date.now() - days * 24 * 60 * 60 * 1000,
+            ).toISOString();
+            const productionCostCny = await repo.sumRunCostCny(since);
+            const inWindow = cycles.filter((cycle) => cycle.createdAt >= since);
+            return {
+              freeze,
+              convergence: {
+                window: guard.window,
+                streak: guard.streak,
+                wouldFreeze: guard.frozen,
+                ...(guard.hint ? { hint: guard.hint } : {}),
+              },
+              cost: {
+                since,
+                ...evolutionCostReport(inWindow, productionCostCny),
+              },
+            };
+          });
+          emitResult(json, data);
+        } catch (error) {
+          reportError("status", error, json);
+        }
+      },
+    );
 
   const snapshot = evolve
     .command("snapshot")
@@ -455,6 +647,22 @@ async function withEvolutionRepo<T>(
   } finally {
     await store.close();
   }
+}
+
+function parseFreezeKind(value: string): EvolutionFreezeKind | null {
+  return value === "incident" ||
+    value === "manual" ||
+    value === "convergence" ||
+    value === "divergence"
+    ? value
+    : null;
+}
+
+function withIdempotencyKey<T extends object>(
+  value: T,
+  key: string | undefined,
+): T | (T & { idempotencyKey: string }) {
+  return key ? { ...value, idempotencyKey: key } : value;
 }
 
 function reportError(command: string, error: unknown, json = false): void {

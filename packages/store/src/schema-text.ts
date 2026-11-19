@@ -270,6 +270,20 @@ CREATE TABLE IF NOT EXISTS evolution_meta (
   PRIMARY KEY (workspace_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS evolution_freeze (
+  workspace_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  kind TEXT,
+  reason TEXT,
+  actor TEXT,
+  since TIMESTAMPTZ,
+  lift_condition TEXT,
+  lifted_at TIMESTAMPTZ,
+  lifted_by TEXT,
+  lift_reason TEXT,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS eval_snapshot_path TEXT;
 ALTER TABLE evolution_cycles
@@ -931,6 +945,20 @@ CREATE TABLE IF NOT EXISTS evolution_meta (
   value TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS evolution_freeze (
+  workspace_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  kind TEXT,
+  reason TEXT,
+  actor TEXT,
+  since TEXT,
+  lift_condition TEXT,
+  lifted_at TEXT,
+  lifted_by TEXT,
+  lift_reason TEXT,
+  updated_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS merge_tickets (
