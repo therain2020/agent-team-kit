@@ -118,4 +118,34 @@ describe("classifyRisk", () => {
     const result = classifyRisk(["README.md"], "high", "high");
     expect(result.risk).toBe("high");
   });
+
+  it("treats agent instructions as forbidden proposal-only substrate", () => {
+    const result = classifyRisk(
+      ["packs/self-improve/agents/patcher.md"],
+      "low",
+      "high",
+    );
+    expect(result.risk).toBe("high");
+    expect(result.forbidden).toBe(true);
+    expect(result.requiresApproval).toBe(true);
+    expect(result.protectedPaths).toEqual([
+      "packs/self-improve/agents/patcher.md",
+    ]);
+  });
+
+  it("treats skills as forbidden proposal-only substrate", () => {
+    const result = classifyRisk(["skills/copywriting/SKILL.md"], "low", "high");
+    expect(result.forbidden).toBe(true);
+  });
+
+  it("treats workflows as high-risk approval substrate", () => {
+    const result = classifyRisk(
+      ["packs/tech-radar/workflows/daily.yaml"],
+      "low",
+      "high",
+    );
+    expect(result.risk).toBe("high");
+    expect(result.forbidden).toBe(false);
+    expect(result.requiresApproval).toBe(true);
+  });
 });

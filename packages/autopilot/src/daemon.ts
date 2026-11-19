@@ -9,6 +9,7 @@ import {
   eventEnvelopeSchema,
   isAutoApproveOriginEligible,
   newId,
+  resolveIterationApplyMode,
   resolveKillSwitch,
   utcDayKey,
 } from "@kit/core";
@@ -617,7 +618,10 @@ async function processIterations(input: {
             maxTasks: iteration.maxTasks,
             maxRepair: iteration.maxRepair,
             runMode: iteration.mode,
-            applyMode: iteration.mode === "LIVE" ? iteration.applyMode : "none",
+            applyMode: resolveIterationApplyMode(
+              iteration.mode,
+              iteration.applyMode,
+            ),
             ...(iteration.coder ? { coder: iteration.coder } : {}),
             stub: false,
             dedupeKey,

@@ -91,6 +91,28 @@ The console at `/autopilot` has a master kill switch, per-pack toggles, budget
 usage, next run times, and recent automatic decisions. `KIT_AUTOPILOT_DISABLED=1`
 is an environment-level kill switch.
 
+### Iteration apply mode and the substrate boundary
+
+`applyMode` (`none`, `low`, `low-medium`) is resolved by the same policy module
+(`packages/core/src/iteration-policy.ts`) for CLI iterations, autopilot
+iterations, and autonomy presets. LIVE iterations honor the configured mode; dry
+runs never apply. An autonomy preset that raises the mode to `low-medium` still
+cannot cross the substrate boundary:
+
+| Changed files | Auto-apply |
+|---|---|
+| `docs/**`, tests, `apps/web/messages/**` | allowed after checks (`low`) |
+| ordinary feature/server code | only in `low-medium` after checks + build |
+| `packs/*/workflows/**`, `team.yaml`, `autopilot.yaml`, `policies.yaml`, `iteration.yaml` | never auto; forced high, approval required |
+| `packs/*/agents/**`, `packs/*/skills/**`, `skills/**` | never; blocked change proposal only |
+| secrets, `.git`, sandbox escapes | blocked outright |
+
+A blocked substrate change still preserves its diff artifact, verification
+evidence, and blocked reason on the merge ticket and `apply` artifact, so
+evolution can evaluate and promote it through the normal freeze → canary →
+promotion gate. Pending low/medium changes remain visible in `kit job changes`
+and `kit job apply`.
+
 ## 4. Manager Office
 
 Open `/office`:
