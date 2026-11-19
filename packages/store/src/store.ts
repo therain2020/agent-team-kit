@@ -81,7 +81,9 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     ping: handle.ping,
     ...repositories,
     blobClient,
-    artifactService: new ArtifactService(blobs, artifactStore, blobClient),
+    artifactService: new ArtifactService(blobs, artifactStore, blobClient, {
+      sql: handle.sql,
+    }),
     approvals: new ApprovalService({
       sql: handle.sql,
       driver: handle.driver,

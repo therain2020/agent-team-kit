@@ -12,7 +12,12 @@ import {
   createModelGateway,
 } from "@kit/model";
 import { type AlertInput, emitAlert, getOpsGate } from "@kit/ops";
-import { type BudgetRecord, initStore } from "@kit/store";
+import {
+  type BudgetRecord,
+  type OpLogEntry,
+  appendOp,
+  initStore,
+} from "@kit/store";
 import {
   type Tool,
   type ToolContext,
@@ -50,6 +55,17 @@ async function safeActivity(store: Store, input: ActivityInput): Promise<void> {
   } catch (error) {
     console.error(
       `[activity] ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+// The op log is audit; a failed audit write must not fail a run.
+async function safeOp(store: Store, entry: OpLogEntry): Promise<void> {
+  try {
+    await appendOp(store, entry);
+  } catch (error) {
+    console.error(
+      `[op-log] ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -133,6 +149,19 @@ async function pauseForBudget(
     "paused",
     new Date().toISOString(),
   );
+  await safeOp(store, {
+    workspaceId: input.workspaceId,
+    entityKind: "run",
+    entityId: input.runId,
+    op: "run.pause",
+    actor: "engine",
+    origin: "system",
+    payload: {
+      stageId: input.stageId,
+      reason: message,
+      blockingBudgetId: blocking?.budgetId ?? null,
+    },
+  });
   await safeActivity(store, {
     workspaceId: input.workspaceId,
     runId: input.runId,
@@ -282,6 +311,23 @@ export async function preparePackRun(
     });
   }
 
+  await safeOp(store, {
+    workspaceId: input.workspaceId,
+    entityKind: "run",
+    entityId: input.runId,
+    op: "run.create",
+    actor: "engine",
+    origin: "system",
+    idempotencyKey: `run.create:${input.runId}`,
+    payload: {
+      eventId: input.eventId,
+      workflowId: input.workflowId,
+      workflowVersion: input.workflowVersion,
+      runMode: input.runMode,
+      stages: input.stages.map((stage) => stage.stageId),
+    },
+  });
+
   await safeActivity(store, {
     workspaceId: input.workspaceId,
     runId: input.runId,
@@ -367,6 +413,20 @@ async function executePackStageInner(
     await store.stages.updateStatus(input.stageId, "succeeded", {
       finishedAt: new Date().toISOString(),
     });
+    await safeOp(store, {
+      workspaceId: input.workspaceId,
+      entityKind: "stage",
+      entityId: input.stageId,
+      op: "stage.status",
+      actor: "engine",
+      origin: "system",
+      payload: {
+        runId: input.runId,
+        status: "succeeded",
+        reused: true,
+        artifactId: existing.artifactId,
+      },
+    });
     await safeActivity(store, {
       workspaceId: input.workspaceId,
       runId: input.runId,
@@ -381,6 +441,15 @@ async function executePackStageInner(
 
   await store.stages.updateStatus(input.stageId, "running", {
     startedAt: new Date().toISOString(),
+  });
+  await safeOp(store, {
+    workspaceId: input.workspaceId,
+    entityKind: "stage",
+    entityId: input.stageId,
+    op: "stage.status",
+    actor: "engine",
+    origin: "system",
+    payload: { runId: input.runId, status: "running", type: input.type },
   });
   await safeActivity(store, {
     workspaceId: input.workspaceId,
@@ -575,6 +644,15 @@ async function executePackStageInner(
     await store.stages.updateStatus(input.stageId, "failed", {
       finishedAt: new Date().toISOString(),
     });
+    await safeOp(store, {
+      workspaceId: input.workspaceId,
+      entityKind: "stage",
+      entityId: input.stageId,
+      op: "stage.status",
+      actor: "engine",
+      origin: "system",
+      payload: { runId: input.runId, status: "failed", error: coderFailure },
+    });
     await safeActivity(store, {
       workspaceId: input.workspaceId,
       runId: input.runId,
@@ -589,6 +667,20 @@ async function executePackStageInner(
 
   await store.stages.updateStatus(input.stageId, "succeeded", {
     finishedAt: new Date().toISOString(),
+  });
+  await safeOp(store, {
+    workspaceId: input.workspaceId,
+    entityKind: "stage",
+    entityId: input.stageId,
+    op: "stage.status",
+    actor: "engine",
+    origin: "system",
+    payload: {
+      runId: input.runId,
+      status: "succeeded",
+      artifactId: published.artifact.artifactId,
+      tokens,
+    },
   });
   await safeActivity(store, {
     workspaceId: input.workspaceId,
@@ -623,6 +715,16 @@ export async function finishPackRun(input: {
     "succeeded",
     new Date().toISOString(),
   );
+  const run = await store.runs.get(input.runId);
+  await safeOp(store, {
+    workspaceId: run?.workspaceId ?? "default",
+    entityKind: "run",
+    entityId: input.runId,
+    op: "run.status",
+    actor: "engine",
+    origin: "system",
+    payload: { status: "succeeded" },
+  });
 }
 
 export async function failPackRun(input: {
@@ -636,6 +738,15 @@ export async function failPackRun(input: {
     new Date().toISOString(),
   );
   const run = await store.runs.get(input.runId);
+  await safeOp(store, {
+    workspaceId: run?.workspaceId ?? "default",
+    entityKind: "run",
+    entityId: input.runId,
+    op: "run.status",
+    actor: "engine",
+    origin: "system",
+    payload: { status: "failed", reason: input.reason },
+  });
   await safeAlert(store, {
     workspaceId: run?.workspaceId ?? "default",
     tier: "P1",
@@ -1807,6 +1918,16 @@ export async function setPackRunStatus(input: {
     input.status,
     new Date().toISOString(),
   );
+  const run = await store.runs.get(input.runId);
+  await safeOp(store, {
+    workspaceId: run?.workspaceId ?? "default",
+    entityKind: "run",
+    entityId: input.runId,
+    op: "run.status",
+    actor: "engine",
+    origin: "system",
+    payload: { status: input.status },
+  });
 }
 
 async function evaluateGate(

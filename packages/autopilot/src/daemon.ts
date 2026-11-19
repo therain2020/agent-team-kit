@@ -26,7 +26,12 @@ import {
   loadPack,
   simulatePack,
 } from "@kit/pack";
-import { initStore, loadStoreConfig, withStoreLock } from "@kit/store";
+import {
+  appendOp,
+  initStore,
+  loadStoreConfig,
+  withStoreLock,
+} from "@kit/store";
 import { createTemporalClient, taskQueue } from "@kit/workflow";
 import { nextCronOccurrence } from "./cron";
 import { applyAutonomyPreset } from "./preset";
@@ -140,6 +145,8 @@ export async function runAutopilotTick(
                 result.errors.push(
                   `${pack.dirName}: state version conflict (disabled tick)`,
                 );
+              } else {
+                await recordTickOp(store, pack.dirName, state, result, now);
               }
               continue;
             }
@@ -200,6 +207,8 @@ export async function runAutopilotTick(
               result.errors.push(
                 `${pack.dirName}: state version conflict (tick)`,
               );
+            } else {
+              await recordTickOp(store, pack.dirName, state, result, now);
             }
           } catch (error) {
             const message =
@@ -257,6 +266,41 @@ export async function startAutopilotDaemon(
       clearTimeout(timer);
     }
   };
+}
+
+/**
+ * Record one autopilot tick in the unified op log. The tick timestamp is the
+ * idempotency key so a replayed tick with the same `now` cannot double-write.
+ */
+async function recordTickOp(
+  store: Awaited<ReturnType<typeof initStore>>,
+  packDir: string,
+  state: AutopilotState,
+  result: TickResult,
+  now: Date,
+): Promise<void> {
+  try {
+    await appendOp(store, {
+      workspaceId: WORKSPACE_ID,
+      entityKind: "autopilot_state",
+      entityId: `${WORKSPACE_ID}:${packDir}`,
+      op: "autopilot.tick",
+      actor: "autopilot",
+      origin: "autopilot",
+      idempotencyKey: `autopilot.tick:${WORKSPACE_ID}:${packDir}:${now.toISOString()}`,
+      payload: {
+        enabled: state.enabled,
+        runsToday: state.runsToday,
+        spentToday: state.spentToday,
+        launched: result.launched.length,
+        errors: result.errors.length,
+      },
+      createdAt: now.toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result.errors.push(`${packDir}: op log failed: ${message}`);
+  }
 }
 
 async function loadAutopilotPacks(repoRoot: string): Promise<PackContext[]> {
