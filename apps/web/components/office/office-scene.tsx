@@ -1,16 +1,20 @@
 "use client";
 
+import {
+  FactoryFloor,
+  type FloorFlow,
+} from "@/components/office/factory-floor";
 import { NewMissionDialog } from "@/components/office/new-mission-dialog";
 import { OfficeChat } from "@/components/office/office-chat";
 import {
-  ConveyorBelt,
+  StageDrawer,
+  type StageTarget,
+} from "@/components/office/stage-drawer";
+import {
   PixelAgent,
   PixelClockControls,
-  PixelCrate,
   PixelMotionProvider,
   TOOL_BUBBLE_MS,
-  ToolBubble,
-  usePixelMotion,
 } from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,56 +27,47 @@ import {
   type OptimisticMission,
   deriveLiveAgents,
   deriveLiveMissions,
+  missionRunIds,
 } from "@/lib/office-live";
-import {
-  type PixelCue,
-  cueFromActivity,
-  pixelStateFromStatus,
-  pushCrate,
-} from "@/lib/pixel-events";
-import { usePixelLive } from "@/lib/use-pixel-live";
+import { pixelStateFromStatus } from "@/lib/pixel-events";
+import { useDocumentVisible } from "@/lib/use-document-visible";
 import { useTicker } from "@/lib/use-ticker";
 import { cn } from "@/lib/utils";
 import { useWorld } from "@/lib/world-client";
+import {
+  type WorldCrate,
+  appendCrate,
+  diffWorldCues,
+  seedBeltCrates,
+} from "@/lib/world-cues";
+import type { WorldSnapshot } from "@/lib/world-state";
 import { shortStage } from "@/lib/world-state";
 import type { UIMessage } from "ai";
 import {
   ArrowUpRight,
   Bot,
-  Coffee,
-  Gamepad2,
   MessageSquare,
-  Monitor,
-  Package,
   Pencil,
   Plus,
   ShieldCheck,
   Users,
-  Wifi,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-/** Crates drawn on the office belt; the rest are summarised as a count. */
-const OFFICE_BELT_VISIBLE = 8;
-
-type BeltCrate = Extract<PixelCue, { type: "crate" }>;
-
-/** Seed the belt from the missions the server already knows about. */
-function seedCrates(missions: readonly { runId: string }[]): BeltCrate[] {
-  return missions.slice(0, 4).map((mission, index) => ({
-    type: "crate" as const,
-    runId: mission.runId,
-    label: mission.runId.slice(-6),
-    bad: false,
-    seq: -(index + 1),
-  }));
-}
+/**
+ * Office floor v2 (issue #156): the pixel factory is back, rebuilt on the
+ * shared world store. `useWorld` is the only live source — crates, bubbles,
+ * stamps, belt direction and the flow meter all come from diffing stream
+ * deltas, and clicking a station opens the stage drawer.
+ */
 
 /** Optimistic missions are dropped if the stream never materializes the run. */
 const OPTIMISTIC_TTL_MS = 120_000;
+/** How long a token/cost delta chip stays on screen. */
+const FLOW_DELTA_MS = 4_000;
 
 const ROLE_I18N = {
   builder: "roleBuilder",
@@ -140,16 +135,44 @@ function OfficeSceneBody({
   const t = useTranslations("office");
   const router = useRouter();
   const world = useWorld();
+  const visible = useDocumentVisible();
   const active = data.active;
   const [selectedId, setSelectedId] = useState(
     active?.agents[0]?.id ?? "manager",
   );
+  const [locked, setLocked] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [tab, setTab] = useState<"agent" | "chat">(initialPanel);
   const [missionOpen, setMissionOpen] = useState(false);
+  const [missionIntent, setMissionIntent] = useState<string | undefined>(
+    undefined,
+  );
   const [optimistic, setOptimistic] = useState<OptimisticMission[]>([]);
+  const [stageTarget, setStageTarget] = useState<StageTarget | null>(null);
+  const [crates, setCrates] = useState<WorldCrate[]>([]);
+  const [bubbles, setBubbles] = useState<
+    Record<string, { text: string; seq: number }>
+  >({});
+  const [stamp, setStamp] = useState<{
+    outcome: "passed" | "failed";
+    seq: number;
+  } | null>(null);
+  const [reverseSeq, setReverseSeq] = useState(0);
+  const [flowDelta, setFlowDelta] = useState<{
+    tokens: number;
+    costCny: number;
+    seq: number;
+  } | null>(null);
 
   const baseMissions = active?.missions ?? [];
   const baseAgents = active?.agents ?? [];
+
+  const ticker = useTicker();
+  const pulse = ticker.pulse;
+  const bubbleTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const flowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cueSeq = useRef(0);
+  const previousWorld = useRef<WorldSnapshot | null>(null);
 
   // The stream wins: drop optimistic missions as soon as the projection has
   // the run, and expire anything the stream never acknowledged.
@@ -192,14 +215,6 @@ function OfficeSceneBody({
     [baseMissions, world.world, optimistic],
   );
 
-  const { enabled: motionEnabled } = usePixelMotion();
-  const ticker = useTicker();
-  const [crates, setCrates] = useState<BeltCrate[]>(() => seedCrates(missions));
-  const [bubbles, setBubbles] = useState<
-    Record<string, { text: string; seq: number }>
-  >({});
-  const bubbleTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-
   useEffect(() => {
     const timers = bubbleTimers.current;
     return () => {
@@ -207,56 +222,103 @@ function OfficeSceneBody({
         clearTimeout(timer);
       }
       timers.clear();
+      if (flowTimer.current) {
+        clearTimeout(flowTimer.current);
+      }
     };
   }, []);
 
-  // Ephemeral motion only: live presence already comes from the world stream,
-  // so activity frames are used solely for tool bubbles and belt crates. A
-  // quiet workspace delivers no frames and the floor stays still.
-  usePixelLive({
-    onEvent: (event) => {
-      const cues = cueFromActivity(event);
-      if (cues.length === 0) {
-        return;
-      }
-      ticker.pulse();
-      for (const cue of cues) {
-        if (cue.type === "crate") {
-          setCrates((current) => pushCrate(current, cue) as BeltCrate[]);
-        }
-        if (cue.type === "tool") {
-          const { agentId } = cue;
+  // Every floor animation is a response to a world delta: the first snapshot
+  // seeds the belt, later deltas yield crates/bubbles/stamps/flow cues. No
+  // second EventSource — `useWorld` is the only transport.
+  useEffect(() => {
+    const next = world.world;
+    const previous = previousWorld.current;
+    previousWorld.current = next;
+    if (!next) {
+      return;
+    }
+    if (!previous) {
+      setCrates((current) =>
+        current.length > 0 ? current : seedBeltCrates(next.runs),
+      );
+      return;
+    }
+    const cues = diffWorldCues(previous, next);
+    if (cues.length === 0) {
+      return;
+    }
+    pulse();
+    for (const cue of cues) {
+      const seq = ++cueSeq.current;
+      switch (cue.type) {
+        case "crate":
+          setCrates((current) =>
+            appendCrate(current, {
+              runId: cue.runId,
+              label: cue.label,
+              tone: cue.tone,
+            }),
+          );
+          break;
+        case "tool": {
           setBubbles((current) => ({
             ...current,
-            [agentId]: { text: cue.tool, seq: cue.seq },
+            [cue.agentId]: { text: cue.tool, seq },
           }));
-          const previous = bubbleTimers.current.get(agentId);
-          if (previous) {
-            clearTimeout(previous);
+          const previousTimer = bubbleTimers.current.get(cue.agentId);
+          if (previousTimer) {
+            clearTimeout(previousTimer);
           }
           bubbleTimers.current.set(
-            agentId,
+            cue.agentId,
             setTimeout(() => {
-              bubbleTimers.current.delete(agentId);
+              bubbleTimers.current.delete(cue.agentId);
               setBubbles((current) => {
-                if (current[agentId]?.seq !== cue.seq) {
+                if (current[cue.agentId]?.seq !== seq) {
                   return current;
                 }
-                const next = { ...current };
-                delete next[agentId];
-                return next;
+                const nextBubbles = { ...current };
+                delete nextBubbles[cue.agentId];
+                return nextBubbles;
               });
             }, TOOL_BUBBLE_MS + 200),
           );
+          break;
         }
+        case "stamp":
+          setStamp({ outcome: cue.outcome, seq });
+          break;
+        case "reverse":
+          setReverseSeq(seq);
+          break;
+        case "flow":
+          setFlowDelta({ tokens: cue.tokens, costCny: cue.costCny, seq });
+          if (flowTimer.current) {
+            clearTimeout(flowTimer.current);
+          }
+          flowTimer.current = setTimeout(() => {
+            setFlowDelta((current) => (current?.seq === seq ? null : current));
+          }, FLOW_DELTA_MS);
+          break;
       }
-    },
-  });
+    }
+  }, [world.world, pulse]);
 
-  // Reduced motion / the motion toggle freeze stepping: state changes still
-  // land, they just do not animate through tick parity.
-  const motionTick = motionEnabled ? ticker.tick : 0;
-  const beltCrates = crates.slice(-OFFICE_BELT_VISIBLE);
+  const scopedRunIds = useMemo(
+    () => missionRunIds(missions, optimistic),
+    [missions, optimistic],
+  );
+  const flow = useMemo<FloorFlow>(() => {
+    const runs = (world.world?.runs ?? []).filter((run) =>
+      scopedRunIds.has(run.runId),
+    );
+    return {
+      tokens: runs.reduce((sum, run) => sum + run.tokens, 0),
+      costCny: runs.reduce((sum, run) => sum + run.costCny, 0),
+      delta: flowDelta,
+    };
+  }, [world.world, scopedRunIds, flowDelta]);
 
   function selectPanel(next: "agent" | "chat") {
     setTab(next);
@@ -270,6 +332,32 @@ function OfficeSceneBody({
       url.searchParams.delete("panel");
     }
     window.history.replaceState(null, "", url);
+  }
+
+  function selectAgent(id: string) {
+    setSelectedId(id);
+    setLocked((current) => (selectedId === id ? !current : true));
+    setTab("agent");
+  }
+
+  function openStage(agent: LiveAgent) {
+    setSelectedId(agent.id);
+    setLocked(true);
+    setStageTarget({
+      agentId: agent.id,
+      runId: agent.runId ?? null,
+      stageId: agent.stageId ?? null,
+    });
+  }
+
+  function handleEscape() {
+    if (stageTarget) {
+      setStageTarget(null);
+      return;
+    }
+    if (locked) {
+      setLocked(false);
+    }
   }
 
   if (!active) {
@@ -345,7 +433,13 @@ function OfficeSceneBody({
               {t("customize")}
             </Link>
           </Button>
-          <Button size="sm" onClick={() => setMissionOpen(true)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              setMissionIntent(undefined);
+              setMissionOpen(true);
+            }}
+          >
             <Plus className="size-3.5" />
             {t("newMission")}
           </Button>
@@ -355,162 +449,28 @@ function OfficeSceneBody({
       <TaskBoard missions={missions} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]">
-        <div className="space-y-3">
-          <div className="office-room relative overflow-hidden rounded-2xl border border-zinc-800 bg-[#0b0f19] p-4 shadow-[inset_0_0_80px_rgba(0,0,0,0.6)]">
-            <div className="pointer-events-none absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(122,162,247,0.12)_1px,transparent_1px),linear-gradient(90deg,rgba(122,162,247,0.12)_1px,transparent_1px)] [background-size:32px_32px]" />
-            <div className="relative">
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="flex size-7 items-center justify-center rounded bg-zinc-800/80 font-mono text-[10px] text-emerald-300">
-                    KIT
-                  </span>
-                  <div>
-                    <p className="text-[11px] font-medium text-zinc-200">
-                      {active.name} · {t("room")}
-                    </p>
-                    <p className="font-mono text-[9px] text-zinc-500">
-                      {t("floor")}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 text-[9px] text-zinc-500">
-                  <span className="flex items-center gap-1">
-                    <Wifi className="size-3 text-emerald-400" />
-                    {t("local")}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Coffee className="size-3 text-amber-300" />
-                    {t("coffee")}
-                  </span>
-                </div>
-              </div>
-
-              <div className="relative rounded-xl border border-zinc-800/80 bg-[#0e1420] px-3 pb-3 pt-2 shadow-[inset_0_8px_20px_rgba(0,0,0,0.45)]">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="flex gap-1.5">
-                    {[0, 1, 2].map((index) => (
-                      <span
-                        key={index}
-                        className="size-1.5 rounded-full bg-amber-300/70"
-                      />
-                    ))}
-                  </div>
-                  <div className="flex items-end gap-1 opacity-70">
-                    {[8, 14, 10, 18, 12, 20, 9].map((height) => (
-                      <span
-                        key={height}
-                        className="w-1 rounded-sm bg-sky-400/50"
-                        style={{ height }}
-                      />
-                    ))}
-                  </div>
-                  <span className="font-mono text-[8px] text-zinc-600">
-                    {t("city")}
-                  </span>
-                </div>
-
-                <div className="relative grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {manager ? (
-                    <div className="flex justify-center sm:col-span-2 lg:col-span-3">
-                      <Station
-                        agent={manager}
-                        tick={motionTick}
-                        bubble={bubbles[manager.id]}
-                        selected={selected?.id === manager.id}
-                        onSelect={() => {
-                          setSelectedId(manager.id);
-                          setTab("agent");
-                        }}
-                        manager
-                      />
-                    </div>
-                  ) : null}
-                  {employees.map((agent, index) => (
-                    <Station
-                      key={agent.id}
-                      agent={agent}
-                      tick={motionTick}
-                      bubble={bubbles[agent.id]}
-                      selected={selected?.id === agent.id}
-                      onSelect={() => {
-                        setSelectedId(agent.id);
-                        setTab("agent");
-                      }}
-                      index={index}
-                    />
-                  ))}
-                </div>
-
-                <div className="mt-3 border-t border-zinc-800/60 pt-2">
-                  <div className="mb-1 flex items-center justify-between text-[9px] text-zinc-500">
-                    <span className="flex items-center gap-1">
-                      <Package className="size-3" />
-                      {t("artifactBelt")}
-                    </span>
-                    <span className="font-mono text-zinc-600">
-                      {t("beltCount", { count: beltCrates.length })}
-                    </span>
-                  </div>
-                  <div
-                    className="relative h-16 overflow-hidden rounded border border-zinc-800/80 bg-[#0a0e15]"
-                    aria-hidden="true"
-                  >
-                    <ConveyorBelt
-                      tick={motionTick}
-                      className="absolute inset-x-0 bottom-0 h-3"
-                    />
-                    {beltCrates.length === 0 ? (
-                      <span className="absolute inset-0 flex items-center justify-center font-mono text-[9px] uppercase tracking-widest text-zinc-700">
-                        {t("beltEmpty")}
-                      </span>
-                    ) : (
-                      beltCrates.map((crate, index) => (
-                        <div
-                          key={crate.runId}
-                          className="absolute bottom-4 left-3 flex flex-col items-center"
-                          style={{
-                            transform: `translate3d(${index * 56}px, 0, 0)`,
-                            transition: motionEnabled
-                              ? "transform 320ms steps(3, end)"
-                              : "none",
-                          }}
-                        >
-                          <PixelCrate
-                            tone={crate.bad ? "bad" : "low"}
-                            size={22}
-                          />
-                          <span className="mt-0.5 w-12 truncate text-center font-mono text-[8px] text-zinc-500">
-                            {crate.label}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-3 flex items-end justify-between border-t border-zinc-800/60 pt-2">
-                  <div className="flex items-end gap-2 opacity-80">
-                    <Plant />
-                    <div className="flex items-end gap-1">
-                      <span className="h-8 w-2 rounded-sm bg-zinc-700" />
-                      <span className="h-11 w-2 rounded-sm bg-zinc-700" />
-                      <span className="h-6 w-2 rounded-sm bg-zinc-700" />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 text-[9px] text-zinc-600">
-                    <span className="flex items-center gap-1">
-                      <Monitor className="size-3" />
-                      {t("desks")}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Gamepad2 className="size-3" />
-                      {t("gameMode")}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div className="min-w-0 space-y-3">
+          <FactoryFloor
+            packName={active.name}
+            manager={manager}
+            employees={employees}
+            agents={agents}
+            ticker={ticker}
+            visible={visible}
+            selectedId={selected?.id ?? null}
+            locked={locked}
+            hoveredId={hoveredId}
+            bubbles={bubbles}
+            crates={crates}
+            stamp={stamp}
+            reverseSeq={reverseSeq}
+            flow={flow}
+            suspended={stageTarget !== null}
+            onHover={setHoveredId}
+            onSelect={selectAgent}
+            onOpen={openStage}
+            onEscape={handleEscape}
+          />
         </div>
 
         <div className="flex min-h-[34rem] flex-col rounded-xl border border-border bg-card">
@@ -550,7 +510,7 @@ function OfficeSceneBody({
           ) : selected ? (
             <AgentPanel
               agent={selected}
-              tick={motionTick}
+              tick={ticker.tick}
               packDir={active.dirName}
               team={employees}
               onSelectAgent={(id) => {
@@ -558,6 +518,7 @@ function OfficeSceneBody({
                 setTab("agent");
               }}
               onChat={() => selectPanel("chat")}
+              onOpenStage={openStage}
             />
           ) : null}
         </div>
@@ -565,11 +526,17 @@ function OfficeSceneBody({
 
       <NewMissionDialog
         open={missionOpen}
-        onOpenChange={setMissionOpen}
+        onOpenChange={(open) => {
+          setMissionOpen(open);
+          if (!open) {
+            setMissionIntent(undefined);
+          }
+        }}
         packDir={active.dirName}
         workflows={active.workflows}
         agents={agents}
         roleRules={active.roleRules}
+        initialIntent={missionIntent}
         onStarted={(mission) =>
           setOptimistic((current) =>
             current.some((entry) => entry.runId === mission.runId)
@@ -578,81 +545,18 @@ function OfficeSceneBody({
           )
         }
       />
-    </div>
-  );
-}
 
-function Station({
-  agent,
-  tick,
-  bubble,
-  selected,
-  onSelect,
-  manager = false,
-  index = 0,
-}: {
-  agent: LiveAgent;
-  tick: number;
-  bubble?: { text: string; seq: number };
-  selected: boolean;
-  onSelect: () => void;
-  manager?: boolean;
-  index?: number;
-}) {
-  const t = useTranslations("office");
-  const status = STATUS_STYLE[agent.status];
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "group relative flex flex-col items-center rounded-xl border border-transparent px-2 pb-2 pt-1 transition-colors hover:border-zinc-700/70",
-        selected && "border-emerald-500/30 bg-emerald-500/[0.04]",
-        manager &&
-          "bg-[radial-gradient(ellipse_at_center,rgba(45,212,191,0.08),transparent_70%)]",
-      )}
-      aria-label={`${agent.id} · ${t(STATUS_I18N[agent.status])} · ${t("clickToInspect")}`}
-    >
-      <span className="relative z-10 mb-1 flex max-w-[11rem] items-center gap-1">
-        <span
-          className={cn(
-            "max-w-[9rem] truncate rounded border px-1.5 py-0.5 text-[9px]",
-            status.text,
-          )}
-        >
-          <ActivityText agent={agent} />
-        </span>
-        {agent.status !== "idle" ? <SinceLabel since={agent.since} /> : null}
-      </span>
-      <span className="relative mb-1">
-        <PixelAgent
-          seed={index + (manager ? 7 : 0)}
-          manager={manager}
-          state={pixelStateFromStatus(agent.status)}
-          tick={tick}
-          tone={agent.status === "error" ? "red" : undefined}
-        />
-        {bubble ? <ToolBubble text={bubble.text} seq={bubble.seq} /> : null}
-        <span
-          className={cn(
-            "absolute -bottom-0.5 left-1/2 size-1.5 -translate-x-1/2 rounded-full ring-2 ring-[#0e1420]",
-            status.dot,
-          )}
-        />
-      </span>
-      <div className="relative w-full max-w-[10rem]">
-        <div className="mx-auto h-1.5 w-full rounded-sm bg-[#2b3446]" />
-        <div className="mx-auto -mt-0.5 flex h-6 w-[86%] items-center justify-center rounded-sm border border-[#1c2433] bg-[#1f2839] shadow-[0_4px_0_#141b28]">
-          <span className="office-screen h-2.5 w-8 rounded-[1px] bg-sky-400/40" />
-        </div>
-        <div className="mx-auto mt-0.5 h-1 w-[40%] rounded bg-zinc-700" />
-        <ProgressBar progress={agent.progress} className="mt-1" />
-      </div>
-      <span className="mt-1 max-w-full truncate font-mono text-[9px] text-zinc-400">
-        {agent.id}
-        {manager ? " · manager" : ` · ${t(ROLE_I18N[agent.role])}`}
-      </span>
-    </button>
+      <StageDrawer
+        packDir={active.dirName}
+        target={stageTarget}
+        onClose={() => setStageTarget(null)}
+        onRerun={(workflow) => {
+          setStageTarget(null);
+          setMissionIntent(t("rerunIntent", { workflow: workflow ?? "—" }));
+          setMissionOpen(true);
+        }}
+      />
+    </div>
   );
 }
 
@@ -730,19 +634,6 @@ function ActivityText({ agent }: { agent: LiveAgent }) {
   }
 }
 
-function Plant() {
-  return (
-    <div className="flex flex-col items-center">
-      <div className="flex gap-0.5">
-        <span className="h-2 w-2 rounded-sm bg-emerald-700" />
-        <span className="h-3 w-2 rounded-sm bg-emerald-600" />
-        <span className="h-2 w-2 rounded-sm bg-emerald-800" />
-      </div>
-      <span className="h-3 w-4 rounded-b-sm bg-amber-900/80" />
-    </div>
-  );
-}
-
 function AgentPanel({
   agent,
   tick,
@@ -750,6 +641,7 @@ function AgentPanel({
   onChat,
   team,
   onSelectAgent,
+  onOpenStage,
 }: {
   agent: LiveAgent;
   tick: number;
@@ -757,6 +649,7 @@ function AgentPanel({
   onChat: () => void;
   team: LiveAgent[];
   onSelectAgent: (id: string) => void;
+  onOpenStage: (agent: LiveAgent) => void;
 }) {
   const t = useTranslations("office");
   const status = STATUS_STYLE[agent.status];
@@ -868,6 +761,10 @@ function AgentPanel({
         <Button size="sm" variant="outline" onClick={onChat}>
           <MessageSquare className="size-3.5" />
           {t("askManager")}
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => onOpenStage(agent)}>
+          <Bot className="size-3.5" />
+          {t("openStageDetail")}
         </Button>
         <Button size="sm" variant="ghost" asChild>
           <Link

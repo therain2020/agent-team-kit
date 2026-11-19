@@ -41,6 +41,7 @@ export function NewMissionDialog({
   workflows,
   agents,
   roleRules,
+  initialIntent,
   onStarted,
 }: {
   open: boolean;
@@ -53,6 +54,8 @@ export function NewMissionDialog({
     requireBuilder: boolean;
     allowCombined: boolean;
   };
+  /** Prefills the intent field (stage drawer "re-run"); still AI-drafted (D-64). */
+  initialIntent?: string;
   /** Emitted after the job starts so the office can show it optimistically. */
   onStarted?: (mission: OptimisticMission) => void;
 }) {
@@ -73,8 +76,11 @@ export function NewMissionDialog({
       setStep("intent");
       setValues(null);
       setError(null);
+      if (initialIntent !== undefined) {
+        setIntent(initialIntent);
+      }
     }
-  }, [open]);
+  }, [open, initialIntent]);
 
   const managerOptions = [
     "manager",
