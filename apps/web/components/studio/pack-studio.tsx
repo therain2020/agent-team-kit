@@ -4,7 +4,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { StudioAgent, StudioData, StudioStage } from "@/lib/pack-studio";
+import type {
+  StudioAgent,
+  StudioData,
+  StudioStage,
+  StudioWorkflow,
+} from "@/lib/pack-studio";
 import { cn } from "@/lib/utils";
 import {
   Bot,
@@ -33,6 +38,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { parse, stringify } from "yaml";
 import { PackFiles } from "./pack-files";
 import { PackPublish } from "./pack-publish";
 import { StageFields } from "./stage-fields";
@@ -61,7 +67,11 @@ interface PolicyApproval {
   position: "before" | "after";
   riskClass: "low" | "medium" | "high";
   ttl: string;
-  autoApproveWhen?: { maxRunCostCny: number };
+  autoApproveWhen?: {
+    maxRunCostCny?: number;
+    riskClass?: Array<"low" | "medium" | "high">;
+    stages?: string[];
+  };
 }
 
 interface PolicyRow {
@@ -104,6 +114,31 @@ const EMPTY_AGENT_DRAFT: AgentDraftValues = {
   tools: [],
   skills: [],
 };
+
+interface WorkflowStageDraft {
+  id: string;
+  type: StudioStage["type"];
+  agent?: string;
+  coder?: string;
+  goal?: string;
+  acceptance?: string;
+  inputs: string[];
+  outputs: string[];
+  timeout?: string;
+  retry?: { max: number; backoff: "fixed" | "exp" };
+  gate?: string;
+  depends: string[];
+  includeInitialInput?: boolean;
+  revisionAgent?: string;
+  approval?: PolicyApproval | null;
+}
+
+interface WorkflowDraftResult {
+  values: { stages: WorkflowStageDraft[] };
+  rationale: string;
+  warnings: string[];
+  model: "live" | "heuristic";
+}
 
 export function PackStudio({
   data,
@@ -154,6 +189,10 @@ export function PackStudio({
   const [newAgentDraftBusy, setNewAgentDraftBusy] = useState(false);
   const [newWorkflowId, setNewWorkflowId] = useState("workflow-2");
   const [workflowBusy, setWorkflowBusy] = useState(false);
+  const [workflowIntent, setWorkflowIntent] = useState("");
+  const [workflowDraft, setWorkflowDraft] =
+    useState<WorkflowDraftResult | null>(null);
+  const [workflowDraftBusy, setWorkflowDraftBusy] = useState(false);
   const [managerModel, setManagerModel] = useState("deepseek-pro");
   const [managerDescription, setManagerDescription] = useState("");
   const [managerInstructions, setManagerInstructions] = useState("");
@@ -620,6 +659,68 @@ export function PackStudio({
     } finally {
       setWorkflowBusy(false);
     }
+  }
+
+  async function generateWorkflowDraft() {
+    if (!workflowIntent.trim()) {
+      toast.error(t("workflowDraftIntentRequired"));
+      return;
+    }
+    if (!currentWorkflow) {
+      return;
+    }
+    setWorkflowDraftBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/compose", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "workflow",
+          intent: workflowIntent.trim(),
+          packDir: data.dirName,
+          currentStages: currentStagesOf(currentWorkflow),
+        }),
+      });
+      const payload = (await response.json()) as {
+        values?: { stages?: WorkflowStageDraft[] };
+        rationale?: string;
+        warnings?: string[];
+        model?: "live" | "heuristic";
+        error?: string;
+      };
+      if (!response.ok || !payload.values?.stages) {
+        throw new Error(payload.error ?? "failed to draft workflow");
+      }
+      setWorkflowDraft({
+        values: { stages: payload.values.stages },
+        rationale: payload.rationale ?? "",
+        warnings: payload.warnings ?? [],
+        model: payload.model === "live" ? "live" : "heuristic",
+      });
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setWorkflowDraftBusy(false);
+    }
+  }
+
+  function applyWorkflowDraft() {
+    if (!workflowDraft || !currentWorkflow) {
+      return;
+    }
+    // Only fills the editor buffer; the existing save button funnels through
+    // writeWorkflowFile so nothing hits disk before the operator saves.
+    const doc = workflowDocBase(currentWorkflow.raw, currentWorkflow.id);
+    setWorkflowRaw(
+      stringify({
+        ...doc,
+        stages: workflowDraft.values.stages.map(draftStageToYaml),
+      }),
+    );
+    toast.success(t("workflowDraftApplied"));
   }
 
   async function saveAutopilot() {
@@ -1331,6 +1432,8 @@ export function PackStudio({
                 onClick={() => {
                   setWorkflowFile(workflow.file);
                   setWorkflowRaw(workflow.raw);
+                  setWorkflowIntent("");
+                  setWorkflowDraft(null);
                 }}
                 className={cn(
                   "w-full rounded-md px-2 py-1.5 text-left text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100",
@@ -1372,6 +1475,46 @@ export function PackStudio({
                 </Button>
               </div>
             </div>
+            {currentWorkflow ? (
+              <div className="space-y-2 rounded-md border border-border bg-zinc-950/40 p-3">
+                <div className="flex items-start gap-2">
+                  <Sparkles className="mt-0.5 size-4 text-emerald-300" />
+                  <div>
+                    <h3 className="text-xs font-medium text-zinc-200">
+                      {t("workflowDraftTitle")}
+                    </h3>
+                    <p className="text-[10px] text-zinc-500">
+                      {t("workflowDraftHint")}
+                    </p>
+                  </div>
+                </div>
+                <Textarea
+                  value={workflowIntent}
+                  onChange={(event) => setWorkflowIntent(event.target.value)}
+                  placeholder={t("workflowDraftPlaceholder")}
+                  className="min-h-14 text-xs"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void generateWorkflowDraft()}
+                    disabled={workflowDraftBusy || saving}
+                  >
+                    <Sparkles className="size-3.5" />
+                    {workflowDraftBusy
+                      ? t("workflowDraftGenerating")
+                      : t("workflowDraftGenerate")}
+                  </Button>
+                </div>
+                {workflowDraft ? (
+                  <WorkflowDraftPreview
+                    draft={workflowDraft}
+                    onApply={applyWorkflowDraft}
+                  />
+                ) : null}
+              </div>
+            ) : null}
             {currentWorkflow ? (
               <WorkflowGraph
                 key={currentWorkflow.file}
@@ -1842,6 +1985,152 @@ function roleLabel(
     return t("roleManager");
   }
   return t("roleBuilder");
+}
+
+function WorkflowDraftPreview({
+  draft,
+  onApply,
+}: {
+  draft: WorkflowDraftResult;
+  onApply: () => void;
+}) {
+  const t = useTranslations("studio");
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-zinc-950/50 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={draft.model === "live" ? "success" : "outline"}>
+          {draft.model === "live"
+            ? t("agentDraftAi")
+            : t("agentDraftHeuristic")}
+        </Badge>
+        <span className="text-[10px] text-zinc-500">
+          {t("workflowDraftStages", { count: draft.values.stages.length })}
+        </span>
+      </div>
+      {draft.rationale ? (
+        <p className="text-[11px] text-zinc-400">{draft.rationale}</p>
+      ) : null}
+      {draft.warnings.length > 0 ? (
+        <ul className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+          {draft.warnings.map((warning) => (
+            <li key={warning}>· {warning}</li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="space-y-1">
+        {draft.values.stages.map((stage) => (
+          <div
+            key={stage.id}
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border px-2.5 py-1.5 text-[10px]"
+          >
+            <span className="font-mono text-zinc-300">{stage.id}</span>
+            <span className="rounded border border-border px-1 uppercase text-zinc-500">
+              {stage.type}
+            </span>
+            <span className="font-mono text-zinc-400">
+              {stage.agent ?? stage.coder ?? "—"}
+            </span>
+            <span className="ml-auto text-zinc-500">
+              {stage.depends.length > 0
+                ? `${t("workflowDraftDependsOn")}: ${stage.depends.join(", ")}`
+                : t("workflowDraftEntry")}
+            </span>
+            {stage.gate ? (
+              <span className="w-full font-mono text-zinc-600">
+                gate: {stage.gate}
+              </span>
+            ) : null}
+            {stage.approval ? (
+              <span className="w-full text-zinc-600">
+                {describePolicy(stage.approval, t)}
+              </span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      <Button size="sm" variant="outline" onClick={onApply}>
+        <CheckCircle2 className="size-3.5" />
+        {t("workflowDraftApply")}
+      </Button>
+    </div>
+  );
+}
+
+function currentStagesOf(workflow: StudioWorkflow): WorkflowStageDraft[] {
+  return workflow.stages.map((stage) => ({
+    id: stage.id,
+    type: stage.type,
+    ...(stage.agent ? { agent: stage.agent } : {}),
+    ...(stage.coder ? { coder: stage.coder } : {}),
+    ...(stage.goal ? { goal: stage.goal } : {}),
+    ...(stage.acceptance ? { acceptance: stage.acceptance } : {}),
+    inputs: stage.inputs,
+    outputs: stage.outputs,
+    ...(stage.timeout ? { timeout: stage.timeout } : {}),
+    ...(stage.retry ? { retry: stage.retry } : {}),
+    ...(stage.gate ? { gate: stage.gate } : {}),
+    depends: stage.inputsFrom ?? (stage.inputFrom ? [stage.inputFrom] : []),
+    ...(stage.includeInitialInput ? { includeInitialInput: true } : {}),
+    ...(stage.revisionAgent ? { revisionAgent: stage.revisionAgent } : {}),
+    ...(stage.approval ? { approval: stage.approval } : {}),
+  }));
+}
+
+function draftStageToYaml(stage: WorkflowStageDraft): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    id: stage.id,
+    type: stage.type,
+    inputs: stage.inputs,
+    outputs: stage.outputs,
+  };
+  if (stage.agent) {
+    out.agent = stage.agent;
+  }
+  if (stage.coder) {
+    out.coder = stage.coder;
+  }
+  if (stage.goal) {
+    out.goal = stage.goal;
+  }
+  if (stage.acceptance) {
+    out.acceptance = stage.acceptance;
+  }
+  if (stage.timeout) {
+    out.timeout = stage.timeout;
+  }
+  if (stage.retry) {
+    out.retry = stage.retry;
+  }
+  if (stage.gate) {
+    out.gate = stage.gate;
+  }
+  if (stage.depends.length === 1) {
+    out.inputFrom = stage.depends[0];
+  } else if (stage.depends.length > 1) {
+    out.inputsFrom = stage.depends;
+  }
+  if (stage.includeInitialInput) {
+    out.includeInitialInput = true;
+  }
+  if (stage.revisionAgent) {
+    out.revisionAgent = stage.revisionAgent;
+  }
+  if (stage.approval) {
+    out.approval = stage.approval;
+  }
+  return out;
+}
+
+function workflowDocBase(raw: string, id: string): Record<string, unknown> {
+  try {
+    const parsed = parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { ...(parsed as Record<string, unknown>), id };
+    }
+  } catch {
+    // Fall back to a minimal runnable skeleton below.
+  }
+  return { id, version: "1.0", trigger: { event: "task.received" } };
 }
 
 function buildApprovalDrafts(data: StudioData): Record<string, ApprovalDraft> {
