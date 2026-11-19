@@ -22,6 +22,7 @@ import {
   FileText,
   Inbox,
   MessageSquare,
+  Network,
   Play,
   ScrollText,
   X,
@@ -278,6 +279,12 @@ export async function WorldDrawer({
           >
             <MessageSquare className="size-3.5" />
             {t("drawer.askManager")}
+          </Link>
+        </Button>
+        <Button asChild size="sm" variant="outline">
+          <Link href={`/atlas?runId=${encodeURIComponent(data.runId)}`}>
+            <Network className="size-3.5" />
+            {t("drawer.atlas")}
           </Link>
         </Button>
         <Button asChild size="sm" variant="outline">
