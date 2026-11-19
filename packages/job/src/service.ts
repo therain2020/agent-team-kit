@@ -46,6 +46,11 @@ type Store = Awaited<ReturnType<typeof initStore>>;
 
 export interface JobServiceOptions {
   repoRoot: string;
+  /**
+   * Trusted internal triggers (event router canary variants live outside
+   * `packs/`) may point at a pack dir outside the packs root.
+   */
+  allowPackOutsideRoot?: boolean;
 }
 
 export async function startJob(
@@ -53,13 +58,14 @@ export async function startJob(
   input: StartJobInput,
   options: JobServiceOptions,
 ): Promise<StartJobResult> {
-  await assertKillSwitchClear(store, { workspaceId: "default" }, "run");
+  const workspaceId = input.workspaceId ?? "default";
+  await assertKillSwitchClear(store, { workspaceId }, "run");
   const runMode: JobRunMode = input.runMode ?? "DRY_RUN";
   const origin = normalizeJobOrigin(input.origin);
   const packDir = resolvePackDir(
     options.repoRoot,
     input.packDir,
-    origin.kind === "cli",
+    origin.kind === "cli" || options.allowPackOutsideRoot === true,
   );
   const loaded = await loadPack(packDir);
   if (!loaded.ok) {
@@ -81,9 +87,26 @@ export async function startJob(
       packDir,
       loaded,
       project,
+      workspaceId,
     );
   }
-  return await startPackRunJob(store, input, origin, runMode, packDir, loaded);
+  return await startPackRunJob(
+    store,
+    input,
+    origin,
+    runMode,
+    packDir,
+    loaded,
+    workspaceId,
+  );
+}
+
+/**
+ * Triggers that need a run id before starting (canary bucketing, event
+ * dedupe) derive it from the same helper so pack runs and retries agree.
+ */
+export function dedupeRunId(dedupeKey: string): string {
+  return `run_${hash(dedupeKey)}`;
 }
 
 export async function listJobs(
@@ -301,6 +324,7 @@ async function startPackRunJob(
   runMode: JobRunMode,
   packDir: string,
   loaded: Awaited<ReturnType<typeof loadPack>>,
+  workspaceId: string,
 ): Promise<StartJobResult> {
   if (!loaded.ok) {
     throw new JobError("invalid_pack", "invalid pack");
@@ -313,6 +337,25 @@ async function startPackRunJob(
   }
   if (!loaded.workflows.some((workflow) => workflow.id === workflowId)) {
     throw new JobError("unknown_workflow", `unknown workflow: ${workflowId}`);
+  }
+
+  const dedupeKey = input.dedupeKey?.trim();
+  const runId = input.runId ?? (dedupeKey ? dedupeRunId(dedupeKey) : undefined);
+  if (dedupeKey && runId) {
+    const existing = await findExistingPackRun(store, runId);
+    if (existing) {
+      return {
+        jobId: runId,
+        kind: "packRun",
+        workflowId: `pack-${runId}`,
+        engine: store.driver === "sqlite" ? "local" : "temporal",
+        runMode,
+        pack: loaded.pack.metadata.name,
+        workflow: workflowId,
+        ...(existing.requestId ? { requestId: existing.requestId } : {}),
+        deduped: true,
+      };
+    }
   }
 
   const mission = await resolveMission(
@@ -332,12 +375,20 @@ async function startPackRunJob(
   try {
     built = await buildPackRun(loaded, {
       workflow: workflowId,
-      input: evidenceText ?? goal,
+      ...(input.inputFile
+        ? { inputFile: input.inputFile }
+        : { input: evidenceText ?? goal }),
       stub: input.stub === true,
       runMode,
+      workspaceId,
+      ...(runId ? { runId } : {}),
+      ...(input.variant ? { variant: input.variant } : {}),
       ...(budget ? { budget } : {}),
       origin: toRunOrigin(origin),
     });
+    if (input.eventId) {
+      built.input.eventId = input.eventId;
+    }
   } catch (error) {
     throw new JobError(
       "build_failed",
@@ -442,6 +493,7 @@ async function startIterationJob(
   packDir: string,
   loaded: Awaited<ReturnType<typeof loadPack>>,
   project: ProjectTarget,
+  workspaceId: string,
 ): Promise<StartJobResult> {
   if (!loaded.ok) {
     throw new JobError("invalid_pack", "invalid pack");
@@ -471,7 +523,7 @@ async function startIterationJob(
   const dedupeKey = input.dedupeKey?.trim();
   const iterationId = newId("it");
   const workflowId = dedupeKey
-    ? `iteration-${"default"}-${hash(dedupeKey)}`
+    ? `iteration-${workspaceId}-${hash(dedupeKey)}`
     : `iteration-${iterationId}`;
 
   if (dedupeKey) {
@@ -490,13 +542,14 @@ async function startIterationJob(
         applyMode,
         pack: loaded.pack.metadata.name,
         project: projectRef(project),
+        deduped: true,
       };
     }
   }
 
   const budget = resolveBudgetSpec(input);
   await admitRunOrThrow(store, {
-    workspaceId: "default",
+    workspaceId,
     runId: iterationId,
     ...(budget ? { spec: budget } : {}),
     estimateCnyMicro: 0,
@@ -506,7 +559,7 @@ async function startIterationJob(
   const iterationInput: IterationInput = {
     iterationId,
     workflowId,
-    workspaceId: "default",
+    workspaceId,
     repoRoot: project.path,
     packDir,
     goal: input.goal.trim(),
@@ -531,7 +584,7 @@ async function startIterationJob(
       trigger_id, trigger_run_id, goal, acceptance,
       run_mode, apply_mode, status, phase, started_at, updated_at
     ) VALUES (
-      ${iterationId}, ${workflowId}, 'default', ${project.path},
+      ${iterationId}, ${workflowId}, ${workspaceId}, ${project.path},
       ${origin.kind}, ${origin.triggerId ?? null}, ${origin.triggerRunId ?? null},
       ${iterationInput.goal}, ${iterationInput.acceptance ?? null},
       ${runMode}, ${applyMode}, 'running', 'queued', ${now}, ${now}
@@ -593,6 +646,23 @@ async function startIterationJob(
   } finally {
     await connection.close();
   }
+}
+
+/**
+ * A dedupe key is honoured across engines: local runs are queued in
+ * `run_requests`, while Temporal runs surface as a `runs` row once the
+ * workflow starts. Either row means the trigger already fired.
+ */
+async function findExistingPackRun(
+  store: Store,
+  runId: string,
+): Promise<{ requestId?: string } | null> {
+  const request = await store.runRequests.find(runId);
+  if (request) {
+    return { requestId: request.requestId };
+  }
+  const run = await store.runs.get(runId);
+  return run ? {} : null;
 }
 
 async function markIterationStartFailed(
