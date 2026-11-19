@@ -757,12 +757,11 @@
   },
   "traces": {
     "title": "追踪",
-    "description": "打开执行历史。Jaeger 承载 OTel span，Temporal 承载工作流历史。",
-    "findRun": "查找运行",
-    "runIdPlaceholder": "run_01…",
-    "search": "搜索",
+    "description": "按 run 下钻执行历史。Jaeger 承载 OTel span，Temporal 承载工作流历史。",
+    "noRunTitle": "追踪从一次运行开始",
+    "noRunHint": "在 World 中打开一次运行，再用该运行的追踪链接查看 Jaeger 或 Temporal。",
+    "openWorld": "打开 World",
     "showingFor": "正在显示 {runId} 的追踪链接。",
-    "enterHint": "输入 run ID，按 run.id 属性预过滤 Jaeger span。",
     "jaegerWorker": "Jaeger · worker",
     "jaegerWorkerDesc": "来自 Temporal worker 的 stage.run span。",
     "jaegerCli": "Jaeger · CLI",
@@ -772,9 +771,8 @@
     "otel": "OTel",
     "durable": "持久化",
     "open": "打开",
-    "recentRuns": "最近运行",
-    "noRuns": "还没有运行。",
-    "footer": "Jaeger 随本地 compose 栈启动（UI 端口 16686）。如果页面不可达，运行 bun run dev:up 启动。"
+    "notConfigured": "未配置",
+    "configureHint": "在 Web 环境变量中设置该变量后即可启用。"
   },
   "artifact": {
     "content": "内容",

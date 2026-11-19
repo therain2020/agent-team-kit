@@ -7,6 +7,11 @@ import { StageTimeline } from "@/components/kit/stage-timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  type TraceTarget,
+  observabilityConfigFromEnv,
+  traceTargets,
+} from "@/lib/traces";
+import {
   cn,
   formatCny,
   formatDuration,
@@ -43,6 +48,7 @@ export async function WorldDrawer({
   closeHref: string;
 }) {
   const t = await getTranslations("world");
+  const traceT = await getTranslations("traces");
   const common = await getTranslations("common");
   const statusT = await getTranslations("status");
   const locale = await getLocale();
@@ -93,6 +99,15 @@ export async function WorldDrawer({
     { id: "activity", label: t("drawer.activity"), icon: Activity },
     { id: "artifacts", label: t("drawer.artifacts"), icon: FileText },
   ];
+
+  // Only render backend deep links that actually resolve, so an unconfigured
+  // Jaeger/Temporal never shows a dead button in the drawer.
+  const traceLinks = traceTargets(
+    data.runId,
+    observabilityConfigFromEnv(),
+  ).filter(
+    (target): target is TraceTarget & { href: string } => target.href !== null,
+  );
 
   return (
     <DrawerShell
@@ -286,6 +301,14 @@ export async function WorldDrawer({
             {t("drawer.traces")}
           </Link>
         </Button>
+        {traceLinks.map((target) => (
+          <Button key={target.id} asChild size="sm" variant="outline">
+            <a href={target.href} target="_blank" rel="noreferrer noopener">
+              <ExternalLink className="size-3.5" />
+              {traceT(target.id)}
+            </a>
+          </Button>
+        ))}
         {data.kind === "run" && data.detail.approval ? (
           <Button asChild size="sm" variant="ghost">
             <Link

@@ -757,12 +757,11 @@
   },
   "traces": {
     "title": "Traces",
-    "description": "Open the execution history. Jaeger carries OTel spans; Temporal carries workflow history.",
-    "findRun": "Find a run",
-    "runIdPlaceholder": "run_01…",
-    "search": "Search",
+    "description": "Run-scoped drill-down into execution history. Jaeger carries OTel spans; Temporal carries workflow history.",
+    "noRunTitle": "Traces start from a run",
+    "noRunHint": "Open a run in World, then use its trace links to inspect Jaeger or Temporal.",
+    "openWorld": "Open World",
     "showingFor": "Showing trace links for {runId}.",
-    "enterHint": "Enter a run ID to pre-filter Jaeger spans by the run.id attribute.",
     "jaegerWorker": "Jaeger · worker",
     "jaegerWorkerDesc": "stage.run spans from the Temporal worker.",
     "jaegerCli": "Jaeger · CLI",
@@ -772,9 +771,8 @@
     "otel": "OTel",
     "durable": "durable",
     "open": "open",
-    "recentRuns": "Recent runs",
-    "noRuns": "No runs yet.",
-    "footer": "Jaeger runs as part of the local compose stack (UI on port 16686). If the page is unreachable, start it with bun run dev:up."
+    "notConfigured": "Not configured",
+    "configureHint": "Set this variable in the web environment to enable the link."
   },
   "artifact": {
     "content": "Content",

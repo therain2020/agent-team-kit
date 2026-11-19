@@ -1,22 +1,45 @@
 import { PageHeader } from "@/components/kit/page-header";
-import { RunStatusBadge } from "@/components/kit/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { getStore } from "@/lib/store";
-import { timeAgo } from "@/lib/utils";
 import {
-  Activity,
-  ArrowUpRight,
-  ExternalLink,
-  Search,
-  Workflow,
-} from "lucide-react";
-import { getLocale, getTranslations } from "next-intl/server";
+  type TraceTarget,
+  type TraceTargetId,
+  observabilityConfigFromEnv,
+  traceTargets,
+} from "@/lib/traces";
+import { Activity, ArrowRight, ExternalLink, Workflow } from "lucide-react";
+import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 
 export const dynamic = "force-dynamic";
+
+const ICONS: Record<TraceTargetId, typeof Activity> = {
+  jaegerWorker: Activity,
+  jaegerCli: Activity,
+  temporal: Workflow,
+};
+
+const LABEL_KEYS: Record<
+  TraceTargetId,
+  { title: string; description: string; badge: string }
+> = {
+  jaegerWorker: {
+    title: "jaegerWorker",
+    description: "jaegerWorkerDesc",
+    badge: "otel",
+  },
+  jaegerCli: {
+    title: "jaegerCli",
+    description: "jaegerCliDesc",
+    badge: "otel",
+  },
+  temporal: {
+    title: "temporal",
+    description: "temporalDesc",
+    badge: "durable",
+  },
+};
 
 export default async function TracesPage({
   searchParams,
@@ -24,156 +47,94 @@ export default async function TracesPage({
   searchParams: Promise<{ runId?: string }>;
 }) {
   const t = await getTranslations("traces");
-  const locale = await getLocale();
-  const { runId } = await searchParams;
-  const store = await getStore();
-  const runs = await store.runs.listRecent(10);
-
-  const jaegerUi =
-    process.env.NEXT_PUBLIC_JAEGER_UI_URL ?? "http://localhost:16686";
-  const temporalUi =
-    process.env.NEXT_PUBLIC_TEMPORAL_UI_URL ?? "http://localhost:8080";
-
-  const tags = runId
-    ? encodeURIComponent(JSON.stringify({ "run.id": runId }))
-    : "";
-  const jaegerWorker = runId
-    ? `${jaegerUi}/search?service=kit-worker&tags=${tags}`
-    : `${jaegerUi}/search?service=kit-worker`;
-  const jaegerCli = runId
-    ? `${jaegerUi}/search?service=kit-cli&tags=${tags}`
-    : `${jaegerUi}/search?service=kit-cli`;
-  const temporal = runId
-    ? `${temporalUi}/namespaces/default/workflows/pack-${encodeURIComponent(runId)}`
-    : `${temporalUi}/namespaces/default/workflows`;
+  const { runId: rawRunId } = await searchParams;
+  const runId = rawRunId?.trim();
 
   return (
     <div className="space-y-5">
       <PageHeader title={t("title")} description={t("description")} />
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Search className="size-4 text-zinc-400" />
-            {t("findRun")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form method="get" className="flex flex-col gap-2 sm:flex-row">
-            <Input
-              name="runId"
-              defaultValue={runId ?? ""}
-              placeholder={t("runIdPlaceholder")}
-              className="font-mono"
-              aria-label={t("findRun")}
-            />
-            <Button type="submit" variant="outline">
-              {t("search")}
+      {runId ? (
+        <>
+          <p className="text-[11px] text-zinc-500">
+            {t("showingFor", { runId })}
+          </p>
+          <div className="grid gap-3 lg:grid-cols-3">
+            {traceTargets(runId, observabilityConfigFromEnv()).map((target) => (
+              <TraceLink key={target.id} target={target} />
+            ))}
+          </div>
+        </>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("noRunTitle")}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-xs text-zinc-400">{t("noRunHint")}</p>
+            <Button asChild size="sm" variant="outline">
+              <Link href="/world">
+                {t("openWorld")}
+                <ArrowRight className="size-3.5" />
+              </Link>
             </Button>
-          </form>
-          {runId ? (
-            <p className="mt-2 text-[11px] text-zinc-500">
-              {t("showingFor", { runId })}
-            </p>
-          ) : (
-            <p className="mt-2 text-[11px] text-zinc-500">{t("enterHint")}</p>
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-3 lg:grid-cols-3">
-        <TraceLink
-          icon={Activity}
-          title={t("jaegerWorker")}
-          description={t("jaegerWorkerDesc")}
-          href={jaegerWorker}
-          badge={t("otel")}
-          openLabel={t("open")}
-        />
-        <TraceLink
-          icon={Activity}
-          title={t("jaegerCli")}
-          description={t("jaegerCliDesc")}
-          href={jaegerCli}
-          badge={t("otel")}
-          openLabel={t("open")}
-        />
-        <TraceLink
-          icon={Workflow}
-          title={t("temporal")}
-          description={t("temporalDesc")}
-          href={temporal}
-          badge={t("durable")}
-          openLabel={t("open")}
-        />
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("recentRuns")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1.5">
-          {runs.map((run) => (
-            <Link
-              key={run.runId}
-              href={`/traces?runId=${encodeURIComponent(run.runId)}`}
-              className="flex items-center gap-2 rounded border border-border px-3 py-2 text-xs transition-colors hover:bg-accent/60"
-            >
-              <span className="truncate font-mono text-zinc-200">
-                {run.runId}
-              </span>
-              <RunStatusBadge status={run.status} />
-              <span className="ml-auto text-[10px] text-zinc-500">
-                {timeAgo(run.createdAt, locale)}
-              </span>
-              <ArrowUpRight className="size-3 text-zinc-600" />
-            </Link>
-          ))}
-          {runs.length === 0 ? (
-            <p className="py-4 text-center text-xs text-zinc-500">
-              {t("noRuns")}
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <p className="text-[11px] text-zinc-600">{t("footer")}</p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
 
-function TraceLink({
-  icon: Icon,
-  title,
-  description,
-  href,
-  badge,
-  openLabel,
-}: {
-  icon: typeof Activity;
-  title: string;
-  description: string;
-  href: string;
-  badge: string;
-  openLabel: string;
-}) {
+async function TraceLink({ target }: { target: TraceTarget }) {
+  const t = await getTranslations("traces");
+  const Icon = ICONS[target.id];
+  const labels = LABEL_KEYS[target.id];
+
+  if (!target.href) {
+    return (
+      <div
+        aria-disabled="true"
+        className="rounded-lg border border-dashed border-border bg-card/40 px-4 py-3"
+      >
+        <div className="flex items-center gap-2">
+          <Icon className="size-4 text-zinc-600" />
+          <span className="text-sm font-medium text-zinc-400">
+            {t(labels.title)}
+          </span>
+          <Badge variant="outline" className="ml-auto text-[10px]">
+            {t("notConfigured")}
+          </Badge>
+        </div>
+        <p className="mt-1 text-[11px] text-zinc-500">
+          {t(labels.description)}
+        </p>
+        <p className="mt-2 font-mono text-[10px] text-zinc-400">
+          {target.envVar}
+        </p>
+        <p className="mt-0.5 text-[10px] text-zinc-500">{t("configureHint")}</p>
+      </div>
+    );
+  }
+
   return (
     <a
-      href={href}
+      href={target.href}
       target="_blank"
       rel="noreferrer noopener"
       className="group rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-accent/60"
     >
       <div className="flex items-center gap-2">
         <Icon className="size-4 text-emerald-400" />
-        <span className="text-sm font-medium text-zinc-200">{title}</span>
+        <span className="text-sm font-medium text-zinc-200">
+          {t(labels.title)}
+        </span>
         <Badge variant="outline" className="ml-auto text-[10px]">
-          {badge}
+          {t(labels.badge)}
         </Badge>
       </div>
-      <p className="mt-1 text-[11px] text-zinc-500">{description}</p>
+      <p className="mt-1 text-[11px] text-zinc-500">{t(labels.description)}</p>
       <p className="mt-2 flex items-center gap-1 text-[10px] text-emerald-400/80 group-hover:text-emerald-300">
-        {openLabel}
+        {t("open")}
         <ExternalLink className="size-3" />
       </p>
     </a>
