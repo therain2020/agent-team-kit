@@ -8,6 +8,7 @@ import {
   loadAgentStateSnapshot,
   loadRunProjections,
 } from "@kit/store";
+import { toIso } from "./iteration-mapping";
 import { ensureStoreSchema, getStore } from "./store";
 import type {
   WorldDelta,
@@ -96,6 +97,46 @@ export async function buildWorldDelta(
 
 export function worldEtag(seq: number): string {
   return `W/"world-${seq}"`;
+}
+
+export type WorldRunKind = "run" | "iteration";
+
+export interface WorldRunMeta {
+  runId: string;
+  kind: WorldRunKind;
+  startedAt: string | null;
+}
+
+interface WorldRunMetaRow {
+  run_id: string;
+  kind: string;
+  started_at: string | Date | null;
+}
+
+/**
+ * Kind + start time for every known job, in one statement. `run_projection`
+ * deliberately carries only activity-derived fields, so the world page joins
+ * this single UNION on `runs` / `iteration_runs` to label rows and compute
+ * elapsed time without falling back to per-run manifest queries.
+ */
+export async function loadWorldRunMetas(
+  store: ProjectionStore,
+  workspaceId = "default",
+): Promise<WorldRunMeta[]> {
+  const rows = await store.sql<WorldRunMetaRow[]>`
+    SELECT run_id, 'run' AS kind, created_at AS started_at
+    FROM runs
+    WHERE workspace_id = ${workspaceId}
+    UNION ALL
+    SELECT iteration_id AS run_id, 'iteration' AS kind, started_at
+    FROM iteration_runs
+    WHERE workspace_id = ${workspaceId}
+  `;
+  return rows.map((row) => ({
+    runId: row.run_id,
+    kind: row.kind === "iteration" ? "iteration" : "run",
+    startedAt: toIso(row.started_at),
+  }));
 }
 
 let backfillPromise: Promise<void> | undefined;
