@@ -709,7 +709,7 @@ export function ApprovalsSurface({
                 {failures.map((failure) => (
                   <Link
                     key={failure.runId}
-                    href={`/runs/${encodeURIComponent(failure.runId)}`}
+                    href={`/world?run=${encodeURIComponent(failure.runId)}`}
                     className="min-w-0 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:bg-accent/50"
                   >
                     <div className="flex flex-wrap items-center gap-2">

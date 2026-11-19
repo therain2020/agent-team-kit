@@ -82,6 +82,8 @@
 ## Further reading
 
 - [install.md](./install.md) — local stack, routes, environment.
+- [console-ia.md](./console-ia.md) — six first-class entries and the route
+  migration table.
 - [open-platform.md](./open-platform.md) — Studio, market, Autopilot, Office,
   approvals, evolution, task-centric roles and controlled tools.
 - [pack-authoring.md](./pack-authoring.md) — Pack layout, roles, tools,

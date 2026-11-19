@@ -23,6 +23,7 @@
   },
   "nav": {
     "office": "Office",
+    "world": "World",
     "commandCenter": "Command Center",
     "manager": "Manager",
     "approvals": "Approvals",
@@ -1394,6 +1395,7 @@
     "assemblyColumn": "Assembly",
     "assemblyColumnHint": "workflow · roles",
     "newPack": "New pack",
+    "newPackDescription": "Create a team pack from a template or from scratch, then continue in Studio.",
     "marketButton": "Workshop market",
     "noPacksTitle": "No packs yet",
     "noPacksDesc": "Create a team from a template, or add a Team Pack under packs/.",

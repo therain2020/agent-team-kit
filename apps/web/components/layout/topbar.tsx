@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { CommandPalette } from "./command-palette";
 import { HealthPill } from "./health-pill";
 import { LocaleSwitcher } from "./locale-switcher";
+import { QuickJump } from "./quick-jump";
 
 export async function Topbar() {
   const t = await getTranslations("topbar");
@@ -18,6 +19,7 @@ export async function Topbar() {
         <Badge variant="default">{t("dryRunDefault")}</Badge>
       </div>
       <div className="flex items-center gap-3">
+        <QuickJump />
         <LocaleSwitcher />
         <CommandPalette />
         <HealthPill />

@@ -1,6 +1,7 @@
 "use client";
 
 import { PageHeader } from "@/components/kit/page-header";
+import { NewPackWizard } from "@/components/packs/new-pack-wizard";
 import { SourcesMarket } from "@/components/sources/sources-market";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +25,6 @@ import {
 import type { WorkshopInstallRecord } from "@kit/workshop";
 import { GitBranch, Globe2, Package, Plus, Store } from "lucide-react";
 import { useTranslations } from "next-intl";
-import Link from "next/link";
 import { useState } from "react";
 
 const TABS: Array<{ id: WorkshopTab; icon: typeof Package; labelKey: string }> =
@@ -38,11 +38,13 @@ export function WorkshopSurface({
   data,
   initialTab,
   initialPack,
+  initialNewOpen = false,
   workshopInstalled,
 }: {
   data: WorkshopSurfaceData;
   initialTab: WorkshopTab;
   initialPack?: string;
+  initialNewOpen?: boolean;
   workshopInstalled: WorkshopInstallRecord[];
 }) {
   const t = useTranslations("workshopSurface");
@@ -51,6 +53,7 @@ export function WorkshopSurface({
   const [scope, setScope] = useState<"pack" | "all">("pack");
   const [marketOpen, setMarketOpen] = useState(false);
   const [sourceMarketOpen, setSourceMarketOpen] = useState(false);
+  const [newPackOpen, setNewPackOpen] = useState(initialNewOpen);
 
   const selected = data.packs.find((pack) => pack.dirName === packDir) ?? null;
   const { visible, scoped } = linkedSourceView(selected, data.sources, scope);
@@ -99,11 +102,9 @@ export function WorkshopSurface({
               <Store className="size-3.5" />
               {t("marketButton")}
             </Button>
-            <Button asChild size="sm">
-              <Link href="/packs/new">
-                <Plus className="size-3.5" />
-                {t("newPack")}
-              </Link>
+            <Button size="sm" onClick={() => setNewPackOpen(true)}>
+              <Plus className="size-3.5" />
+              {t("newPack")}
             </Button>
           </div>
         }
@@ -152,6 +153,7 @@ export function WorkshopSurface({
             packs={data.packs}
             selectedDir={selected?.dirName}
             onSelect={selectPack}
+            onNewPack={() => setNewPackOpen(true)}
           />
         </WorkshopColumn>
 
@@ -200,6 +202,16 @@ export function WorkshopSurface({
             <DialogDescription>{t("sourceColumnHint")}</DialogDescription>
           </DialogHeader>
           <SourcesMarket installed={installedSources} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={newPackOpen} onOpenChange={setNewPackOpen}>
+        <DialogContent className="max-h-[88vh] w-[min(60rem,94vw)] max-w-none overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{t("newPack")}</DialogTitle>
+            <DialogDescription>{t("newPackDescription")}</DialogDescription>
+          </DialogHeader>
+          <NewPackWizard />
         </DialogContent>
       </Dialog>
     </div>

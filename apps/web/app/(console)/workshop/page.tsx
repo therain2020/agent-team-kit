@@ -8,9 +8,9 @@ export const dynamic = "force-dynamic";
 export default async function WorkshopPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; pack?: string }>;
+  searchParams: Promise<{ tab?: string; pack?: string; new?: string }>;
 }) {
-  const { tab, pack } = await searchParams;
+  const { tab, pack, new: openNew } = await searchParams;
   const [data, workshopInstalled] = await Promise.all([
     loadWorkshopSurface(),
     loadInstalledWorkshop(),
@@ -22,6 +22,7 @@ export default async function WorkshopPage({
       data={data}
       initialTab={parseWorkshopTab(tab)}
       initialPack={selected?.dirName}
+      initialNewOpen={openNew === "1"}
       workshopInstalled={workshopInstalled}
     />
   );

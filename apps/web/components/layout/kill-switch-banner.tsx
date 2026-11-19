@@ -60,7 +60,10 @@ export function KillSwitchBanner() {
           .map((item) => `${item.scope}/${item.target || "*"} — ${item.reason}`)
           .join(" · ")}
       </span>
-      <Link href="/kill-switch" className="underline underline-offset-2">
+      <Link
+        href="/ops?section=control"
+        className="underline underline-offset-2"
+      >
         {t("bannerLink")}
       </Link>
     </div>

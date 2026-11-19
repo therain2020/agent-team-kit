@@ -86,7 +86,7 @@ export function QueueEmpty() {
       action={
         <div className="flex flex-wrap justify-center gap-2">
           <Button size="sm" variant="outline" asChild>
-            <Link href="/runs">{t("openRun")}</Link>
+            <Link href="/world?tab=runs">{t("openRun")}</Link>
           </Button>
         </div>
       }

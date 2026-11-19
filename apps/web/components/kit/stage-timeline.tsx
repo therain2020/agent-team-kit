@@ -158,7 +158,7 @@ function ArtifactLink({
         href={
           artifactHref
             ? artifactHref(key)
-            : `/runs/${encodeURIComponent(runId)}?artifact=${encodeURIComponent(key)}`
+            : `/world?run=${encodeURIComponent(runId)}&artifact=${encodeURIComponent(key)}`
         }
         className={cn(
           "flex items-center gap-2 rounded-none px-2 py-1 text-[11px] text-px-muted transition-colors hover:bg-px-panel3 hover:text-px-text",

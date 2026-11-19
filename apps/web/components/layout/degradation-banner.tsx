@@ -80,7 +80,7 @@ export function DegradationBanner({
           </span>
         ))}
         <Link
-          href="/degradation"
+          href="/ops?section=degradation"
           className="ml-auto underline underline-offset-2"
         >
           {t("manage")}

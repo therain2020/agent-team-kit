@@ -149,7 +149,7 @@ export function RunPackDialog({
       setIntent("");
       setEvidence("");
       setShowEvidence(false);
-      router.push(`/runs/${encodeURIComponent(payload.jobId)}`);
+      router.push(`/world?run=${encodeURIComponent(payload.jobId)}`);
     } catch (startError) {
       setError(
         startError instanceof Error
