@@ -274,18 +274,14 @@ export function PackStudio({
     setError(null);
     try {
       setNewAgentDraft(
-        await requestAgentDraft(
-          newAgentIntent.trim(),
-          newAgent.id.trim(),
-          {
-            description: newAgent.description,
-            model: newAgent.model,
-            role: newAgent.role,
-            instructions: newAgent.instructions,
-            tools: newAgent.tools,
-            skills: newAgent.skills,
-          },
-        ),
+        await requestAgentDraft(newAgentIntent.trim(), newAgent.id.trim(), {
+          description: newAgent.description,
+          model: newAgent.model,
+          role: newAgent.role,
+          instructions: newAgent.instructions,
+          tools: newAgent.tools,
+          skills: newAgent.skills,
+        }),
       );
     } catch (problem) {
       const text = problem instanceof Error ? problem.message : String(problem);
@@ -1029,9 +1025,7 @@ export function PackStudio({
                   </p>
                   <Textarea
                     value={newAgentIntent}
-                    onChange={(event) =>
-                      setNewAgentIntent(event.target.value)
-                    }
+                    onChange={(event) => setNewAgentIntent(event.target.value)}
                     placeholder={t("agentDraftPlaceholder")}
                     className="min-h-12 text-[11px]"
                   />
