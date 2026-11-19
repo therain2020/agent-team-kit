@@ -123,7 +123,7 @@ describe("evolution cycle", () => {
     expect(first.decision).toBe("canary");
     expect(first.evalSnapshotPath).toBeTruthy();
 
-    const rubricPath = path.join(packDir, "evals", "rubrics.yaml");
+    const rubricPath = path.join(packDir, "evals", "visible", "rubrics.yaml");
     await writeFile(
       rubricPath,
       `${await readFile(rubricPath, "utf8")}\n# evaluator change\n`,

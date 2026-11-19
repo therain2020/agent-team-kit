@@ -493,6 +493,7 @@ export async function runEvolutionCycle(
       ...(options.hiddenEvalsDir
         ? { hiddenEvalsDir: options.hiddenEvalsDir }
         : {}),
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.freezeSnapshot === undefined
         ? {}
         : { freeze: options.freezeSnapshot }),

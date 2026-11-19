@@ -17,8 +17,17 @@ import { newId } from "@kit/core";
 import { createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
 import { parse, stringify } from "yaml";
+import {
+  EMPTY_HIDDEN_COVERAGE,
+  type HiddenCase,
+  type HiddenCoverage,
+  appendHiddenAudit,
+  auditRootForSnapshot,
+  checkHiddenDraft,
+  loadHiddenSuite,
+} from "./hidden";
 import type { EvolutionRepository } from "./repository";
-import { verifyEvalSnapshot } from "./snapshot";
+import { readEvalSnapshotManifest, verifyEvalSnapshot } from "./snapshot";
 
 export const DEFAULT_ARCHIVE = "variants/archive.jsonl";
 
@@ -176,10 +185,11 @@ export async function scoreVariant(
 
   const evidence = await readFile(inputFile, "utf8");
   const [rubricFile, rubricKey] = (
-    options.rubricRef ?? "evals/rubrics.yaml#radar"
+    options.rubricRef ?? "evals/visible/rubrics.yaml#radar"
   ).split("#");
 
   let rubricRoot = baseline.dir;
+  let evalDir: string | undefined;
   if (options.evalDir) {
     const verification = await verifyEvalSnapshot(options.evalDir);
     if (!verification.ok) {
@@ -187,11 +197,12 @@ export async function scoreVariant(
         `frozen eval snapshot failed verification: ${verification.mismatches.join(", ")}`,
       );
     }
-    rubricRoot = path.resolve(options.evalDir);
+    evalDir = path.resolve(options.evalDir);
+    rubricRoot = evalDir;
   }
 
   const rubricDoc = parse(
-    await readFile(path.join(rubricRoot, rubricFile ?? ""), "utf8"),
+    await readFile(resolveRubricPath(rubricRoot, rubricFile ?? ""), "utf8"),
   ) as {
     rubrics?: Record<
       string,
@@ -207,13 +218,13 @@ export async function scoreVariant(
   let draft = "";
   let costCny = 0;
   let tokens = 0;
+  const instructions = stripFrontmatter(
+    await readFile(path.join(variant.dir, agent.spec.file), "utf8"),
+  );
 
   if (options.stub) {
     draft = `[stub] ${agent.frontmatter.name}: ${evidence.slice(0, 80)}`;
   } else {
-    const instructions = stripFrontmatter(
-      await readFile(path.join(variant.dir, agent.spec.file), "utf8"),
-    );
     const response = await gateway.complete({
       model: agent.frontmatter.model,
       instructions,
@@ -259,6 +270,40 @@ export async function scoreVariant(
     }
   } else {
     scores = { deterministic: deterministic.pass ? 1 : 0 };
+  }
+
+  if (evalDir) {
+    const hidden = await scoreHiddenCases({
+      evalDir,
+      agentName: agent.frontmatter.name,
+      model: agent.frontmatter.model,
+      instructions,
+      stub: options.stub ?? false,
+      gateway,
+    });
+    costCny += hidden.costCny;
+    tokens += hidden.tokens;
+    if (hidden.coverage.available) {
+      const { passed, total, adversarialFailed } = hidden.coverage;
+      scores = {
+        ...scores,
+        hidden: roundRatio(passed / total),
+        hiddenAdversarial: adversarialFailed === 0 ? 1 : 0,
+      };
+      const adversarialNote =
+        adversarialFailed > 0
+          ? ` (${adversarialFailed} adversarial failed)`
+          : "";
+      rationale = appendNote(
+        rationale,
+        `hidden ${passed}/${total} passed${adversarialNote}`,
+      );
+      if (adversarialFailed > 0) {
+        pass = false;
+      }
+    } else {
+      rationale = appendNote(rationale, "hidden coverage unavailable");
+    }
   }
 
   const record: EvolutionRecord = {
@@ -488,6 +533,111 @@ async function appendArchive(
 ): Promise<void> {
   await mkdir(path.dirname(path.resolve(archivePath)), { recursive: true });
   await appendFile(archivePath, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+/**
+ * Visible evals live under `evals/visible/` (E2 layout). Packs authored before
+ * the split keep the rubric directly under `evals/`; both resolve here.
+ */
+function resolveRubricPath(root: string, relative: string): string {
+  const direct = path.join(root, relative);
+  if (existsSync(direct)) {
+    return direct;
+  }
+  const legacyRelative = relative.replace(/^evals\/visible\//, "evals/");
+  if (legacyRelative !== relative) {
+    const legacy = path.join(root, legacyRelative);
+    if (existsSync(legacy)) {
+      return legacy;
+    }
+  }
+  return direct;
+}
+
+/**
+ * Runs the rotated hidden subset against the agent. Only aggregate coverage
+ * leaves this function; case evidence and ids stay in the external snapshot
+ * and audit sink.
+ */
+async function scoreHiddenCases(input: {
+  evalDir: string;
+  agentName: string;
+  model: string;
+  instructions: string;
+  stub: boolean;
+  gateway: ReturnType<typeof createModelGateway>;
+}): Promise<{ coverage: HiddenCoverage; costCny: number; tokens: number }> {
+  const snapshot = await readEvalSnapshotManifest(input.evalDir);
+  const plan = snapshot.manifest.hidden;
+  if (!plan || !plan.available) {
+    return { coverage: { ...EMPTY_HIDDEN_COVERAGE }, costCny: 0, tokens: 0 };
+  }
+
+  const suite = await loadHiddenSuite(path.join(input.evalDir, "hidden"));
+  if (suite.suiteHash !== plan.suiteHash) {
+    throw new Error("hidden eval suite changed after the snapshot was frozen");
+  }
+  const byId = new Map(suite.cases.map((item) => [item.id, item]));
+  const cases: HiddenCase[] = [];
+  for (const id of plan.selectedCaseIds) {
+    const found = byId.get(id);
+    if (!found) {
+      throw new Error("hidden eval suite is missing a rotated case");
+    }
+    cases.push(found);
+  }
+
+  await appendHiddenAudit(auditRootForSnapshot(input.evalDir), {
+    at: new Date().toISOString(),
+    action: "score",
+    cycleId: snapshot.manifest.cycleId,
+    suiteHash: plan.suiteHash,
+    rotationEpoch: plan.rotationEpoch,
+    selectedCaseIds: plan.selectedCaseIds,
+  });
+
+  let passed = 0;
+  let adversarialFailed = 0;
+  let costCny = 0;
+  let tokens = 0;
+  for (const item of cases) {
+    let draft = `[stub] ${input.agentName}: ${item.evidence.slice(0, 80)}`;
+    if (!input.stub) {
+      const response = await input.gateway.complete({
+        model: input.model,
+        instructions: input.instructions,
+        input: item.evidence,
+      });
+      draft = response.text;
+      costCny += response.usage.costCny ?? 0;
+      tokens += response.usage.inputTokens + response.usage.outputTokens;
+    }
+    if (checkHiddenDraft(draft, item.expect)) {
+      passed += 1;
+    } else if (item.kind === "adversarial") {
+      adversarialFailed += 1;
+    }
+  }
+
+  return {
+    coverage: {
+      available: true,
+      total: cases.length,
+      passed,
+      failed: cases.length - passed,
+      adversarialFailed,
+    },
+    costCny,
+    tokens,
+  };
+}
+
+function roundRatio(value: number): number {
+  return Math.round(value * 10000) / 10000;
+}
+
+function appendNote(base: string, note: string): string {
+  return base ? `${base}; ${note}` : note;
 }
 
 function parseFrontmatter(text: string): string | undefined {
