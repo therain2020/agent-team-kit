@@ -10,6 +10,7 @@ export * from "./migrate";
 export * from "./op-log";
 export * from "./projection";
 export * from "./repositories";
+export * from "./retention";
 export * from "./s3";
 export * from "./schema";
 export * from "./store";
