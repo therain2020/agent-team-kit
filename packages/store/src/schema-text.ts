@@ -508,6 +508,8 @@ CREATE TABLE IF NOT EXISTS budget_charges (
 CREATE INDEX IF NOT EXISTS idx_budgets_workspace ON budgets(workspace_id, scope, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_budget_reservations_status ON budget_reservations(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_budget_charges_run ON budget_charges(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_budget_charges_run_timeline
+  ON budget_charges(workspace_id, run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
@@ -1032,6 +1034,8 @@ CREATE TABLE IF NOT EXISTS budget_charges (
 CREATE INDEX IF NOT EXISTS idx_budgets_workspace ON budgets(workspace_id, scope, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_budget_reservations_status ON budget_reservations(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_budget_charges_run ON budget_charges(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_budget_charges_run_timeline
+  ON budget_charges(workspace_id, run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
