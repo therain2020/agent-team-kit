@@ -1,9 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type IterationSignal,
+  defaultIterationsPath,
   proposeImprovements,
+  readIterationSignals,
   summarizeSignals,
 } from "@kit/evolution";
 import type { Command } from "commander";
@@ -90,10 +91,7 @@ export function registerSignals(program: Command): void {
 }
 
 function signalsFile(): string {
-  const root =
-    process.env.KIT_SIGNALS_ROOT ??
-    path.join(os.homedir(), ".agent-team-kit", "signals");
-  return path.join(root, "iterations.jsonl");
+  return defaultIterationsPath();
 }
 
 function proposalsDir(): string {
@@ -104,23 +102,8 @@ function proposalsDir(): string {
 }
 
 async function readSignals(): Promise<IterationSignal[]> {
-  const file = signalsFile();
-  let text = "";
-  try {
-    text = await readFile(file, "utf8");
-  } catch {
-    return [];
-  }
-  return text
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line) as IterationSignal];
-      } catch {
-        return [];
-      }
-    });
+  const file = await readIterationSignals(signalsFile());
+  return file.signals;
 }
 
 function renderProposal(proposal: {

@@ -199,6 +199,8 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   agent_id TEXT NOT NULL,
   hypothesis TEXT NOT NULL,
   signals JSONB NOT NULL DEFAULT '[]'::jsonb,
+  signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb,
   baseline_variant_id TEXT,
   candidate_variant_id TEXT,
   baseline_name TEXT NOT NULL DEFAULT '',
@@ -266,6 +268,10 @@ ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS evaluator_hash TEXT;
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS evaluator_approval_ref TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE evolution_state
   ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
@@ -815,6 +821,8 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   agent_id TEXT NOT NULL,
   hypothesis TEXT NOT NULL,
   signals TEXT NOT NULL DEFAULT '[]',
+  signal_refs TEXT NOT NULL DEFAULT '[]',
+  signal_sources TEXT NOT NULL DEFAULT '[]',
   baseline_variant_id TEXT,
   candidate_variant_id TEXT,
   baseline_name TEXT NOT NULL DEFAULT '',
@@ -1141,6 +1149,8 @@ ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_path TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_approval_ref TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN signal_refs TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE evolution_cycles ADD COLUMN signal_sources TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS budgets (

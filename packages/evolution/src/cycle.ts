@@ -19,6 +19,14 @@ import {
 } from "./evolve";
 import type { EvolutionRepository } from "./repository";
 import {
+  type EvolutionSignalRef,
+  dedupeSignalRefs,
+  defaultIterationsPath,
+  hashSignalId,
+  iterationSignalRef,
+  readIterationSignals,
+} from "./signals";
+import {
   createEvalSnapshot,
   defaultCyclesRoot,
   evaluatorHashForPack,
@@ -33,6 +41,8 @@ export interface EvolutionCycleRecord {
   agentId: string;
   hypothesis: string;
   signals: string[];
+  signalRefs: EvolutionSignalRef[];
+  signalSources: string[];
   baselineName: string;
   candidateName: string;
   baselinePass: boolean | null;
@@ -62,6 +72,8 @@ export interface CycleOptions {
   force?: boolean;
   budgetCny?: number;
   archivePath?: string;
+  signalsRoot?: string;
+  iterationsPath?: string;
   cyclesPath?: string;
   statePath?: string;
   variantsRoot?: string;
@@ -81,6 +93,8 @@ export async function runEvolutionCycle(
   const createdAt = new Date().toISOString();
   const packDir = path.resolve(options.packDir);
   const archivePath = options.archivePath ?? "variants/archive.jsonl";
+  const iterationsPath =
+    options.iterationsPath ?? defaultIterationsPath(options.signalsRoot);
   const cyclesPath = options.cyclesPath ?? DEFAULT_CYCLES;
   const statePath = options.statePath ?? DEFAULT_STATE;
   const variantsRoot =
@@ -98,6 +112,8 @@ export async function runEvolutionCycle(
     agentId: options.agentId ?? "",
     hypothesis: "",
     signals: [],
+    signalRefs: [],
+    signalSources: [],
     baselineName: "",
     candidateName: "",
     baselinePass: null,
@@ -128,9 +144,9 @@ export async function runEvolutionCycle(
       throw new Error(loaded.errors.join("\n"));
     }
 
+    const archiveRecords = await compareVariants(archivePath, repo);
     const agentId =
-      options.agentId ??
-      chooseAgent(loaded.agents, await compareVariants(archivePath, repo));
+      options.agentId ?? chooseAgent(loaded.agents, archiveRecords);
     if (!agentId) {
       throw new Error("no evolvable agent found");
     }
@@ -140,17 +156,33 @@ export async function runEvolutionCycle(
     }
     baseRecord.agentId = agentId;
 
-    const signals = [
-      ...(options.signals ?? []),
-      ...collectSignals(await compareVariants(archivePath, repo)),
-    ].slice(-8);
+    const iterations = await readIterationSignals(iterationsPath);
+    const manualRefs = (options.signals ?? []).map((signal) => ({
+      signalId: hashSignalId(`manual ${signal}`),
+      source: "manual" as const,
+      signal,
+    }));
+    const iterationRefs = iterations.signals
+      .filter((signal) => !signal.verified)
+      .map(iterationSignalRef);
+    const signalRefs = dedupeSignalRefs([
+      ...manualRefs,
+      ...collectSignals(archiveRecords),
+      ...iterationRefs,
+    ]).slice(-8);
+    const signals = signalRefs.map((ref) => ref.signal);
+    baseRecord.signalRefs = signalRefs;
+    baseRecord.signalSources = describeSignalSources(signalRefs, {
+      archivePath,
+      iterationsPath,
+    });
     if (signals.length === 0 && !options.force) {
       return await persistCycle({
         ...baseRecord,
         agentId,
         decision: "skipped",
         rationale:
-          "no failure signals in the archive; pass force to explore anyway",
+          "no failure signals in iterations or the archive; pass force to explore anyway",
       });
     }
 
@@ -199,7 +231,7 @@ export async function runEvolutionCycle(
     const hypothesis =
       options.hypothesis?.trim() ||
       (signals.length > 0
-        ? `Improve ${agentId} against the latest failure signals without changing tools or permissions.`
+        ? `Improve ${agentId} against ${signals.length} failure signal(s) from ${citeSignals(signalRefs)} without changing tools or permissions.`
         : `Explore a more robust ${agentId} instruction set without changing tools or permissions.`);
 
     const current = await readFile(
@@ -392,7 +424,14 @@ export async function loadEvolutionCycles(
     .filter(Boolean)
     .flatMap((line) => {
       try {
-        return [JSON.parse(line) as EvolutionCycleRecord];
+        const record = JSON.parse(line) as EvolutionCycleRecord;
+        return [
+          {
+            ...record,
+            signalRefs: record.signalRefs ?? [],
+            signalSources: record.signalSources ?? [],
+          },
+        ];
       } catch {
         return [];
       }
@@ -464,14 +503,66 @@ ${focus ? `\n### Recent failure focus\n${focus}` : ""}
 `;
 }
 
-function collectSignals(records: EvolutionRecord[]): string[] {
+function collectSignals(records: EvolutionRecord[]): EvolutionSignalRef[] {
   return records
     .filter((record) => !record.pass)
     .slice(-5)
-    .map(
-      (record) =>
-        `${record.agentId}${record.name ? `/${record.name}` : ""}: ${record.rationale || "failed evaluation"}`,
-    );
+    .map((record) => ({
+      signalId: hashSignalId(
+        `archive ${record.variantId} ${record.createdAt} ${record.rationale}`,
+      ),
+      source: "archive" as const,
+      signal: `${record.agentId}${record.name ? `/${record.name}` : ""}: ${record.rationale || "failed evaluation"}`,
+      variantId: record.variantId,
+      agentId: record.agentId,
+    }));
+}
+
+function describeSignalSources(
+  refs: EvolutionSignalRef[],
+  paths: { archivePath: string; iterationsPath: string },
+): string[] {
+  const sources: string[] = [];
+  if (refs.some((ref) => ref.source === "manual")) {
+    sources.push("manual");
+  }
+  if (refs.some((ref) => ref.source === "archive")) {
+    sources.push(`archive:${paths.archivePath}`);
+  }
+  if (refs.some((ref) => ref.source === "iterations")) {
+    sources.push(`iterations:${paths.iterationsPath}`);
+  }
+  return sources;
+}
+
+/**
+ * Names the signal sources and the most recent refs so the hypothesis is
+ * traceable on its own, without re-reading the cycle record.
+ */
+function citeSignals(refs: EvolutionSignalRef[]): string {
+  const kinds: string[] = [];
+  for (const ref of refs) {
+    const kind =
+      ref.source === "iterations"
+        ? "iterations.jsonl"
+        : ref.source === "archive"
+          ? "archive.jsonl"
+          : "operator signals";
+    if (!kinds.includes(kind)) {
+      kinds.push(kind);
+    }
+  }
+  const examples = refs
+    .slice(-2)
+    .map((ref) => {
+      if (ref.source === "iterations" && ref.iterationId) {
+        return `${ref.iterationId}/${ref.taskId ?? "task"}`;
+      }
+      return ref.source === "archive" && ref.variantId ? ref.variantId : "";
+    })
+    .filter(Boolean);
+  const suffix = examples.length > 0 ? ` (${examples.join(", ")})` : "";
+  return `${kinds.join(" + ")}${suffix}`;
 }
 
 function chooseAgent(

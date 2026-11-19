@@ -148,17 +148,29 @@ approval:
 
 Evolution improves one role at a time:
 
-1. collect failure signals (gate rationales, overrides, cost anomalies);
+1. collect failure signals from `iterations.jsonl`, `archive.jsonl` and
+   `--signal` (gate rationales, overrides, cost anomalies);
 2. a meta-agent rewrites the role instructions (tools/permissions frozen);
 3. champion and candidate are scored on the same evidence;
 4. only improvements enter the archive and canary;
 5. promotion is manual by default; `autoApply` requires a passed canary and
    creates a backup.
 
+Each iterate run appends per-task fitness to
+`$KIT_SIGNALS_ROOT/iterations.jsonl` (default
+`~/.agent-team-kit/signals/iterations.jsonl`). A failed task there is enough to
+start a cycle without `--force`. Point the cycle at another directory with
+`--signals-root`. Cycle records include `signalRefs` (which iteration/task and
+signal id were used) and `signalSources` (which files contributed), and the
+hypothesis cites its source. Empty files, corrupt lines and duplicate records
+are ignored deterministically.
+
 ```bash
 bun run kit evolve cycle packs/tech-radar \
   --input-file .tmp/evidence.json \
   --agent writer --stub --force
+bun run kit evolve cycle packs/tech-radar \
+  --input-file .tmp/evidence.json --signals-root .tmp/signals
 bun run kit evolve cycles
 ```
 
@@ -207,6 +219,7 @@ for demos and deterministic tests; it cannot auto-promote.
 | `KIT_AUTOPILOT_DISABLED=1` | Global autopilot kill switch |
 | `KIT_AUTOPILOT_INTERVAL_MS` | Daemon tick interval (default 30000) |
 | `KIT_SOURCES_ROOT` | Installed-source directory (default `./sources`) |
+| `KIT_SIGNALS_ROOT` | Iteration signal directory holding `iterations.jsonl` (default `~/.agent-team-kit/signals`) |
 | `KIT_WORKSHOP_ROOT` | Installed-workshop directory (default `./workshop`) |
 | `KIT_WORKSHOP_TRUSTED_KEYS` | Keyring path or inline JSON for workshop signature checks |
 | `KIT_TOOL_MAX_STEPS` / `KIT_TOOL_MAX_CALLS` | Tool loop caps |
