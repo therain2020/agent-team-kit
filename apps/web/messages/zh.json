@@ -503,7 +503,11 @@
     "description": "同一个队列，两种看法：审批塔看排队与到期，像素流水线看物料与门禁。",
     "viewQueue": "队列",
     "viewFactory": "流水线",
-    "shortcuts": "J/K 选择 · A 批准 · R 拒绝 · Enter 详情 · Esc 关闭 · S 多选"
+    "shortcuts": "J/K 选择 · A 批准 · R 拒绝 · Enter 详情 · Esc 关闭 · S 多选",
+    "runSelected": "已预选运行 {runId} 的首件审批。",
+    "runEmptyTitle": "该运行当前没有待审批工件",
+    "runEmptyHint": "运行 {runId} 目前没有排队中的审批，可能已决策或已结束。",
+    "showAll": "查看全部审批"
   },
   "inbox": {
     "title": "收件箱",
@@ -1433,6 +1437,10 @@
     "agentHint": "角色就是文件。保存会校验模具，并在下一次运行生效。",
     "customize": "定制",
     "newMission": "新任务",
+    "startMission": "发起任务",
+    "handleApproval": "处理审批",
+    "panelLabel": "{agent} 工位操作",
+    "panelShortcuts": "面板聚焦时：M 发起任务 · R 打开运行 · B 处理审批",
     "autopilot": "自主运行",
     "roleBuilder": "Builder",
     "roleSeller": "Seller",

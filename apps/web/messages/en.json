@@ -503,7 +503,11 @@
     "description": "One queue, two views: the tower for SLA pressure and the pixel line for what is on the belt.",
     "viewQueue": "Queue",
     "viewFactory": "Line",
-    "shortcuts": "J/K select · A approve · R reject · Enter detail · Esc close · S multi-select"
+    "shortcuts": "J/K select · A approve · R reject · Enter detail · Esc close · S multi-select",
+    "runSelected": "Selected the first approval for run {runId}.",
+    "runEmptyTitle": "No approval waiting for this run",
+    "runEmptyHint": "Run {runId} has no queued approval right now. It may have been decided or the run may have finished.",
+    "showAll": "Show all approvals"
   },
   "inbox": {
     "title": "Inbox",
@@ -1433,6 +1437,10 @@
     "agentHint": "Edits to roles are files. Saving validates the pack and applies to the next run.",
     "customize": "Customize",
     "newMission": "New mission",
+    "startMission": "Start mission",
+    "handleApproval": "Handle approval",
+    "panelLabel": "Agent {agent} actions",
+    "panelShortcuts": "Panel focused: M mission · R run · B approval",
     "autopilot": "Autopilot",
     "roleBuilder": "Builder",
     "roleSeller": "Seller",

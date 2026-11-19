@@ -17,7 +17,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { WorldStatus } from "@/components/world/world-status";
 import {
   type ApprovalsView,
+  approvalsHref,
   cycleRequestId,
+  firstRequestForRun,
   flattenTower,
   resolveInitialRequest,
   stepRequestId,
@@ -50,6 +52,7 @@ import {
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   type ReactNode,
   useCallback,
@@ -95,14 +98,18 @@ export function ApprovalsSurface({
   operator,
   initialView,
   initialRequestId,
+  initialRunId,
 }: {
   initialTower: ApprovalTowerSnapshot;
   initialItems: FactoryItem[];
   operator: string;
   initialView: ApprovalsView;
   initialRequestId: string | null;
+  /** `?run=` from an office station; preselects that run's first approval. */
+  initialRunId: string | null;
 }) {
   const t = useTranslations("approvals");
+  const router = useRouter();
   const inboxT = useTranslations("inbox");
   const actionT = useTranslations("approvalActions");
   const locale = useLocale();
@@ -128,6 +135,8 @@ export function ApprovalsSurface({
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
   const shouldFocus = useRef(false);
   const deepLinkHandled = useRef(false);
+  const [scopedRunId, setScopedRunId] = useState<string | null>(initialRunId);
+  const runHandled = useRef<string | null>(null);
 
   // The world stream is the source of truth for the line: a delta that shows
   // the run left "paused" removes the workpiece without waiting for a poll.
@@ -165,6 +174,48 @@ export function ApprovalsSurface({
   const failures = useMemo(
     () => visibleItems.filter((item) => item.kind === "failed"),
     [visibleItems],
+  );
+
+  // `?run=` preselects the first approval of that run once data is available.
+  // If the run has no queued approval the view swaps to an explicit empty
+  // state (with an escape back to the full line) instead of silently falling
+  // back to the top card.
+  const runRequestId = useMemo(
+    () => firstRequestForRun(gate, scopedRunId),
+    [gate, scopedRunId],
+  );
+
+  useEffect(() => {
+    setScopedRunId(initialRunId);
+    runHandled.current = null;
+  }, [initialRunId]);
+
+  useEffect(() => {
+    if (!scopedRunId || !runRequestId || runHandled.current === scopedRunId) {
+      return;
+    }
+    runHandled.current = scopedRunId;
+    setActiveId(runRequestId);
+    setAnnounce(t("runSelected", { runId: scopedRunId }));
+  }, [scopedRunId, runRequestId, t]);
+
+  const clearRun = useCallback(() => {
+    setScopedRunId(null);
+    runHandled.current = null;
+    router.replace(approvalsHref("factory"));
+  }, [router]);
+
+  /** Switching views leaves the run scope; the URL must follow. */
+  const selectView = useCallback(
+    (next: ApprovalsView) => {
+      setView(next);
+      if (scopedRunId) {
+        setScopedRunId(null);
+        runHandled.current = null;
+        router.replace(approvalsHref(next));
+      }
+    },
+    [router, scopedRunId],
   );
 
   const queueIds = useMemo(() => flat.map((card) => card.requestId), [flat]);
@@ -510,14 +561,14 @@ export function ApprovalsSurface({
         >
           <ViewTab
             active={queueMode}
-            onClick={() => setView("queue")}
+            onClick={() => selectView("queue")}
             icon={<InboxIcon className="size-3.5" />}
             label={t("viewQueue")}
             count={total}
           />
           <ViewTab
             active={!queueMode}
-            onClick={() => setView("factory")}
+            onClick={() => selectView("factory")}
             icon={<Factory className="size-3.5" />}
             label={t("viewFactory")}
             count={gate.length}
@@ -654,7 +705,24 @@ export function ApprovalsSurface({
         </div>
       ) : null}
 
-      {queueMode ? (
+      {scopedRunId && !runRequestId ? (
+        <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-8 text-center">
+          <p className="text-sm font-medium text-amber-200">
+            {t("runEmptyTitle")}
+          </p>
+          <p className="mt-1 text-[11px] text-zinc-400">
+            {t("runEmptyHint", { runId: scopedRunId })}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-3"
+            onClick={clearRun}
+          >
+            {t("showAll")}
+          </Button>
+        </section>
+      ) : queueMode ? (
         <>
           <QueueView
             groups={groups}

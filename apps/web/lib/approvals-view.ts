@@ -43,6 +43,36 @@ export function approvalsHref(
   return query ? `/approvals?${query}` : "/approvals";
 }
 
+/**
+ * Deep link from an office station's blocked agent to the first approval of
+ * that run (97 §3.3 / 97.5). `/factory` is a legacy redirect to this shape.
+ */
+export function factoryRunHref(runId: string): string {
+  const params = new URLSearchParams({ view: "factory", run: runId });
+  return `/approvals?${params.toString()}`;
+}
+
+/**
+ * The first approval of a run in the order the line would process it. The
+ * caller passes the gate-ordered list, so "first" is the one a keyboard user
+ * would reach first. Returns null when the run has no queued approval.
+ */
+export function firstRequestForRun(
+  items: readonly FactoryItem[],
+  runId: string | null | undefined,
+): string | null {
+  if (!runId) {
+    return null;
+  }
+  const match = items.find(
+    (item) =>
+      item.kind === "approval" &&
+      item.runId === runId &&
+      Boolean(item.requestId),
+  );
+  return match?.requestId ?? null;
+}
+
 /** Keyboard order of the tower: overdue first, then soon, today, later. */
 export function flattenTower(
   groups: readonly TowerBucket[],
