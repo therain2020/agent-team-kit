@@ -119,6 +119,16 @@ describe("sqlite evolution repository", () => {
       agentId: "docs",
       hypothesis: "b is better",
       signals: ["quality"],
+      signalRefs: [
+        {
+          signalId: "sig_1",
+          source: "archive",
+          signal: "docs/b: weak",
+          variantId: "var_b",
+          agentId: "docs",
+        },
+      ],
+      signalSources: ["archive:variants/archive.jsonl"],
       baselineName: "a",
       candidateName: "b",
       baselinePass: true,
@@ -136,6 +146,11 @@ describe("sqlite evolution repository", () => {
     expect(cycles[0]?.cycleId).toBe("cyc_1");
     expect(cycles[0]?.candidatePass).toBe(false);
     expect(cycles[0]?.signals).toEqual(["quality"]);
+    expect(cycles[0]?.signalRefs).toHaveLength(1);
+    expect(cycles[0]?.signalRefs[0]?.signalId).toBe("sig_1");
+    expect(cycles[0]?.signalSources).toEqual([
+      "archive:variants/archive.jsonl",
+    ]);
 
     expect(
       await repo.setState({
