@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { type RefObject, useEffect, useRef, useState } from "react";
-import { usePixelMotion } from "./motion-preference";
+import { usePixelMotion } from "./use-pixel-motion";
 
 /**
  * Conveyor belt whose treads step on the shared clock.

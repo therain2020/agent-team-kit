@@ -1,4 +1,5 @@
 import type { CoderId, RunBudgetSpec, RunOriginKind } from "@kit/core";
+import type { PackRunVariant } from "@kit/workflow";
 
 export type JobKind = "packRun" | "iteration";
 /** Origins a caller may request; `unknown` is reserved for historical rows. */
@@ -64,10 +65,24 @@ export interface StartJobInput {
   stub?: boolean;
   budgetCny?: number;
   budget?: RunBudgetSpec;
+  /**
+   * Deduplicates pack runs as well as iterations: the same key always maps to
+   * the same run, so a replayed trigger cannot start a second run.
+   */
   dedupeKey?: string;
   origin?: StartJobOrigin;
   evidenceText?: string;
   evidenceArtifactId?: string;
+  /** Reads the initial input from a file, taking precedence over text/goal. */
+  inputFile?: string;
+  /** Pre-generated run id; triggers derive it from the dedupe key for bucketing. */
+  runId?: string;
+  /** Correlates the run with the event that triggered it (event origins). */
+  eventId?: string;
+  /** Canary variant metadata selected by the event router. */
+  variant?: PackRunVariant;
+  /** Workspace scope; defaults to `default`. */
+  workspaceId?: string;
   mission?: MissionInput;
 }
 
@@ -83,6 +98,8 @@ export interface StartJobResult {
   requestId?: string;
   mission?: unknown;
   project?: { id: string; name: string; path: string };
+  /** True when a run with the same dedupe key already existed; nothing started. */
+  deduped?: boolean;
 }
 
 export interface JobSummary {

@@ -459,31 +459,12 @@
   }
 }
 
-@keyframes pixel-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-4px);
-  }
-}
-
-.pixel-bob-idle {
-  animation: pixel-bob 2.4s ease-in-out infinite;
-}
-
-@keyframes office-blink {
-  0%,
-  92%,
-  100% {
-    opacity: 1;
-  }
-  95% {
-    opacity: 0.2;
-  }
-}
-
+/*
+ * Pixel motion tokens (97 §3.1, 89 F-5). Bob/blink/belt are only ever applied
+ * through the shared pixel primitives, and every animated class is gated by
+ * `usePixelMotion().enabled` at the call site; the media query below is the
+ * belt-and-braces guard for surfaces outside that provider.
+ */
 @keyframes office-screen {
   0%,
   100% {
@@ -508,6 +489,10 @@
     var(--px-line) 18px,
     var(--px-line) 20px
   );
+}
+
+/* Only added while the shared motion policy allows animation. */
+.factory-belt-run {
   animation: factory-belt 1.6s linear infinite;
 }
 
@@ -552,10 +537,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pixel-bob-idle,
-  .office-blink,
   .office-screen,
-  .factory-belt,
+  .factory-belt-run,
   .atlas-flow,
   .atlas-node-pulse,
   .atlas-bar {
