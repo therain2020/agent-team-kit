@@ -1,18 +1,8 @@
-import { AutopilotConsole } from "@/components/autopilot/autopilot-console";
-import { PageHeader } from "@/components/kit/page-header";
-import { loadAutopilotOverview } from "@/lib/autopilot";
-import { getTranslations } from "next-intl/server";
+import { LEGACY_OPS_REDIRECTS, opsSectionHref } from "@/lib/ops-sections";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function AutopilotPage() {
-  const t = await getTranslations("autopilot");
-  const overview = await loadAutopilotOverview();
-
-  return (
-    <div className="space-y-5">
-      <PageHeader title={t("title")} description={t("description")} />
-      <AutopilotConsole overview={overview} />
-    </div>
-  );
+export default function AutopilotRedirect() {
+  redirect(opsSectionHref(LEGACY_OPS_REDIRECTS["/autopilot"]));
 }
