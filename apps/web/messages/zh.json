@@ -703,6 +703,9 @@
   "evolution": {
     "title": "演化",
     "description": "变体、实流量灰度与受控晋升。0% 灰度停留在 shadow。",
+    "frozenTitle": "演化已冻结",
+    "frozenBy": "操作者 {actor} · {since}起",
+    "frozenLift": "解除条件：{condition}",
     "startCanary": "启动灰度",
     "evaluate": "评估",
     "rollback": "回滚",

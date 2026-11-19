@@ -703,6 +703,9 @@
   "evolution": {
     "title": "Evolution",
     "description": "Variants, live canary traffic, and guarded promotion. A 0% canary stays in shadow.",
+    "frozenTitle": "Evolution frozen",
+    "frozenBy": "by {actor} · since {since}",
+    "frozenLift": "Lift when: {condition}",
     "startCanary": "Start canary",
     "evaluate": "Evaluate",
     "rollback": "Rollback",

@@ -17,6 +17,7 @@ import {
   History,
   Microscope,
   ShieldCheck,
+  Snowflake,
   Sparkles,
   Trophy,
 } from "lucide-react";
@@ -28,10 +29,8 @@ export default async function EvolutionPage() {
   const t = await getTranslations("evolution");
   const common = await getTranslations("common");
   const locale = await getLocale();
-  const [{ state, variants, cycles, decisions }, packs] = await Promise.all([
-    loadEvolutionData(),
-    listPacks(),
-  ]);
+  const [{ state, freeze, variants, cycles, decisions }, packs] =
+    await Promise.all([loadEvolutionData(), listPacks()]);
 
   const canary = state?.canary;
   const canaryActive =
@@ -86,6 +85,30 @@ export default async function EvolutionPage() {
           </div>
         }
       />
+
+      {freeze.status === "frozen" ? (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-amber-200">
+              <Snowflake className="size-4" />
+              {t("frozenTitle")}
+            </CardTitle>
+            <Badge variant="warning">{freeze.kind ?? "manual"}</Badge>
+          </CardHeader>
+          <CardContent className="space-y-1 text-[11px] text-amber-100/80">
+            <p>{freeze.reason}</p>
+            <p className="font-mono text-[10px] text-amber-200/70">
+              {t("frozenBy", {
+                actor: freeze.actor ?? "operator",
+                since: freeze.since ? timeAgo(freeze.since, locale) : "—",
+              })}
+            </p>
+            {freeze.liftCondition ? (
+              <p>{t("frozenLift", { condition: freeze.liftCondition })}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

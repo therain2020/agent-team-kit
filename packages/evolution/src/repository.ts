@@ -1,6 +1,7 @@
 import type { CanaryState, EvolutionDecisionRecord } from "./canary";
 import type { EvolutionCycleRecord } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
+import type { EvolutionFreezeState } from "./freeze";
 
 export interface StoredCanaryState {
   state: CanaryState;
@@ -44,5 +45,8 @@ export interface EvolutionRepository {
     decision: EvolutionDecisionRecord,
     expectedVersion?: number,
   ): Promise<boolean>;
+  /** Workspace-level freeze switch; null means evolution is active. */
+  getFreeze(): Promise<EvolutionFreezeState | null>;
+  setFreeze(state: EvolutionFreezeState): Promise<void>;
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T | null>;
 }

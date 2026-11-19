@@ -2,6 +2,7 @@ export * from "./canary";
 export * from "./cycle";
 export * from "./evidence";
 export * from "./evolve";
+export * from "./freeze";
 export * from "./postgres";
 export * from "./repository";
 export * from "./signals";

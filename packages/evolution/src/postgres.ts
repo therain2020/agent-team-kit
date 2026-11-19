@@ -18,6 +18,7 @@ import {
 } from "./canary";
 import type { EvolutionCycleRecord } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
+import type { EvolutionFreezeState } from "./freeze";
 import type {
   EvolutionRepository,
   StoredCanaryState,
@@ -116,6 +117,19 @@ interface DecisionRow {
   reason: string;
   actor: string;
   created_at: Date | string;
+}
+
+interface FreezeRow {
+  workspace_id: string;
+  status: string;
+  kind: string | null;
+  reason: string | null;
+  actor: string | null;
+  since: Date | string | null;
+  lift_condition: string | null;
+  lifted_at: Date | string | null;
+  lifted_by: string | null;
+  lift_reason: string | null;
 }
 
 export class StoreEvolutionRepository implements EvolutionRepository {
@@ -423,6 +437,59 @@ export class StoreEvolutionRepository implements EvolutionRepository {
       RETURNING version
     `;
     return rows.length > 0;
+  }
+
+  async getFreeze(): Promise<EvolutionFreezeState | null> {
+    await this.ensureReady();
+    const rows = await this.store.sql<FreezeRow[]>`
+      SELECT * FROM evolution_freeze
+      WHERE workspace_id = ${this.workspaceId}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    return row ? mapFreeze(row) : null;
+  }
+
+  async setFreeze(state: EvolutionFreezeState): Promise<void> {
+    await this.ensureReady();
+    const now = new Date().toISOString();
+    await this.store.sql`
+      INSERT INTO evolution_freeze (
+        workspace_id, status, kind, reason, actor, since, lift_condition,
+        lifted_at, lifted_by, lift_reason, updated_at
+      ) VALUES (
+        ${this.workspaceId}, ${state.status}, ${state.kind ?? null},
+        ${state.reason ?? null}, ${state.actor ?? null},
+        ${state.since ?? null}, ${state.liftCondition ?? null},
+        ${state.liftedAt ?? null}, ${state.liftedBy ?? null},
+        ${state.liftReason ?? null}, ${now}
+      )
+      ON CONFLICT (workspace_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        kind = EXCLUDED.kind,
+        reason = EXCLUDED.reason,
+        actor = EXCLUDED.actor,
+        since = EXCLUDED.since,
+        lift_condition = EXCLUDED.lift_condition,
+        lifted_at = EXCLUDED.lifted_at,
+        lifted_by = EXCLUDED.lifted_by,
+        lift_reason = EXCLUDED.lift_reason,
+        updated_at = EXCLUDED.updated_at
+    `;
+  }
+
+  /**
+   * Production spend (charged runs) since the given ISO timestamp, used to
+   * report the evolution cost share against the 70 §6 budget cap.
+   */
+  async sumRunCostCny(since: string): Promise<number> {
+    const rows = await this.store.sql<Array<{ total: string | number | null }>>`
+      SELECT COALESCE(SUM(cost_cny_micro), 0) / 1000000.0 AS total
+      FROM budget_charges
+      WHERE workspace_id = ${this.workspaceId}
+        AND created_at >= ${since}
+    `;
+    return Number(rows[0]?.total ?? 0);
   }
 
   async withLock<T>(key: string, fn: () => Promise<T>): Promise<T | null> {
@@ -800,6 +867,43 @@ function mapDecision(row: DecisionRow): EvolutionDecisionRecord {
     actor: row.actor,
     createdAt: toIso(row.created_at) ?? new Date().toISOString(),
   };
+}
+
+function mapFreeze(row: FreezeRow): EvolutionFreezeState {
+  const status = row.status === "frozen" ? "frozen" : "active";
+  const base: EvolutionFreezeState = {
+    workspaceId: row.workspace_id,
+    status,
+  };
+  if (status === "frozen") {
+    const since = toIso(row.since);
+    return {
+      ...base,
+      kind: isFreezeKind(row.kind) ? row.kind : "manual",
+      ...(row.reason ? { reason: row.reason } : {}),
+      ...(row.actor ? { actor: row.actor } : {}),
+      ...(since ? { since } : {}),
+      ...(row.lift_condition ? { liftCondition: row.lift_condition } : {}),
+    };
+  }
+  const liftedAt = toIso(row.lifted_at);
+  return {
+    ...base,
+    ...(liftedAt ? { liftedAt } : {}),
+    ...(row.lifted_by ? { liftedBy: row.lifted_by } : {}),
+    ...(row.lift_reason ? { liftReason: row.lift_reason } : {}),
+  };
+}
+
+function isFreezeKind(
+  value: string | null,
+): value is NonNullable<EvolutionFreezeState["kind"]> {
+  return (
+    value === "incident" ||
+    value === "manual" ||
+    value === "convergence" ||
+    value === "divergence"
+  );
 }
 
 function mapCycle(row: CycleRow): EvolutionCycleRecord {
