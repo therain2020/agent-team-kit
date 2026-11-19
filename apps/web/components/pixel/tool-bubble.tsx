@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
-import { usePixelMotion } from "./motion-preference";
+import { usePixelMotion } from "./use-pixel-motion";
 
 /**
  * Speech bubble above an agent for a `tool.call` (97 §3.2).

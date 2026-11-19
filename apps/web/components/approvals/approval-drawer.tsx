@@ -1,11 +1,11 @@
 "use client";
 
-import { PixelWorkpiece } from "@/components/approvals/pixel-workpiece";
 import {
   RunModeBadge,
   RunStatusBadge,
   StageStatusBadge,
 } from "@/components/kit/status-badge";
+import { PixelWorkpiece } from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {

@@ -16,6 +16,14 @@ import {
   useState,
 } from "react";
 
+/**
+ * One motion policy for every pixel surface (97 §3.1).
+ *
+ * `preference` is the persisted toggle, `reduced` mirrors the OS
+ * `prefers-reduced-motion`, and `enabled` is the AND of both. Primitives read
+ * `enabled` instead of each rolling their own media query, so bob/blink/belt
+ * all stop together and no surface can drift into its own behaviour.
+ */
 interface PixelMotionValue {
   /** User preference persisted in localStorage. */
   preference: boolean;
