@@ -15,6 +15,7 @@ import {
   validateRolePlan,
   validateStageGraph,
 } from "@kit/pack";
+import { type PackDraftValues, composePackDraft } from "./compose-pack";
 import { JobError } from "./types";
 
 export type ComposeKind =
@@ -24,6 +25,7 @@ export type ComposeKind =
   | "autopilot"
   | "evolutionCycle"
   | "agent"
+  | "pack"
   | "workflow";
 
 export interface ComposeInput {
@@ -36,6 +38,8 @@ export interface ComposeInput {
   agentId?: string;
   /** Current form values so drafts preserve unsaved edits. */
   current?: Partial<AgentDraftValues>;
+  /** Template pre-selected by the user for a brand-new pack; optional. */
+  templateId?: string;
   /** Current (possibly unsaved) stage graph when editing a workflow. */
   currentStages?: DraftStage[];
 }
@@ -108,6 +112,7 @@ export interface ComposeResult {
     | AutopilotValues
     | EvolutionCycleValues
     | AgentDraftValues
+    | PackDraftValues
     | WorkflowDraftValues;
   rationale: string;
   warnings: string[];
@@ -121,6 +126,15 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
   const intent = input.intent.trim();
   if (!intent) {
     throw new JobError("intent_required", "a one-line intent is required", 400);
+  }
+  // A brand-new pack has no existing directory, so this kind must be handled
+  // before resolving or loading a pack.
+  if (input.kind === "pack") {
+    const draft = await composePackDraft(intent, {
+      templateId: input.templateId,
+      env: input.env ?? process.env,
+    });
+    return { kind: "pack", ...draft };
   }
   const packDir = resolvePackDir(input.repoRoot, input.packDir);
   const loaded = await loadPack(packDir);

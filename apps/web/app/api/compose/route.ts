@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     packDir?: unknown;
     agentId?: unknown;
     current?: unknown;
+    templateId?: unknown;
     currentStages?: unknown;
   };
   try {
@@ -37,12 +38,14 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, or workflow",
+          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, or workflow",
       },
       { status: 400 },
     );
   }
-  if (typeof body.packDir !== "string" || !body.packDir.trim()) {
+  // A `pack` draft scaffolds a brand-new pack, so it has no existing directory.
+  const packDir = typeof body.packDir === "string" ? body.packDir : "";
+  if (kind !== "pack" && !packDir.trim()) {
     return NextResponse.json({ error: "packDir is required" }, { status: 400 });
   }
 
@@ -52,9 +55,12 @@ export async function POST(request: Request) {
     const result = await composeJob({
       kind,
       intent: typeof body.intent === "string" ? body.intent : "",
-      packDir: body.packDir,
+      packDir,
       repoRoot: getRepoRoot(),
       ...(typeof body.agentId === "string" ? { agentId: body.agentId } : {}),
+      ...(typeof body.templateId === "string"
+        ? { templateId: body.templateId }
+        : {}),
       ...(current ? { current } : {}),
       ...(currentStages ? { currentStages } : {}),
     });
@@ -71,6 +77,7 @@ function parseKind(value: unknown): ComposeKind | undefined {
     value === "autopilot" ||
     value === "evolutionCycle" ||
     value === "agent" ||
+    value === "pack" ||
     value === "workflow"
     ? value
     : undefined;

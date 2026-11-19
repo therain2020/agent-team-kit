@@ -1,6 +1,7 @@
 import { sameOriginError } from "@/lib/http";
 import { getPacksRoot } from "@/lib/paths";
 import { parseRole } from "@/lib/roles";
+import { validatePackCreation } from "@kit/job";
 import { createPack, listTemplates } from "@kit/pack";
 import { NextResponse } from "next/server";
 
@@ -49,6 +50,34 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
+  }
+
+  // Re-validate the approved draft server-side. Drafts are advisory until this
+  // point: reject out-of-range agents, roles, or models before writing files.
+  const errors = validatePackCreation(
+    {
+      dirName: body.dirName,
+      name: body.name,
+      managerModel:
+        typeof body.managerModel === "string" ? body.managerModel : undefined,
+      agents: Array.isArray(body.agents)
+        ? body.agents.flatMap((agent) =>
+            typeof agent === "object" && agent !== null
+              ? [
+                  {
+                    id: (agent as Record<string, unknown>).id,
+                    role: (agent as Record<string, unknown>).role,
+                    model: (agent as Record<string, unknown>).model,
+                  },
+                ]
+              : [],
+          )
+        : [],
+    },
+    process.env,
+  );
+  if (errors.length > 0) {
+    return NextResponse.json({ error: errors.join("; ") }, { status: 400 });
   }
 
   const agents = Array.isArray(body.agents)
