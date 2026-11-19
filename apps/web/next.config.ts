@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
+import { LEGACY_REDIRECTS } from "./lib/legacy-redirects";
 
 const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
@@ -29,6 +30,9 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["postgres", "better-sqlite3", "@aws-sdk/client-s3"],
   experimental: {
     staleTimes: { dynamic: 10, static: 300 },
+  },
+  async redirects() {
+    return LEGACY_REDIRECTS.map((entry) => ({ ...entry }));
   },
 };
 

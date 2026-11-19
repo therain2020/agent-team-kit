@@ -8,9 +8,9 @@ export const dynamic = "force-dynamic";
 export default async function OfficePage({
   searchParams,
 }: {
-  searchParams: Promise<{ pack?: string }>;
+  searchParams: Promise<{ pack?: string; panel?: string }>;
 }) {
-  const { pack } = await searchParams;
+  const { pack, panel } = await searchParams;
   const t = await getTranslations("office");
   const data = await loadOfficeData(pack);
   const initialMessages = data.active
@@ -27,6 +27,7 @@ export default async function OfficePage({
         data={data}
         initialMessages={initialMessages}
         stubMode={stubMode}
+        initialPanel={panel === "manager" ? "chat" : "agent"}
       />
     </div>
   );

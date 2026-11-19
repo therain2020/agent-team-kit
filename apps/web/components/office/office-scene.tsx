@@ -117,6 +117,7 @@ export function OfficeScene(props: {
   data: OfficeData;
   initialMessages: UIMessage[];
   stubMode: boolean;
+  initialPanel?: "agent" | "chat";
 }) {
   return (
     <PixelMotionProvider>
@@ -129,10 +130,12 @@ function OfficeSceneBody({
   data,
   initialMessages,
   stubMode,
+  initialPanel = "agent",
 }: {
   data: OfficeData;
   initialMessages: UIMessage[];
   stubMode: boolean;
+  initialPanel?: "agent" | "chat";
 }) {
   const t = useTranslations("office");
   const router = useRouter();
@@ -141,7 +144,7 @@ function OfficeSceneBody({
   const [selectedId, setSelectedId] = useState(
     active?.agents[0]?.id ?? "manager",
   );
-  const [tab, setTab] = useState<"agent" | "chat">("agent");
+  const [tab, setTab] = useState<"agent" | "chat">(initialPanel);
   const [missionOpen, setMissionOpen] = useState(false);
   const [optimistic, setOptimistic] = useState<OptimisticMission[]>([]);
 
@@ -255,6 +258,20 @@ function OfficeSceneBody({
   const motionTick = motionEnabled ? ticker.tick : 0;
   const beltCrates = crates.slice(-OFFICE_BELT_VISIBLE);
 
+  function selectPanel(next: "agent" | "chat") {
+    setTab(next);
+    if (typeof window === "undefined") {
+      return;
+    }
+    const url = new URL(window.location.href);
+    if (next === "chat") {
+      url.searchParams.set("panel", "manager");
+    } else {
+      url.searchParams.delete("panel");
+    }
+    window.history.replaceState(null, "", url);
+  }
+
   if (!active) {
     return (
       <Card>
@@ -283,7 +300,9 @@ function OfficeSceneBody({
             value={active.dirName}
             onChange={(event) =>
               router.push(
-                `/office?pack=${encodeURIComponent(event.target.value)}`,
+                `/office?pack=${encodeURIComponent(event.target.value)}${
+                  tab === "chat" ? "&panel=manager" : ""
+                }`,
               )
             }
             className="h-8 rounded-md border border-border bg-zinc-950 px-2 text-xs text-zinc-200"
@@ -495,7 +514,7 @@ function OfficeSceneBody({
           <div className="flex items-center gap-1 border-b border-border p-1.5">
             <button
               type="button"
-              onClick={() => setTab("agent")}
+              onClick={() => selectPanel("agent")}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] text-zinc-400",
                 tab === "agent" && "bg-zinc-800 text-zinc-100",
@@ -506,7 +525,7 @@ function OfficeSceneBody({
             </button>
             <button
               type="button"
-              onClick={() => setTab("chat")}
+              onClick={() => selectPanel("chat")}
               className={cn(
                 "flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-[11px] text-zinc-400",
                 tab === "chat" && "bg-zinc-800 text-zinc-100",
@@ -535,7 +554,7 @@ function OfficeSceneBody({
                 setSelectedId(id);
                 setTab("agent");
               }}
-              onChat={() => setTab("chat")}
+              onChat={() => selectPanel("chat")}
             />
           ) : null}
         </div>
