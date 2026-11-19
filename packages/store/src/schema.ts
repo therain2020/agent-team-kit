@@ -113,6 +113,37 @@ export const artifacts = pgTable("artifacts", {
   }).notNull(),
 });
 
+/** Lineage edge endpoints are always ArtifactVersions (30 §3.2). */
+export const artifactEdges = pgTable(
+  "artifact_edges",
+  {
+    edgeId: text("edge_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    fromKind: text("from_kind").notNull().default("artifact"),
+    fromId: text("from_id").notNull(),
+    fromVersion: integer("from_version").notNull(),
+    toKind: text("to_kind").notNull().default("artifact"),
+    toId: text("to_id").notNull(),
+    toVersion: integer("to_version").notNull(),
+    relation: text("relation").notNull(),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_artifact_edges_identity").on(
+      table.fromKind,
+      table.fromId,
+      table.fromVersion,
+      table.toKind,
+      table.toId,
+      table.toVersion,
+      table.relation,
+    ),
+  ],
+);
+
 export const runRequests = pgTable("run_requests", {
   requestId: text("request_id").primaryKey(),
   runId: text("run_id").notNull().unique(),
