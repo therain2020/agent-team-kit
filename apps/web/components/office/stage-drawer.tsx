@@ -64,7 +64,10 @@ export function StageDrawer({
 }) {
   const t = useTranslations("stageDetail");
   const common = useTranslations("common");
+  const statusT = useTranslations("status");
   const locale = useLocale();
+  const statusLabel = (status: string) =>
+    KNOWN_STATUSES.has(status) ? statusT(status as StatusKey) : status;
   const [state, setState] = useState<LoadState>({ kind: "idle" });
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
@@ -177,12 +180,12 @@ export function StageDrawer({
               </Badge>
               {data?.stageStatus ? (
                 <Badge variant={statusVariant(data.stageStatus)}>
-                  {data.stageStatus}
+                  {statusLabel(data.stageStatus)}
                 </Badge>
               ) : null}
               {data?.runStatus ? (
                 <Badge variant="outline" className="font-mono">
-                  {t("runStatus", { status: data.runStatus })}
+                  {t("runStatus", { status: statusLabel(data.runStatus) })}
                 </Badge>
               ) : null}
             </div>
@@ -646,6 +649,42 @@ function EmptyState({ title, hint }: { title: string; hint: string }) {
     </div>
   );
 }
+
+const KNOWN_STATUSES = new Set([
+  "pending",
+  "queued",
+  "running",
+  "paused",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "skipped",
+  "applied",
+  "passed",
+  "done",
+  "completed",
+  "blocked",
+  "reverted",
+  "applying",
+  "stalled",
+]);
+type StatusKey =
+  | "pending"
+  | "queued"
+  | "running"
+  | "paused"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped"
+  | "applied"
+  | "passed"
+  | "done"
+  | "completed"
+  | "blocked"
+  | "reverted"
+  | "applying"
+  | "stalled";
 
 function statusVariant(status: string) {
   if (status === "succeeded" || status === "passed") {
