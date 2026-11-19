@@ -267,7 +267,7 @@ const DISABLE_RULES: DisableRule[] = [
   {
     id: "audit-disabled-config",
     pattern:
-      /\baudit(?:Enabled|_enabled)?\s*[:=]\s*(?:false|0\b|["'](?:off|none)["'])/,
+      /\baudit(?:Enabled|_enabled)?"?\s*[:=]\s*(?:false|0\b|["'](?:off|none)["'])/,
   },
   {
     id: "audit-flag",
@@ -278,7 +278,7 @@ const DISABLE_RULES: DisableRule[] = [
   {
     id: "approval-disabled-config",
     pattern:
-      /\b(?:requireApproval|requiresApproval|approvalsEnabled)\s*[:=]\s*false\b/,
+      /\b(?:requireApproval|requiresApproval|approvalsEnabled)"?\s*[:=]\s*false\b/,
   },
   { id: "approval-flag", pattern: /--no-approval\b/ },
 ];
