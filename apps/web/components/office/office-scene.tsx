@@ -117,6 +117,7 @@ export function OfficeScene(props: {
   data: OfficeData;
   initialMessages: UIMessage[];
   stubMode: boolean;
+  initialPanel?: "agent" | "chat";
 }) {
   return (
     <PixelMotionProvider>
