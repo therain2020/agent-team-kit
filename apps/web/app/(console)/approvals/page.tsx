@@ -33,6 +33,14 @@ export default async function ApprovalsPage({
       : Array.isArray(rawRequest)
         ? (rawRequest[0] ?? null)
         : null;
+  const rawRun = params.run;
+  const runValue =
+    typeof rawRun === "string"
+      ? rawRun
+      : Array.isArray(rawRun)
+        ? (rawRun[0] ?? null)
+        : null;
+  const runId = runValue?.trim() || null;
 
   return (
     <div className="space-y-5">
@@ -41,8 +49,11 @@ export default async function ApprovalsPage({
         initialTower={tower}
         initialItems={factory.items}
         operator={currentOperatorId()}
-        initialView={parseApprovalsView(params.view)}
+        // `?run=` comes from an office station (97 §3.3): land on the line
+        // and preselect that run's first workpiece instead of the top card.
+        initialView={runId ? "factory" : parseApprovalsView(params.view)}
         initialRequestId={requested}
+        initialRunId={runId}
       />
     </div>
   );

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   approvalsHref,
   cycleRequestId,
+  factoryRunHref,
+  firstRequestForRun,
   flattenTower,
   parseApprovalsView,
   requestIdsOf,
@@ -10,6 +12,7 @@ import {
   towerBatchTargets,
   towerCardToItem,
 } from "../lib/approvals-view";
+import type { FactoryItem } from "../lib/factory";
 import type { ApprovalTowerCard } from "../lib/inbox-shared";
 import { groupApprovals } from "../lib/inbox-shared";
 
@@ -67,6 +70,53 @@ describe("approvals view routing", () => {
     expect(resolveInitialRequest(["a", "b"], "b")).toBe("b");
     expect(resolveInitialRequest(["a", "b"], "gone")).toBe("a");
     expect(resolveInitialRequest([], "gone")).toBeNull();
+  });
+
+  it("builds a factory deep link scoped to a run (97.3)", () => {
+    expect(factoryRunHref("run_1")).toBe("/approvals?view=factory&run=run_1");
+  });
+
+  it("preselects the first approval of a run, ignoring failed runs", () => {
+    const items: FactoryItem[] = [
+      {
+        kind: "approval",
+        requestId: "other",
+        runId: "run_other",
+        riskClass: "low",
+        summary: "other",
+        costCny: 0,
+        updatedAt: "2026-11-19T10:00:00.000Z",
+      },
+      {
+        kind: "failed",
+        runId: "run_target",
+        riskClass: "high",
+        summary: "failed",
+        costCny: 0,
+        updatedAt: "2026-11-19T10:00:00.000Z",
+      },
+      {
+        kind: "approval",
+        requestId: "first",
+        runId: "run_target",
+        riskClass: "medium",
+        summary: "first",
+        costCny: 0,
+        updatedAt: "2026-11-19T10:00:00.000Z",
+      },
+      {
+        kind: "approval",
+        requestId: "second",
+        runId: "run_target",
+        riskClass: "low",
+        summary: "second",
+        costCny: 0,
+        updatedAt: "2026-11-19T10:00:00.000Z",
+      },
+    ];
+    expect(firstRequestForRun(items, "run_target")).toBe("first");
+    expect(firstRequestForRun(items, "run_missing")).toBeNull();
+    expect(firstRequestForRun(items, null)).toBeNull();
   });
 });
 
