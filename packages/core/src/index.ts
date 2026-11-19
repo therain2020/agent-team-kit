@@ -1,4 +1,5 @@
 export * from "./artifact";
+export * from "./assets";
 export * from "./autopilot";
 export * from "./budget";
 export * from "./cli-contract";

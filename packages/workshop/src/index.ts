@@ -34,6 +34,7 @@ import {
 } from "./trust";
 
 export type { WorkshopManifest } from "@kit/core";
+export * from "./components";
 export * from "./security";
 export * from "./trust";
 
@@ -50,6 +51,9 @@ const WORKSHOP_KINDS = [
   "agent",
   "toolpack",
   "skillpack",
+  "pipeline",
+  "source",
+  "template",
 ] as const;
 const IGNORED_DIRS = new Set([
   ".git",
