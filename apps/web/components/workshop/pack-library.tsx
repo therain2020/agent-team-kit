@@ -1,5 +1,6 @@
 "use client";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn, formatCny } from "@/lib/utils";
 import type { WorkshopPackView } from "@/lib/workshop-link";
@@ -83,10 +84,39 @@ export function PackLibrary({
                   <span className="shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[9px] text-zinc-500">
                     v{pack.version}
                   </span>
+                  {pack.workshop ? (
+                    <Badge
+                      variant="info"
+                      className="shrink-0 text-[9px]"
+                      title={`${pack.workshop.repo}@${pack.workshop.commit}`}
+                    >
+                      {t("workshopBadge")}
+                    </Badge>
+                  ) : null}
                 </div>
                 <p className="mt-0.5 truncate font-mono text-[10px] text-zinc-600">
                   packs/{pack.dirName}
                 </p>
+                {pack.workshop ? (
+                  <>
+                    <p
+                      className="mt-0.5 truncate font-mono text-[9px] text-sky-300/80"
+                      title={`${pack.workshop.repo}@${pack.workshop.commit}`}
+                    >
+                      {t("sourceRepo", {
+                        repo: pack.workshop.repo,
+                        commit: pack.workshop.commit.slice(0, 8),
+                      })}
+                    </p>
+                    <p
+                      className="truncate font-mono text-[9px] text-zinc-600"
+                      title={pack.workshop.manifestSha256}
+                    >
+                      sha256 {pack.workshop.manifestSha256.slice(0, 12)}
+                      {pack.workshop.manifestSha256.length > 12 ? "…" : ""}
+                    </p>
+                  </>
+                ) : null}
                 {pack.valid ? (
                   <>
                     <div className="mt-1.5 grid grid-cols-4 gap-1 text-center">

@@ -33,6 +33,14 @@ export interface WorkshopRoleView {
   skills: string[];
 }
 
+export interface WorkshopPackOriginView {
+  repo: string;
+  commit: string;
+  manifestSha256: string;
+  installedAt: string;
+  trust: "builtin" | "verified" | "community";
+}
+
 export interface WorkshopPackView {
   dirName: string;
   name: string;
@@ -49,6 +57,8 @@ export interface WorkshopPackView {
   roles: WorkshopRoleView[];
   skills: string[];
   usedSources: string[];
+  /** Set when the pack was installed from the workshop into packs/. */
+  workshop?: WorkshopPackOriginView;
 }
 
 export interface WorkshopSourceView {

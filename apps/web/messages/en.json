@@ -1100,7 +1100,8 @@
     "installButton": "Install pinned item",
     "installing": "Installing…",
     "installFailed": "Install failed",
-    "installed": "{name} installed"
+    "installed": "{name} installed",
+    "installedPack": "{name} installed into packs/. Opening the pack library…"
   },
   "workshopSurface": {
     "title": "Workshop",
@@ -1133,6 +1134,14 @@
     "noSelectionDesc": "Select a pack in the left column to link its sources and assembly.",
     "openStudio": "Studio",
     "openDetail": "Details",
+    "workshopBadge": "Workshop",
+    "legacyTitle": "Legacy workshop packs can move to the pack library",
+    "legacyDescription": "These packs were installed into workshop/ and never show up in the pack library. Importing copies them into packs/ after validation; the source directory stays untouched and nothing is copied without your confirmation.",
+    "legacyImport": "Import as pack",
+    "legacyImporting": "Importing…",
+    "legacyImportDone": "{name} imported into packs/",
+    "legacyImportFailed": "Import failed",
+    "legacyDismiss": "Don't show again",
     "runTrial": "Trial run",
     "usedSourcesTitle": "Sources referenced by this pack",
     "usedSourcesEmpty": "This pack names no source; showing every available source.",

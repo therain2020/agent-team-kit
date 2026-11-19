@@ -1,6 +1,7 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
+  cp,
   mkdir,
   readFile,
   readdir,
@@ -97,11 +98,33 @@ export interface WorkshopInstall {
   repo: string;
   commit: string;
   dir: string;
+  scope: WorkshopInstallScope;
   manifest: WorkshopManifest;
   manifestSha256: string;
   files: string[];
   trust: WorkshopTrust;
   permissions: WorkshopPermissionSummary;
+}
+
+/**
+ * Destination family for an install: pack-kind items land under packs/ so the
+ * console pack library can load, simulate and open them in Studio; everything
+ * else stays under workshop/.
+ */
+export type WorkshopInstallScope = "packs" | "workshop";
+
+export interface WorkshopInstallTarget {
+  scope: WorkshopInstallScope;
+  root: string;
+  dir: string;
+}
+
+export interface WorkshopPackImport {
+  id: string;
+  dirName: string;
+  dir: string;
+  repo: string;
+  commit: string;
 }
 
 export interface WorkshopInstallRecord {
@@ -163,6 +186,35 @@ export function workshopRoot(root?: string): string {
       process.env.KIT_WORKSHOP_ROOT ??
       path.join(process.cwd(), "workshop"),
   );
+}
+
+export function packsRoot(root?: string): string {
+  return path.resolve(
+    root ?? process.env.KIT_PACKS_ROOT ?? path.join(process.cwd(), "packs"),
+  );
+}
+
+/**
+ * Pick the destination for an install from the manifest kind (plan 88 §3.4).
+ * Pack-kind items belong in the pack library, so they install as
+ * `packs/<manifest.id>`; every other kind stays in the workshop directory.
+ */
+export function resolveInstallTarget(
+  manifest: Pick<WorkshopManifest, "id" | "kind">,
+  options: { root?: string; packsRoot?: string } = {},
+): WorkshopInstallTarget {
+  const scope: WorkshopInstallScope =
+    manifest.kind === "pack" ? "packs" : "workshop";
+  const root =
+    scope === "packs"
+      ? packsRoot(options.packsRoot)
+      : workshopRoot(options.root);
+  const dir = path.join(root, manifest.id);
+  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (dir === root || !dir.startsWith(prefix)) {
+    throw new Error("invalid workshop target");
+  }
+  return { scope, root, dir };
 }
 
 export async function searchWorkshop(
@@ -286,7 +338,12 @@ export async function installWorkshop(input: {
   repo: string;
   ref?: string;
   token?: string;
+  /** Workshop directory for non-pack kinds. */
   root?: string;
+  /** Pack directory for `kind: pack` items. */
+  packsRoot?: string;
+  /** Replace an existing target directory instead of refusing. */
+  overwrite?: boolean;
   acceptThirdParty: boolean;
   allowCode?: boolean;
   acceptUnsigned?: boolean;
@@ -347,20 +404,31 @@ export async function installWorkshop(input: {
     );
   }
 
-  const root = workshopRoot(input.root);
-  const target = path.join(root, manifest.id);
-  if (!target.startsWith(`${root}${path.sep}`) || target === root) {
-    throw new Error("invalid workshop target");
+  const target = resolveInstallTarget(manifest, {
+    root: input.root,
+    packsRoot: input.packsRoot,
+  });
+  if (existsSync(target.dir) && input.overwrite !== true) {
+    throw new Error(
+      `install target already exists: ${target.scope}/${manifest.id}; pass overwrite to replace it`,
+    );
   }
-  await rm(target, { recursive: true, force: true });
-  await mkdir(target, { recursive: true });
+
+  // Stage the whole install next to the target, validate it there and only
+  // then swap it into place. A failure never leaves a partial install and an
+  // overwrite never destroys the previous copy until the new one is ready.
+  const staging = path.join(
+    target.root,
+    `.${manifest.id}.installing-${randomUUID()}`,
+  );
+  await mkdir(staging, { recursive: true });
 
   const files: string[] = [];
   const hashes: Record<string, string> = {};
   try {
     for (const { file, content } of contents) {
-      const destination = path.resolve(target, file);
-      if (!destination.startsWith(`${target}${path.sep}`)) {
+      const destination = path.resolve(staging, file);
+      if (!destination.startsWith(`${staging}${path.sep}`)) {
         throw new Error(`unsafe workshop path: ${file}`);
       }
       await mkdir(path.dirname(destination), { recursive: true });
@@ -370,7 +438,7 @@ export async function installWorkshop(input: {
     }
 
     if (manifest.kind === "pack") {
-      const loaded = await loadPack(target);
+      const loaded = await loadPack(staging);
       if (!loaded.ok) {
         throw new Error(
           `installed pack is invalid: ${loaded.errors.join("; ")}`,
@@ -382,7 +450,7 @@ export async function installWorkshop(input: {
       );
     } else if (manifest.kind === "toolpack") {
       const parsed = toolPackSchema.safeParse(
-        parse(await readFile(path.join(target, manifest.entry), "utf8")),
+        parse(await readFile(path.join(staging, manifest.entry), "utf8")),
       );
       if (!parsed.success) {
         throw new Error(
@@ -394,7 +462,7 @@ export async function installWorkshop(input: {
       assertToolPermissions(parsed.data.tools, manifest);
     } else if (manifest.kind === "skillpack") {
       const parsed = skillPackSchema.safeParse(
-        parse(await readFile(path.join(target, manifest.entry), "utf8")),
+        parse(await readFile(path.join(staging, manifest.entry), "utf8")),
       );
       if (!parsed.success) {
         throw new Error(
@@ -409,14 +477,14 @@ export async function installWorkshop(input: {
             `skillpack file is not listed in the manifest: ${file}`,
           );
         }
-        if (!existsSync(path.join(target, file))) {
+        if (!existsSync(path.join(staging, file))) {
           throw new Error(`skillpack file is missing: ${file}`);
         }
       }
     }
 
     await writeFile(
-      path.join(target, ".workshop.json"),
+      path.join(staging, ".workshop.json"),
       JSON.stringify(
         {
           kind: manifest.kind,
@@ -448,20 +516,52 @@ export async function installWorkshop(input: {
       "utf8",
     );
   } catch (error) {
-    await rm(target, { recursive: true, force: true });
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
+
+  await commitInstallDirectory(staging, target.dir, manifest.id);
 
   return {
     repo: input.repo,
     commit,
-    dir: target,
+    dir: target.dir,
+    scope: target.scope,
     manifest,
     manifestSha256,
     files,
     trust,
     permissions,
   };
+}
+
+async function commitInstallDirectory(
+  staging: string,
+  target: string,
+  id: string,
+): Promise<void> {
+  let backup: string | null = null;
+  try {
+    if (existsSync(target)) {
+      backup = path.join(
+        path.dirname(target),
+        `.${id}.replacing-${randomUUID()}`,
+      );
+      await rename(target, backup);
+    }
+    await rename(staging, target);
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    if (backup && !existsSync(target)) {
+      // Restore the previous copy; if even that fails the backup stays on
+      // disk for manual recovery and the original error is surfaced.
+      await rename(backup, target).catch(() => undefined);
+    }
+    throw error;
+  }
+  if (backup) {
+    await rm(backup, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 export async function listInstalledWorkshop(
@@ -522,6 +622,84 @@ export async function listInstalledWorkshop(
       b.installedAt.localeCompare(a.installedAt) ||
       a.name.localeCompare(b.name),
   );
+}
+
+/**
+ * Import a pack that was installed into the legacy `workshop/` directory as a
+ * normal pack under `packs/`. Only pack-kind installs qualify. The import is an
+ * explicit, staged copy: the source directory is left untouched (no silent
+ * move), an existing destination is refused unless `overwrite` is set, and the
+ * copy is validated with `loadPack` before it is swapped into place.
+ */
+export async function importInstalledPack(input: {
+  dirName: string;
+  root?: string;
+  packsRoot?: string;
+  overwrite?: boolean;
+}): Promise<WorkshopPackImport> {
+  const { dirName } = input;
+  if (
+    !dirName ||
+    path.basename(dirName) !== dirName ||
+    dirName.startsWith(".")
+  ) {
+    throw new Error("invalid workshop install name");
+  }
+  const source = path.join(workshopRoot(input.root), dirName);
+  const recordPath = path.join(source, ".workshop.json");
+  if (!existsSync(recordPath)) {
+    throw new Error(`workshop install not found: ${dirName}`);
+  }
+
+  let record: Record<string, unknown>;
+  try {
+    record = JSON.parse(await readFile(recordPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    throw new Error(`workshop install record is not valid JSON: ${dirName}`);
+  }
+  if (record.kind !== "pack") {
+    throw new Error(
+      `only pack installs can be imported into packs/: ${dirName}`,
+    );
+  }
+  const id = typeof record.id === "string" ? record.id : dirName;
+  if (!/^[a-z][a-z0-9-]*$/.test(id)) {
+    throw new Error(`invalid pack id in workshop record: ${id}`);
+  }
+
+  const root = packsRoot(input.packsRoot);
+  const target = path.join(root, id);
+  if (existsSync(target) && input.overwrite !== true) {
+    throw new Error(`packs/${id} already exists; pass overwrite to replace it`);
+  }
+  await mkdir(root, { recursive: true });
+
+  const staging = path.join(root, `.${id}.importing-${randomUUID()}`);
+  try {
+    await cp(source, staging, { recursive: true });
+    const loaded = await loadPack(staging);
+    if (!loaded.ok) {
+      throw new Error(
+        `imported pack is invalid: ${loaded.errors.join("; ")}`,
+      );
+    }
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+
+  await commitInstallDirectory(staging, target, id);
+
+  return {
+    id,
+    dirName: id,
+    dir: target,
+    repo: typeof record.repo === "string" ? record.repo : "",
+    commit: typeof record.commit === "string" ? record.commit : "",
+  };
 }
 
 export async function publishWorkshop(
