@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -95,7 +96,7 @@ describe("hidden eval suites", () => {
   });
 
   it("derives workspace directories under the hidden root", () => {
-    const root = path.join("C:", "tmp", "hidden-root");
+    const root = path.join(os.tmpdir(), "kit-hidden-root");
     expect(defaultHiddenEvalsDir("ws-a", root)).toBe(path.join(root, "ws-a"));
     expect(defaultHiddenEvalsDir("../escape", root)).toBe(
       path.join(root, "..-escape"),
