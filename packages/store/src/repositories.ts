@@ -18,10 +18,12 @@ import type {
   Stage,
   StageStatus,
 } from "@kit/core";
-import { and, asc, desc, eq, lt, or, sql } from "drizzle-orm";
+import { newId } from "@kit/core";
+import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import type { Database } from "./db";
 import {
   events,
+  artifactEdges,
   artifacts,
   autopilotState,
   blobs,
@@ -78,6 +80,29 @@ export interface BlobRepository {
   insert(blob: Blob): Promise<boolean>;
 }
 
+export type ArtifactEdgeRelation = "consumed" | "superseded" | "derived";
+
+export interface ArtifactVersionRef {
+  artifactId: string;
+  version: number;
+}
+
+export interface ArtifactAncestryNode extends ArtifactVersionRef {
+  depth: number;
+  relation: ArtifactEdgeRelation;
+}
+
+export interface ArtifactEdgeLink {
+  from: ArtifactVersionRef;
+  to: ArtifactVersionRef;
+  relation: ArtifactEdgeRelation;
+}
+
+export interface ArtifactEdgeBackfillResult {
+  inserted: number;
+  skipped: number;
+}
+
 export interface ArtifactStore {
   createCommitted(manifest: Manifest, artifact: ArtifactVersion): Promise<void>;
   putVersion(artifact: ArtifactVersion): Promise<void>;
@@ -92,6 +117,19 @@ export interface ArtifactStore {
   ): Promise<ArtifactVersion | null>;
   listByRun(runId: string): Promise<ArtifactVersion[]>;
   listRecent(workspaceId: string, limit?: number): Promise<ArtifactVersion[]>;
+  /** ArtifactVersions whose manifest consumed the given version. */
+  consumersOf(
+    artifactId: string,
+    version: number,
+  ): Promise<ArtifactVersionRef[]>;
+  /** Transitive inputs (consumed + superseded) of the given version. */
+  ancestryOf(
+    artifactId: string,
+    version: number,
+    options?: { maxDepth?: number },
+  ): Promise<ArtifactAncestryNode[]>;
+  /** Re-materializes edges from manifests.input_refs + artifacts.supersedes. */
+  backfillEdges(): Promise<ArtifactEdgeBackfillResult>;
 }
 
 export interface AutopilotStateRecord {
@@ -399,6 +437,143 @@ export function fromArtifactRow(
   };
 }
 
+export const ARTIFACT_KIND = "artifact";
+
+/** Shape shared by the Postgres and SQLite `artifact_edges` tables. */
+export interface ArtifactEdgeRow {
+  edgeId: string;
+  workspaceId: string;
+  fromKind: string;
+  fromId: string;
+  fromVersion: number;
+  toKind: string;
+  toId: string;
+  toVersion: number;
+  relation: ArtifactEdgeRelation;
+  createdAt: string;
+}
+
+export function artifactVersionKey(ref: ArtifactVersionRef): string {
+  return `${ref.artifactId}@${ref.version}`;
+}
+
+/**
+ * Parses an `artifacts.supersedes` value. Lineage endpoints are versioned
+ * (30 §3.2), so a bare artifact id without a version cannot form an edge.
+ * Accepted forms: `art_xxx@2`, `art_xxx#2`, `art_xxx:v2`, `art_xxx:2`.
+ */
+export function parseArtifactRef(
+  ref: string | null | undefined,
+): ArtifactVersionRef | null {
+  if (!ref) {
+    return null;
+  }
+  const match = /^([^@#:]+?)[@#:](?:v)?(\d+)$/.exec(ref.trim());
+  if (!match) {
+    return null;
+  }
+  const [, artifactId, rawVersion] = match;
+  const version = Number(rawVersion);
+  if (!artifactId || !Number.isInteger(version) || version < 1) {
+    return null;
+  }
+  return { artifactId, version };
+}
+
+/**
+ * Builds the outgoing lineage edges of one ArtifactVersion: one `consumed`
+ * edge per manifest input and one `superseded` edge for `artifact.supersedes`.
+ */
+export function buildArtifactEdgeRows(
+  artifact: ArtifactVersion,
+  inputs: readonly ArtifactVersionRef[],
+): { rows: ArtifactEdgeRow[]; skipped: number } {
+  const rows: ArtifactEdgeRow[] = [];
+  const seen = new Set<string>();
+  const push = (to: ArtifactVersionRef, relation: ArtifactEdgeRelation) => {
+    if (
+      to.artifactId === artifact.artifactId &&
+      to.version === artifact.version
+    ) {
+      return;
+    }
+    const key = `${artifactVersionKey(to)}:${relation}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    rows.push({
+      edgeId: newId("aed"),
+      workspaceId: artifact.workspaceId,
+      fromKind: ARTIFACT_KIND,
+      fromId: artifact.artifactId,
+      fromVersion: artifact.version,
+      toKind: ARTIFACT_KIND,
+      toId: to.artifactId,
+      toVersion: to.version,
+      relation,
+      createdAt: artifact.createdAt,
+    });
+  };
+
+  for (const input of inputs) {
+    push(input, "consumed");
+  }
+
+  let skipped = 0;
+  if (artifact.supersedes) {
+    const superseded = parseArtifactRef(artifact.supersedes);
+    if (superseded) {
+      push(superseded, "superseded");
+    } else {
+      skipped += 1;
+    }
+  }
+
+  return { rows, skipped };
+}
+
+export function chunkArtifactEdgeRows(
+  rows: readonly ArtifactEdgeRow[],
+  size: number,
+): ArtifactEdgeRow[][] {
+  const chunks: ArtifactEdgeRow[][] = [];
+  for (let index = 0; index < rows.length; index += size) {
+    chunks.push(rows.slice(index, index + size));
+  }
+  return chunks;
+}
+
+/** Breadth-first walk over outgoing lineage edges, cycle-safe. */
+export async function collectArtifactAncestry(
+  start: ArtifactVersionRef,
+  fetchOutgoing: (
+    frontier: ArtifactVersionRef[],
+  ) => Promise<ArtifactEdgeLink[]>,
+  maxDepth = 64,
+): Promise<ArtifactAncestryNode[]> {
+  const seen = new Set([artifactVersionKey(start)]);
+  const nodes: ArtifactAncestryNode[] = [];
+  let frontier: ArtifactVersionRef[] = [{ ...start }];
+
+  for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth += 1) {
+    const links = await fetchOutgoing(frontier);
+    const next: ArtifactVersionRef[] = [];
+    for (const link of links) {
+      const key = artifactVersionKey(link.to);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      nodes.push({ ...link.to, depth, relation: link.relation });
+      next.push({ ...link.to });
+    }
+    frontier = next;
+  }
+
+  return nodes;
+}
+
 export class PostgresEventStore implements EventStore {
   constructor(private readonly db: Database) {}
 
@@ -573,17 +748,35 @@ export class PostgresArtifactStore implements ArtifactStore {
     manifest: Manifest,
     artifact: ArtifactVersion,
   ): Promise<void> {
+    const { rows } = buildArtifactEdgeRows(artifact, manifest.inputs);
     await this.db.transaction(async (tx) => {
       await tx.insert(manifests).values(toManifestRow(manifest));
       await tx.insert(artifacts).values(toArtifactRow(artifact));
+      if (rows.length > 0) {
+        await tx.insert(artifactEdges).values(rows).onConflictDoNothing();
+      }
     });
   }
 
   async putVersion(artifact: ArtifactVersion): Promise<void> {
-    await this.db
-      .insert(artifacts)
-      .values(toArtifactRow(artifact))
-      .onConflictDoNothing();
+    const [manifestRow] = await this.db
+      .select({ inputRefs: manifests.inputRefs })
+      .from(manifests)
+      .where(eq(manifests.manifestId, artifact.manifestId))
+      .limit(1);
+    const { rows } = buildArtifactEdgeRows(
+      artifact,
+      manifestRow?.inputRefs ?? [],
+    );
+    await this.db.transaction(async (tx) => {
+      await tx
+        .insert(artifacts)
+        .values(toArtifactRow(artifact))
+        .onConflictDoNothing();
+      if (rows.length > 0) {
+        await tx.insert(artifactEdges).values(rows).onConflictDoNothing();
+      }
+    });
   }
 
   async commit(artifactId: string, version: number): Promise<void> {
@@ -666,6 +859,125 @@ export class PostgresArtifactStore implements ArtifactStore {
       .limit(limit);
 
     return rows.map((row) => fromArtifactRow(row.artifact));
+  }
+
+  async consumersOf(
+    artifactId: string,
+    version: number,
+  ): Promise<ArtifactVersionRef[]> {
+    const rows = await this.db
+      .select({
+        artifactId: artifactEdges.fromId,
+        version: artifactEdges.fromVersion,
+      })
+      .from(artifactEdges)
+      .where(
+        and(
+          eq(artifactEdges.toKind, ARTIFACT_KIND),
+          eq(artifactEdges.toId, artifactId),
+          eq(artifactEdges.toVersion, version),
+          eq(artifactEdges.relation, "consumed"),
+        ),
+      )
+      .orderBy(asc(artifactEdges.createdAt));
+
+    const seen = new Set<string>();
+    return rows.filter((row) => {
+      const key = artifactVersionKey(row);
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  async ancestryOf(
+    artifactId: string,
+    version: number,
+    options: { maxDepth?: number } = {},
+  ): Promise<ArtifactAncestryNode[]> {
+    return collectArtifactAncestry(
+      { artifactId, version },
+      (frontier) => this.findOutgoingEdges(frontier),
+      options.maxDepth,
+    );
+  }
+
+  async backfillEdges(): Promise<ArtifactEdgeBackfillResult> {
+    const manifestRows = await this.db
+      .select({
+        manifestId: manifests.manifestId,
+        inputRefs: manifests.inputRefs,
+      })
+      .from(manifests);
+    const artifactRows = await this.db.select().from(artifacts);
+    const inputsByManifest = new Map(
+      manifestRows.map((row) => [row.manifestId, row.inputRefs]),
+    );
+
+    const rows: ArtifactEdgeRow[] = [];
+    let skipped = 0;
+    for (const row of artifactRows) {
+      const artifact = fromArtifactRow(row);
+      const built = buildArtifactEdgeRows(
+        artifact,
+        inputsByManifest.get(artifact.manifestId) ?? [],
+      );
+      rows.push(...built.rows);
+      skipped += built.skipped;
+    }
+
+    let inserted = 0;
+    for (const chunk of chunkArtifactEdgeRows(rows, 500)) {
+      const result = await this.db
+        .insert(artifactEdges)
+        .values(chunk)
+        .onConflictDoNothing()
+        .returning({ edgeId: artifactEdges.edgeId });
+      inserted += result.length;
+    }
+    return { inserted, skipped };
+  }
+
+  private async findOutgoingEdges(
+    frontier: ArtifactVersionRef[],
+  ): Promise<ArtifactEdgeLink[]> {
+    const keys = new Set(frontier.map(artifactVersionKey));
+    const ids = [...new Set(frontier.map((ref) => ref.artifactId))];
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await this.db
+      .select({
+        fromId: artifactEdges.fromId,
+        fromVersion: artifactEdges.fromVersion,
+        toId: artifactEdges.toId,
+        toVersion: artifactEdges.toVersion,
+        relation: artifactEdges.relation,
+      })
+      .from(artifactEdges)
+      .where(
+        and(
+          eq(artifactEdges.fromKind, ARTIFACT_KIND),
+          inArray(artifactEdges.fromId, ids),
+        ),
+      );
+
+    return rows
+      .filter((row) =>
+        keys.has(
+          artifactVersionKey({
+            artifactId: row.fromId,
+            version: row.fromVersion,
+          }),
+        ),
+      )
+      .map((row) => ({
+        from: { artifactId: row.fromId, version: row.fromVersion },
+        to: { artifactId: row.toId, version: row.toVersion },
+        relation: row.relation as ArtifactEdgeRelation,
+      }));
   }
 }
 

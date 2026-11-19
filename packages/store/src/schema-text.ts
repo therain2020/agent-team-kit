@@ -72,6 +72,23 @@ CREATE TABLE IF NOT EXISTS artifacts (
   PRIMARY KEY (artifact_id, version)
 );
 
+CREATE TABLE IF NOT EXISTS artifact_edges (
+  edge_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  from_kind TEXT NOT NULL DEFAULT 'artifact',
+  from_id TEXT NOT NULL,
+  from_version INTEGER NOT NULL,
+  to_kind TEXT NOT NULL DEFAULT 'artifact',
+  to_id TEXT NOT NULL,
+  to_version INTEGER NOT NULL,
+  relation TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (from_kind, from_id, from_version, to_kind, to_id, to_version, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_edges_from ON artifact_edges(from_id, from_version, relation);
+CREATE INDEX IF NOT EXISTS idx_artifact_edges_to ON artifact_edges(to_id, to_version, relation);
+
 CREATE TABLE IF NOT EXISTS autopilot_state (
   workspace_id TEXT NOT NULL,
   pack_dir TEXT NOT NULL,
@@ -604,6 +621,23 @@ CREATE TABLE IF NOT EXISTS artifacts (
   created_at TEXT NOT NULL,
   PRIMARY KEY (artifact_id, version)
 );
+
+CREATE TABLE IF NOT EXISTS artifact_edges (
+  edge_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  from_kind TEXT NOT NULL DEFAULT 'artifact',
+  from_id TEXT NOT NULL,
+  from_version INTEGER NOT NULL,
+  to_kind TEXT NOT NULL DEFAULT 'artifact',
+  to_id TEXT NOT NULL,
+  to_version INTEGER NOT NULL,
+  relation TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (from_kind, from_id, from_version, to_kind, to_id, to_version, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_edges_from ON artifact_edges(from_id, from_version, relation);
+CREATE INDEX IF NOT EXISTS idx_artifact_edges_to ON artifact_edges(to_id, to_version, relation);
 
 CREATE TABLE IF NOT EXISTS autopilot_state (
   workspace_id TEXT NOT NULL,

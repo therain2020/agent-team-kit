@@ -9,11 +9,16 @@ import type {
   RunStatus,
   Stage,
 } from "@kit/core";
-import { and, asc, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
+  ARTIFACT_KIND,
   applyManagerSessionRejection,
   applyManagerSessionUsage,
+  artifactVersionKey,
+  buildArtifactEdgeRows,
+  chunkArtifactEdgeRows,
+  collectArtifactAncestry,
   fromArtifactRow,
   fromBlobRow,
   fromDegradationAuditRow,
@@ -34,7 +39,13 @@ import {
   toStageRow,
 } from "./repositories";
 import type {
+  ArtifactAncestryNode,
+  ArtifactEdgeBackfillResult,
+  ArtifactEdgeLink,
+  ArtifactEdgeRelation,
+  ArtifactEdgeRow,
   ArtifactStore,
+  ArtifactVersionRef,
   AutopilotStateRecord,
   AutopilotStateStore,
   BlobRepository,
@@ -57,6 +68,7 @@ import type {
 import type * as sqliteSchema from "./schema.sqlite";
 import {
   events,
+  artifactEdges,
   artifacts,
   autopilotState,
   blobs,
@@ -237,17 +249,35 @@ export class SqliteArtifactStore implements ArtifactStore {
     manifest: Manifest,
     artifact: ArtifactVersion,
   ): Promise<void> {
+    const { rows } = buildArtifactEdgeRows(artifact, manifest.inputs);
     this.db.transaction((tx) => {
       tx.insert(manifests).values(toManifestRow(manifest)).run();
       tx.insert(artifacts).values(toArtifactRow(artifact)).run();
+      if (rows.length > 0) {
+        tx.insert(artifactEdges).values(rows).onConflictDoNothing().run();
+      }
     });
   }
 
   async putVersion(artifact: ArtifactVersion): Promise<void> {
-    await this.db
-      .insert(artifacts)
-      .values(toArtifactRow(artifact))
-      .onConflictDoNothing();
+    const [manifestRow] = await this.db
+      .select({ inputRefs: manifests.inputRefs })
+      .from(manifests)
+      .where(eq(manifests.manifestId, artifact.manifestId))
+      .limit(1);
+    const { rows } = buildArtifactEdgeRows(
+      artifact,
+      manifestRow?.inputRefs ?? [],
+    );
+    this.db.transaction((tx) => {
+      tx.insert(artifacts)
+        .values(toArtifactRow(artifact))
+        .onConflictDoNothing()
+        .run();
+      if (rows.length > 0) {
+        tx.insert(artifactEdges).values(rows).onConflictDoNothing().run();
+      }
+    });
   }
 
   async commit(artifactId: string, version: number): Promise<void> {
@@ -317,6 +347,125 @@ export class SqliteArtifactStore implements ArtifactStore {
       .orderBy(desc(artifacts.createdAt))
       .limit(limit);
     return rows.map((row) => fromArtifactRow(row.artifact));
+  }
+
+  async consumersOf(
+    artifactId: string,
+    version: number,
+  ): Promise<ArtifactVersionRef[]> {
+    const rows = await this.db
+      .select({
+        artifactId: artifactEdges.fromId,
+        version: artifactEdges.fromVersion,
+      })
+      .from(artifactEdges)
+      .where(
+        and(
+          eq(artifactEdges.toKind, ARTIFACT_KIND),
+          eq(artifactEdges.toId, artifactId),
+          eq(artifactEdges.toVersion, version),
+          eq(artifactEdges.relation, "consumed"),
+        ),
+      )
+      .orderBy(asc(artifactEdges.createdAt));
+
+    const seen = new Set<string>();
+    return rows.filter((row) => {
+      const key = artifactVersionKey(row);
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  async ancestryOf(
+    artifactId: string,
+    version: number,
+    options: { maxDepth?: number } = {},
+  ): Promise<ArtifactAncestryNode[]> {
+    return collectArtifactAncestry(
+      { artifactId, version },
+      (frontier) => this.findOutgoingEdges(frontier),
+      options.maxDepth,
+    );
+  }
+
+  async backfillEdges(): Promise<ArtifactEdgeBackfillResult> {
+    const manifestRows = await this.db
+      .select({
+        manifestId: manifests.manifestId,
+        inputRefs: manifests.inputRefs,
+      })
+      .from(manifests);
+    const artifactRows = await this.db.select().from(artifacts);
+    const inputsByManifest = new Map(
+      manifestRows.map((row) => [row.manifestId, row.inputRefs]),
+    );
+
+    const rows: ArtifactEdgeRow[] = [];
+    let skipped = 0;
+    for (const row of artifactRows) {
+      const artifact = fromArtifactRow(row);
+      const built = buildArtifactEdgeRows(
+        artifact,
+        inputsByManifest.get(artifact.manifestId) ?? [],
+      );
+      rows.push(...built.rows);
+      skipped += built.skipped;
+    }
+
+    let inserted = 0;
+    for (const chunk of chunkArtifactEdgeRows(rows, 200)) {
+      const result = await this.db
+        .insert(artifactEdges)
+        .values(chunk)
+        .onConflictDoNothing()
+        .returning({ edgeId: artifactEdges.edgeId });
+      inserted += result.length;
+    }
+    return { inserted, skipped };
+  }
+
+  private async findOutgoingEdges(
+    frontier: ArtifactVersionRef[],
+  ): Promise<ArtifactEdgeLink[]> {
+    const keys = new Set(frontier.map(artifactVersionKey));
+    const ids = [...new Set(frontier.map((ref) => ref.artifactId))];
+    if (ids.length === 0) {
+      return [];
+    }
+    const rows = await this.db
+      .select({
+        fromId: artifactEdges.fromId,
+        fromVersion: artifactEdges.fromVersion,
+        toId: artifactEdges.toId,
+        toVersion: artifactEdges.toVersion,
+        relation: artifactEdges.relation,
+      })
+      .from(artifactEdges)
+      .where(
+        and(
+          eq(artifactEdges.fromKind, ARTIFACT_KIND),
+          inArray(artifactEdges.fromId, ids),
+        ),
+      );
+
+    return rows
+      .filter((row) =>
+        keys.has(
+          artifactVersionKey({
+            artifactId: row.fromId,
+            version: row.fromVersion,
+          }),
+        ),
+      )
+      .map((row) => ({
+        from: { artifactId: row.fromId, version: row.fromVersion },
+        to: { artifactId: row.toId, version: row.toVersion },
+        relation: row.relation as ArtifactEdgeRelation,
+      }));
   }
 }
 
