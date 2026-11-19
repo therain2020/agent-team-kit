@@ -2,6 +2,15 @@
 
 import { DetailDrawer } from "@/components/factory/detail-drawer";
 import { PixelWorkpiece } from "@/components/factory/pixel-workpiece";
+import {
+  ConveyorReverse,
+  PixelClockControls,
+  PixelCrate,
+  PixelMotionProvider,
+  StampEffect,
+  usePixelMotion,
+  useShake,
+} from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +34,9 @@ import {
   orderGateItems,
   stationsFor,
 } from "@/lib/factory";
+import { type StampOutcome, cueFromActivity } from "@/lib/pixel-events";
+import { usePixelLive } from "@/lib/use-pixel-live";
+import { useTicker } from "@/lib/use-ticker";
 import { cn, formatCny, timeAgo } from "@/lib/utils";
 import { useWorld } from "@/lib/world-client";
 import { reconcileFactoryItems } from "@/lib/world-state";
@@ -38,8 +50,11 @@ import {
   XCircle,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+
+/** Crates drawn on the belt; the list below still shows every workpiece. */
+const BELT_VISIBLE = 8;
 
 type Decision = "approve" | "abort";
 
@@ -66,6 +81,13 @@ type BatchResponse = {
   results?: Array<{ requestId?: string; ok: boolean }>;
 };
 
+function crateTone(item: FactoryItem) {
+  if (item.kind === "failed" || item.riskClass === "high") {
+    return "high" as const;
+  }
+  return item.riskClass === "medium" ? ("medium" as const) : ("low" as const);
+}
+
 function sameItem(left: FactoryItem, right: FactoryItem): boolean {
   return (
     left.runId === right.runId &&
@@ -78,10 +100,29 @@ export function FactoryFloor({
 }: {
   initialItems: FactoryItem[];
 }) {
+  return (
+    <PixelMotionProvider>
+      <FactoryFloorBody initialItems={initialItems} />
+    </PixelMotionProvider>
+  );
+}
+
+function FactoryFloorBody({ initialItems }: { initialItems: FactoryItem[] }) {
   const t = useTranslations("factory");
+  const motionT = useTranslations("motion");
   const riskT = useTranslations("risk");
   const locale = useLocale();
   const world = useWorld();
+  const { enabled: motionEnabled } = usePixelMotion();
+  const ticker = useTicker();
+  const [stamp, setStamp] = useState<{
+    seq: number;
+    outcome: StampOutcome;
+  }>({ seq: 0, outcome: "passed" });
+  const [reverseSeq, setReverseSeq] = useState(0);
+  const shakeRef = useShake<HTMLDivElement>(
+    stamp.outcome === "failed" ? stamp.seq : 0,
+  );
   const [items, setItems] = useState(initialItems);
   const [selectedId, setSelectedId] = useState(
     initialItems.find((item) => item.kind === "approval")?.requestId ?? "",
@@ -315,6 +356,55 @@ export function FactoryFloor({
     setDrawerItem(item);
   }, []);
 
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) {
+      clearTimeout(refreshTimer.current);
+    }
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      void refresh();
+    }, 400);
+  }, [refresh]);
+
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
+      }
+    },
+    [],
+  );
+
+  // World activity drives the belt: crates step when artifacts publish, the
+  // gate stamps once per decision, and a rejection/rollback reverses the belt
+  // for REVERSE_MS. A quiet workspace sends no frames, so nothing moves.
+  usePixelLive({
+    onEvent: (event) => {
+      const cues = cueFromActivity(event);
+      if (cues.length === 0) {
+        return;
+      }
+      ticker.pulse();
+      let needsRefresh = false;
+      for (const cue of cues) {
+        if (cue.type === "stamp") {
+          setStamp({ seq: cue.seq, outcome: cue.outcome });
+          setAnnounce(
+            motionT(cue.outcome === "failed" ? "stampFailed" : "stampPassed"),
+          );
+        } else if (cue.type === "reverse") {
+          setReverseSeq(cue.seq);
+        } else if (cue.type === "crate") {
+          needsRefresh = true;
+        }
+      }
+      if (needsRefresh) {
+        scheduleRefresh();
+      }
+    },
+  });
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
@@ -473,15 +563,76 @@ export function FactoryFloor({
       </div>
 
       <section className="rounded-none border-2 border-zinc-700 bg-[#0d1117] p-3 shadow-[4px_4px_0_#000]">
-        <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-zinc-500">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
           <span>{t("conveyor")}</span>
-          <span>
-            {t("gatekeeper")} · {gate.length}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span>
+              {t("gatekeeper")} · {gate.length}
+            </span>
+            <PixelClockControls ticker={ticker} />
+          </div>
         </div>
 
         <div
-          className="factory-belt hidden min-h-44 items-stretch gap-2 overflow-x-auto border-y-2 border-zinc-800 p-3 md:flex"
+          ref={shakeRef}
+          className="relative hidden h-24 overflow-hidden border-y-2 border-zinc-800 bg-[#0a0e15] md:block"
+          aria-hidden="true"
+        >
+          <ConveyorReverse
+            trigger={reverseSeq}
+            tick={motionEnabled ? ticker.tick : 0}
+            className="absolute inset-x-0 bottom-0"
+          />
+          <span className="absolute left-2 top-1 font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+            {t("beltLive")}
+          </span>
+          {gate.length === 0 ? (
+            <span className="absolute inset-0 flex items-center justify-center gap-2 font-mono text-[10px] text-zinc-700">
+              <CheckCircle2 className="size-3.5" />
+              {t("beltEmpty")}
+            </span>
+          ) : (
+            gate.slice(0, BELT_VISIBLE).map((item, index) => (
+              <button
+                key={item.requestId}
+                type="button"
+                onClick={() => openDrawer(item)}
+                tabIndex={-1}
+                aria-hidden="true"
+                title={item.summary}
+                className="absolute bottom-5 left-4 flex flex-col items-center"
+                style={{
+                  transform: `translate3d(${index * 64}px, 0, 0)`,
+                  transition: motionEnabled
+                    ? "transform 320ms steps(3, end)"
+                    : "none",
+                }}
+              >
+                <PixelCrate
+                  tone={crateTone(item)}
+                  selected={selected?.requestId === item.requestId}
+                />
+                <span className="mt-0.5 block w-14 truncate text-center font-mono text-[8px] text-zinc-500">
+                  {item.stageName ?? item.runId.slice(-6)}
+                </span>
+              </button>
+            ))
+          )}
+          {gate.length > BELT_VISIBLE ? (
+            <span className="absolute bottom-1 right-2 font-mono text-[9px] text-zinc-500">
+              +{gate.length - BELT_VISIBLE}
+            </span>
+          ) : null}
+          <StampEffect
+            trigger={stamp.seq}
+            outcome={stamp.outcome}
+            pressed={gate.length > 0}
+            className="absolute bottom-3 right-16"
+          />
+        </div>
+
+        <div
+          className="hidden min-h-44 items-stretch gap-2 overflow-x-auto border-y-2 border-zinc-800 p-3 md:flex"
           aria-live="polite"
         >
           {gate.length === 0 ? (

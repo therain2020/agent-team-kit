@@ -2,6 +2,16 @@
 
 import { NewMissionDialog } from "@/components/office/new-mission-dialog";
 import { OfficeChat } from "@/components/office/office-chat";
+import {
+  ConveyorBelt,
+  PixelAgent,
+  PixelClockControls,
+  PixelCrate,
+  PixelMotionProvider,
+  TOOL_BUBBLE_MS,
+  ToolBubble,
+  usePixelMotion,
+} from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,6 +24,14 @@ import {
   deriveLiveAgents,
   deriveLiveMissions,
 } from "@/lib/office-live";
+import {
+  type PixelCue,
+  cueFromActivity,
+  pixelStateFromStatus,
+  pushCrate,
+} from "@/lib/pixel-events";
+import { usePixelLive } from "@/lib/use-pixel-live";
+import { useTicker } from "@/lib/use-ticker";
 import { cn } from "@/lib/utils";
 import { useWorld } from "@/lib/world-client";
 import { shortStage } from "@/lib/world-state";
@@ -25,6 +43,7 @@ import {
   Gamepad2,
   MessageSquare,
   Monitor,
+  Package,
   Pencil,
   Plus,
   ShieldCheck,
@@ -34,16 +53,23 @@ import {
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-const PALETTES = [
-  { hair: "#2f221c", shirt: "#4f7cff", pants: "#23304d", skin: "#f0c49f" },
-  { hair: "#6b3f25", shirt: "#e8a33d", pants: "#3a2f2a", skin: "#e7b48d" },
-  { hair: "#1e1e24", shirt: "#45b39d", pants: "#223b36", skin: "#f2c9a8" },
-  { hair: "#7a4b2a", shirt: "#c96bce", pants: "#332744", skin: "#dfa77f" },
-  { hair: "#2a2a33", shirt: "#d96c6c", pants: "#41252b", skin: "#f5d0b0" },
-  { hair: "#4a2f24", shirt: "#63b3ed", pants: "#25384d", skin: "#e8b58c" },
-];
+/** Crates drawn on the office belt; the rest are summarised as a count. */
+const OFFICE_BELT_VISIBLE = 8;
+
+type BeltCrate = Extract<PixelCue, { type: "crate" }>;
+
+/** Seed the belt from the missions the server already knows about. */
+function seedCrates(missions: readonly { runId: string }[]): BeltCrate[] {
+  return missions.slice(0, 4).map((mission, index) => ({
+    type: "crate" as const,
+    runId: mission.runId,
+    label: mission.runId.slice(-6),
+    bad: false,
+    seq: -(index + 1),
+  }));
+}
 
 /** Optimistic missions are dropped if the stream never materializes the run. */
 const OPTIMISTIC_TTL_MS = 120_000;
@@ -87,7 +113,19 @@ const STATUS_STYLE: Record<LiveAgent["status"], { dot: string; text: string }> =
     },
   };
 
-export function OfficeScene({
+export function OfficeScene(props: {
+  data: OfficeData;
+  initialMessages: UIMessage[];
+  stubMode: boolean;
+}) {
+  return (
+    <PixelMotionProvider>
+      <OfficeSceneBody {...props} />
+    </PixelMotionProvider>
+  );
+}
+
+function OfficeSceneBody({
   data,
   initialMessages,
   stubMode,
@@ -151,6 +189,72 @@ export function OfficeScene({
     [baseMissions, world.world, optimistic],
   );
 
+  const { enabled: motionEnabled } = usePixelMotion();
+  const ticker = useTicker();
+  const [crates, setCrates] = useState<BeltCrate[]>(() => seedCrates(missions));
+  const [bubbles, setBubbles] = useState<
+    Record<string, { text: string; seq: number }>
+  >({});
+  const bubbleTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  useEffect(() => {
+    const timers = bubbleTimers.current;
+    return () => {
+      for (const timer of timers.values()) {
+        clearTimeout(timer);
+      }
+      timers.clear();
+    };
+  }, []);
+
+  // Ephemeral motion only: live presence already comes from the world stream,
+  // so activity frames are used solely for tool bubbles and belt crates. A
+  // quiet workspace delivers no frames and the floor stays still.
+  usePixelLive({
+    onEvent: (event) => {
+      const cues = cueFromActivity(event);
+      if (cues.length === 0) {
+        return;
+      }
+      ticker.pulse();
+      for (const cue of cues) {
+        if (cue.type === "crate") {
+          setCrates((current) => pushCrate(current, cue) as BeltCrate[]);
+        }
+        if (cue.type === "tool") {
+          const { agentId } = cue;
+          setBubbles((current) => ({
+            ...current,
+            [agentId]: { text: cue.tool, seq: cue.seq },
+          }));
+          const previous = bubbleTimers.current.get(agentId);
+          if (previous) {
+            clearTimeout(previous);
+          }
+          bubbleTimers.current.set(
+            agentId,
+            setTimeout(() => {
+              bubbleTimers.current.delete(agentId);
+              setBubbles((current) => {
+                if (current[agentId]?.seq !== cue.seq) {
+                  return current;
+                }
+                const next = { ...current };
+                delete next[agentId];
+                return next;
+              });
+            }, TOOL_BUBBLE_MS + 200),
+          );
+        }
+      }
+    },
+  });
+
+  // Reduced motion / the motion toggle freeze stepping: state changes still
+  // land, they just do not animate through tick parity.
+  const motionTick = motionEnabled ? ticker.tick : 0;
+  const beltCrates = crates.slice(-OFFICE_BELT_VISIBLE);
+
   if (!active) {
     return (
       <Card>
@@ -204,6 +308,7 @@ export function OfficeScene({
             <Badge variant="warning">{t("blocked", { count: blocked })}</Badge>
           ) : null}
           <WorldStatus />
+          <PixelClockControls ticker={ticker} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button asChild size="sm" variant="ghost">
@@ -287,6 +392,8 @@ export function OfficeScene({
                     <div className="flex justify-center sm:col-span-2 lg:col-span-3">
                       <Station
                         agent={manager}
+                        tick={motionTick}
+                        bubble={bubbles[manager.id]}
                         selected={selected?.id === manager.id}
                         onSelect={() => {
                           setSelectedId(manager.id);
@@ -300,6 +407,8 @@ export function OfficeScene({
                     <Station
                       key={agent.id}
                       agent={agent}
+                      tick={motionTick}
+                      bubble={bubbles[agent.id]}
                       selected={selected?.id === agent.id}
                       onSelect={() => {
                         setSelectedId(agent.id);
@@ -308,6 +417,53 @@ export function OfficeScene({
                       index={index}
                     />
                   ))}
+                </div>
+
+                <div className="mt-3 border-t border-zinc-800/60 pt-2">
+                  <div className="mb-1 flex items-center justify-between text-[9px] text-zinc-500">
+                    <span className="flex items-center gap-1">
+                      <Package className="size-3" />
+                      {t("artifactBelt")}
+                    </span>
+                    <span className="font-mono text-zinc-600">
+                      {t("beltCount", { count: beltCrates.length })}
+                    </span>
+                  </div>
+                  <div
+                    className="relative h-16 overflow-hidden rounded border border-zinc-800/80 bg-[#0a0e15]"
+                    aria-hidden="true"
+                  >
+                    <ConveyorBelt
+                      tick={motionTick}
+                      className="absolute inset-x-0 bottom-0 h-3"
+                    />
+                    {beltCrates.length === 0 ? (
+                      <span className="absolute inset-0 flex items-center justify-center font-mono text-[9px] uppercase tracking-widest text-zinc-700">
+                        {t("beltEmpty")}
+                      </span>
+                    ) : (
+                      beltCrates.map((crate, index) => (
+                        <div
+                          key={crate.runId}
+                          className="absolute bottom-4 left-3 flex flex-col items-center"
+                          style={{
+                            transform: `translate3d(${index * 56}px, 0, 0)`,
+                            transition: motionEnabled
+                              ? "transform 320ms steps(3, end)"
+                              : "none",
+                          }}
+                        >
+                          <PixelCrate
+                            tone={crate.bad ? "bad" : "low"}
+                            size={22}
+                          />
+                          <span className="mt-0.5 w-12 truncate text-center font-mono text-[8px] text-zinc-500">
+                            {crate.label}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-3 flex items-end justify-between border-t border-zinc-800/60 pt-2">
@@ -372,6 +528,7 @@ export function OfficeScene({
           ) : selected ? (
             <AgentPanel
               agent={selected}
+              tick={motionTick}
               packDir={active.dirName}
               team={employees}
               onSelectAgent={(id) => {
@@ -405,12 +562,16 @@ export function OfficeScene({
 
 function Station({
   agent,
+  tick,
+  bubble,
   selected,
   onSelect,
   manager = false,
   index = 0,
 }: {
   agent: LiveAgent;
+  tick: number;
+  bubble?: { text: string; seq: number };
   selected: boolean;
   onSelect: () => void;
   manager?: boolean;
@@ -442,11 +603,14 @@ function Station({
         {agent.status !== "idle" ? <SinceLabel since={agent.since} /> : null}
       </span>
       <span className="relative mb-1">
-        <PixelCharacter
+        <PixelAgent
           seed={index + (manager ? 7 : 0)}
           manager={manager}
-          working={agent.status === "working"}
+          state={pixelStateFromStatus(agent.status)}
+          tick={tick}
+          tone={agent.status === "error" ? "red" : undefined}
         />
+        {bubble ? <ToolBubble text={bubble.text} seq={bubble.seq} /> : null}
         <span
           className={cn(
             "absolute -bottom-0.5 left-1/2 size-1.5 -translate-x-1/2 rounded-full ring-2 ring-[#0e1420]",
@@ -544,63 +708,6 @@ function ActivityText({ agent }: { agent: LiveAgent }) {
   }
 }
 
-function PixelCharacter({
-  seed,
-  manager,
-  working,
-}: {
-  seed: number;
-  manager: boolean;
-  working: boolean;
-}) {
-  const fallback = {
-    hair: "#2f221c",
-    shirt: "#4f7cff",
-    pants: "#23304d",
-    skin: "#f0c49f",
-  };
-  const palette = manager
-    ? { hair: "#2b2b33", shirt: "#d4b45c", pants: "#1f2937", skin: "#f0c49f" }
-    : (PALETTES[seed % PALETTES.length] ?? fallback);
-  return (
-    <svg
-      viewBox="0 0 16 24"
-      width={manager ? 54 : 42}
-      height={manager ? 76 : 60}
-      shapeRendering="crispEdges"
-      className={cn(
-        "drop-shadow-[0_6px_8px_rgba(0,0,0,0.45)]",
-        working && "pixel-bob-idle",
-      )}
-      aria-hidden="true"
-    >
-      <ellipse cx="8" cy="23" rx="5" ry="1" fill="rgba(0,0,0,0.35)" />
-      <rect x="5" y="18" width="2" height="4" fill={palette.pants} />
-      <rect x="9" y="18" width="2" height="4" fill={palette.pants} />
-      <rect x="4" y="22" width="3" height="1" fill="#111827" />
-      <rect x="9" y="22" width="3" height="1" fill="#111827" />
-      <rect x="4" y="11" width="8" height="7" fill={palette.shirt} />
-      <rect x="3" y="12" width="1" height="5" fill={palette.shirt} />
-      <rect x="12" y="12" width="1" height="5" fill={palette.shirt} />
-      <rect x="4" y="9" width="8" height="2" fill={palette.shirt} />
-      <rect x="5" y="4" width="6" height="6" fill={palette.skin} />
-      <rect x="4" y="3" width="8" height="2" fill={palette.hair} />
-      <rect x="4" y="4" width="2" height="3" fill={palette.hair} />
-      <rect x="10" y="4" width="2" height="3" fill={palette.hair} />
-      <rect x="6" y="7" width="1" height="1" fill="#1f2937" />
-      <rect x="9" y="7" width="1" height="1" fill="#1f2937" />
-      <rect x="7" y="9" width="2" height="0.5" fill="#b5766a" />
-      {manager ? (
-        <>
-          <rect x="7" y="6" width="2" height="4" fill="#f5f5f4" />
-          <rect x="7.5" y="7" width="1" height="3" fill="#9f1239" />
-          <rect x="4" y="9" width="8" height="1" fill="#1f2937" />
-        </>
-      ) : null}
-    </svg>
-  );
-}
-
 function Plant() {
   return (
     <div className="flex flex-col items-center">
@@ -616,12 +723,14 @@ function Plant() {
 
 function AgentPanel({
   agent,
+  tick,
   packDir,
   onChat,
   team,
   onSelectAgent,
 }: {
   agent: LiveAgent;
+  tick: number;
   packDir: string;
   onChat: () => void;
   team: LiveAgent[];
@@ -633,10 +742,12 @@ function AgentPanel({
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">
       <div className="flex items-start gap-3">
         <div className="rounded-lg border border-border bg-zinc-950/60 p-1.5">
-          <PixelCharacter
+          <PixelAgent
             seed={agent.id.length}
             manager={agent.isManager}
-            working={agent.status === "working"}
+            state={pixelStateFromStatus(agent.status)}
+            tick={tick}
+            tone={agent.status === "error" ? "red" : undefined}
           />
         </div>
         <div className="min-w-0 flex-1">
