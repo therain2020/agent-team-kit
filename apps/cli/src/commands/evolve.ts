@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { CliError } from "@kit/core";
 import {
@@ -8,6 +9,7 @@ import {
   compareVariants,
   convergenceGuard,
   defaultCyclesRoot,
+  defaultHiddenEvalsDir,
   evaluateCanary,
   evolutionCostReport,
   freezeEvolution,
@@ -122,7 +124,7 @@ export function registerEvolve(program: Command): void {
     .requiredOption("--baseline <dir>", "baseline pack directory")
     .requiredOption("--input-file <path>", "evidence input file")
     .requiredOption("--agent <id>", "agent id to score")
-    .option("--rubric <ref>", "rubric ref", "evals/rubrics.yaml#radar")
+    .option("--rubric <ref>", "rubric ref", "evals/visible/rubrics.yaml#radar")
     .option("--stub", "deterministic stub instead of live models", false)
     .option("--json", "machine-readable output", false)
     .action(
@@ -309,7 +311,10 @@ export function registerEvolve(program: Command): void {
       "directory holding iterations.jsonl (default KIT_SIGNALS_ROOT or ~/.agent-team-kit/signals)",
     )
     .option("--cycles-root <dir>", "external root for frozen eval snapshots")
-    .option("--hidden-evals <dir>", "hidden eval directory to freeze")
+    .option(
+      "--hidden-evals <dir>",
+      "hidden eval directory to freeze (default <KIT_HIDDEN_EVALS_ROOT>/<workspace>)",
+    )
     .option(
       "--approve-evaluator-change",
       "approve a changed evaluator for this cycle",
@@ -355,8 +360,10 @@ export function registerEvolve(program: Command): void {
           return;
         }
         try {
-          const record = await withEvolutionRepo((repo) =>
-            runEvolutionCycle({
+          const record = await withEvolutionRepo(async (repo) => {
+            const hiddenEvalsDir =
+              options.hiddenEvals ?? defaultHiddenDir(repo.workspaceId);
+            return await runEvolutionCycle({
               packDir,
               agentId: options.agent,
               inputFile: options.inputFile,
@@ -372,9 +379,8 @@ export function registerEvolve(program: Command): void {
               ...(options.freezeFile ? { freezePath: options.freezeFile } : {}),
               signalsRoot: options.signalsRoot,
               cyclesRoot: options.cyclesRoot,
-              ...(options.hiddenEvals
-                ? { hiddenEvalsDir: options.hiddenEvals }
-                : {}),
+              workspaceId: repo.workspaceId,
+              ...(hiddenEvalsDir ? { hiddenEvalsDir } : {}),
               ...(options.approveEvaluatorChange
                 ? { allowEvaluatorChange: true }
                 : {}),
@@ -382,8 +388,8 @@ export function registerEvolve(program: Command): void {
                 ? { evaluatorApprovalRef: options.approvalRef }
                 : {}),
               repo,
-            }),
-          );
+            });
+          });
           emitResult(json, record);
           if (record.decision === "failed") {
             process.exitCode = 1;
@@ -677,4 +683,14 @@ function reportError(command: string, error: unknown, json = false): void {
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+/**
+ * Hidden suites default to `<KIT_HIDDEN_EVALS_ROOT or ~/.agent-team-kit/
+ * hidden-evals>/<workspace>`. A missing directory means the cycle degrades to
+ * the visible rubric and the manifest records `hidden.available: false`.
+ */
+function defaultHiddenDir(workspaceId: string): string | undefined {
+  const dir = defaultHiddenEvalsDir(workspaceId);
+  return existsSync(dir) ? dir : undefined;
 }
