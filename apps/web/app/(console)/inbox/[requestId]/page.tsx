@@ -107,7 +107,7 @@ export default async function ApprovalPage({
         }
         actions={
           <Button variant="outline" size="sm" asChild>
-            <Link href={`/manager?runId=${encodeURIComponent(run.runId)}`}>
+            <Link href="/office?panel=manager">
               <MessageSquare className="size-3.5" />
               {t("askManager")}
             </Link>
