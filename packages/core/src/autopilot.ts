@@ -1,7 +1,27 @@
 import { z } from "zod";
 import { isCronExpression } from "./cron";
+import type { RunOriginKind } from "./run";
 
 export { isCronExpression } from "./cron";
+
+/** Origins that may be auto-approved when the policy scope is `scheduled`. */
+export const AUTONOMOUS_ORIGIN_KINDS: ReadonlyArray<RunOriginKind> = [
+  "schedule",
+  "event",
+  "information",
+];
+
+export type AutoApproveScope = "scheduled" | "all";
+
+export function isAutoApproveOriginEligible(
+  kind: RunOriginKind | undefined,
+  scope: AutoApproveScope = "scheduled",
+): boolean {
+  if (scope === "all") {
+    return true;
+  }
+  return kind !== undefined && AUTONOMOUS_ORIGIN_KINDS.includes(kind);
+}
 
 export const autopilotScheduleSchema = z.object({
   id: z.string().min(1),
@@ -49,6 +69,12 @@ export const autopilotSchema = z.object({
           maxRisk: z.enum(["low", "medium", "high"]).default("low"),
           maxRunCostCny: z.number().nonnegative().optional(),
           onTimeout: z.enum(["wait", "abort"]).default("wait"),
+          /**
+           * Which job origins the policy may decide on. Absent or `scheduled`
+           * covers autonomous sources only (schedule/event/information);
+           * `all` must be set explicitly to also cover manual/web/cli jobs.
+           */
+          scope: z.enum(["scheduled", "all"]).optional(),
         })
         .optional(),
     })

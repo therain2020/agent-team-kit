@@ -316,6 +316,11 @@ export async function preparePackRun(
     workflowVersion: input.workflowVersion,
     runMode: input.runMode,
     status: "running",
+    ...(input.origin ? { originKind: input.origin.kind } : {}),
+    ...(input.origin?.triggerId ? { triggerId: input.origin.triggerId } : {}),
+    ...(input.origin?.triggerRunId
+      ? { triggerRunId: input.origin.triggerRunId }
+      : {}),
     createdAt: now,
     updatedAt: now,
   });
