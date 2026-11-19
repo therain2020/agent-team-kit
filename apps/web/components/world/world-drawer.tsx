@@ -74,7 +74,7 @@ export async function WorldDrawer({
             {t("drawer.missingHint")}
           </p>
           <Button asChild size="sm" variant="outline" className="mt-4">
-            <Link href="/packs">
+            <Link href="/workshop?tab=packs">
               <Play className="size-3.5" />
               {common("startRun")}
             </Link>
@@ -236,7 +236,7 @@ export async function WorldDrawer({
                   </p>
                   <Button asChild size="sm" variant="outline" className="mt-2">
                     <Link
-                      href={`/inbox/${encodeURIComponent(
+                      href={`/approvals?request=${encodeURIComponent(
                         data.detail.approval.requestId,
                       )}`}
                     >
@@ -273,7 +273,9 @@ export async function WorldDrawer({
 
       <footer className="flex flex-wrap items-center gap-1.5 border-t border-border px-4 py-2.5">
         <Button asChild size="sm" variant="outline">
-          <Link href={`/manager?runId=${encodeURIComponent(data.runId)}`}>
+          <Link
+            href={`/office?panel=manager&runId=${encodeURIComponent(data.runId)}`}
+          >
             <MessageSquare className="size-3.5" />
             {t("drawer.askManager")}
           </Link>
@@ -284,18 +286,10 @@ export async function WorldDrawer({
             {t("drawer.traces")}
           </Link>
         </Button>
-        {data.kind === "iteration" ? (
-          <Button asChild size="sm" variant="ghost">
-            <Link href={`/iterations/${encodeURIComponent(data.runId)}`}>
-              {t("drawer.openIteration")}
-              <ArrowRight className="size-3.5" />
-            </Link>
-          </Button>
-        ) : null}
         {data.kind === "run" && data.detail.approval ? (
           <Button asChild size="sm" variant="ghost">
             <Link
-              href={`/inbox/${encodeURIComponent(data.detail.approval.requestId)}`}
+              href={`/approvals?request=${encodeURIComponent(data.detail.approval.requestId)}`}
             >
               {t("drawer.openInbox")}
               <ArrowRight className="size-3.5" />
@@ -425,10 +419,7 @@ async function IterationTasks({
     <ol className="space-y-1.5">
       {data.tasks.map((task) => (
         <li key={task.taskId}>
-          <Link
-            href={`/iterations/${encodeURIComponent(data.runId)}?task=${encodeURIComponent(task.taskId)}`}
-            className="block rounded-md border border-border bg-background/40 px-2.5 py-2 transition-colors hover:border-zinc-600 hover:bg-accent/40"
-          >
+          <div className="block rounded-md border border-border bg-background/40 px-2.5 py-2">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="font-mono text-[11px] text-zinc-200">
                 {task.taskId}
@@ -457,7 +448,7 @@ async function IterationTasks({
                   : ""}
               </p>
             ) : null}
-          </Link>
+          </div>
         </li>
       ))}
     </ol>
@@ -579,12 +570,6 @@ async function IterationArtifacts({
                 <span className="font-mono text-[11px] text-zinc-300">
                   {task.taskId}
                 </span>
-                <Link
-                  href={`/iterations/${encodeURIComponent(data.runId)}?task=${encodeURIComponent(task.taskId)}`}
-                  className="ml-auto text-[10px] text-emerald-400 hover:text-emerald-300"
-                >
-                  {t("drawer.openIteration")} →
-                </Link>
               </div>
               <p className="mt-1 truncate font-mono text-[10px] text-zinc-500">
                 {[

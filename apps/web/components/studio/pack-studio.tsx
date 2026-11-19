@@ -1324,7 +1324,7 @@ export function PackStudio({
               <p className="text-[10px] text-zinc-500">{t("autopilotHint")}</p>
             </div>
             <div className="flex gap-2">
-              <Link href="/autopilot">
+              <Link href="/ops?section=control">
                 <Button size="sm" variant="outline">
                   {t("openAutopilot")}
                 </Button>

@@ -3,10 +3,14 @@
 import { setLocale } from "@/app/actions/locale";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { Locale } from "@/i18n/config";
-import { NAV_ITEMS, type NavItem, matchNavItem } from "@/lib/nav";
+import {
+  NAV_ITEMS,
+  type NavItem,
+  matchNavItem,
+  shortcutLabel,
+} from "@/lib/nav";
 import { Command } from "cmdk";
 import {
-  GitBranch,
   Inbox,
   Languages,
   type LucideIcon,
@@ -28,17 +32,24 @@ function PaletteItem({
   value,
   icon: Icon,
   label,
+  hint,
   onSelect,
 }: {
   value: string;
   icon: LucideIcon;
   label: string;
+  hint?: string;
   onSelect: () => void;
 }) {
   return (
     <Command.Item value={value} onSelect={onSelect} className={itemClass}>
       <Icon className="size-3.5" />
-      {label}
+      <span className="flex-1">{label}</span>
+      {hint ? (
+        <kbd className="border border-px-line2 bg-px-panel2 px-1 font-mono text-[10px] text-px-faint">
+          {hint}
+        </kbd>
+      ) : null}
     </Command.Item>
   );
 }
@@ -122,16 +133,10 @@ export function CommandPalette() {
 
   const actions = [
     {
-      id: "newIteration",
-      label: t("newIteration"),
-      icon: GitBranch,
-      perform: () => go("/iterations?new=1"),
-    },
-    {
       id: "startRun",
       label: t("startRun"),
       icon: Play,
-      perform: () => go("/packs"),
+      perform: () => go("/workshop?tab=packs"),
     },
     {
       id: "reviewApprovals",
@@ -143,7 +148,7 @@ export function CommandPalette() {
       id: "openKillSwitch",
       label: t("openKillSwitch"),
       icon: Power,
-      perform: () => go("/kill-switch"),
+      perform: () => go("/ops?section=control"),
     },
     {
       id: "switchLanguage",
@@ -190,12 +195,14 @@ export function CommandPalette() {
                 <Command.Group heading={t("recent")}>
                   {recentItems.map((item) => {
                     const label = nav(item.labelKey);
+                    const hint = shortcutLabel(item);
                     return (
                       <PaletteItem
                         key={`recent-${item.href}`}
-                        value={label}
+                        value={`${label} ${hint}`}
                         icon={item.icon}
                         label={label}
+                        hint={hint}
                         onSelect={() => go(item.href)}
                       />
                     );
@@ -205,12 +212,14 @@ export function CommandPalette() {
               <Command.Group heading={t("navigate")}>
                 {NAV_ITEMS.map((item) => {
                   const label = nav(item.labelKey);
+                  const hint = shortcutLabel(item);
                   return (
                     <PaletteItem
                       key={item.href}
-                      value={label}
+                      value={`${label} ${hint}`}
                       icon={item.icon}
                       label={label}
+                      hint={hint}
                       onSelect={() => go(item.href)}
                     />
                   );

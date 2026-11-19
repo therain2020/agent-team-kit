@@ -17,10 +17,12 @@ export function PackLibrary({
   packs,
   selectedDir,
   onSelect,
+  onNewPack,
 }: {
   packs: WorkshopPackView[];
   selectedDir?: string;
   onSelect: (dirName: string) => void;
+  onNewPack: () => void;
 }) {
   const t = useTranslations("workshopSurface");
 
@@ -36,11 +38,9 @@ export function PackLibrary({
             {t("noPacksDesc")}
           </p>
         </div>
-        <Button asChild size="sm" variant="outline">
-          <Link href="/packs/new">
-            <Plus className="size-3.5" />
-            {t("newPack")}
-          </Link>
+        <Button size="sm" variant="outline" onClick={onNewPack}>
+          <Plus className="size-3.5" />
+          {t("newPack")}
         </Button>
       </div>
     );
@@ -126,12 +126,13 @@ export function PackLibrary({
                 )}
               </button>
               <div className="flex items-center justify-between gap-2 border-t border-border/60 px-2.5 py-1">
-                <Link
-                  href={`/packs/${encodeURIComponent(pack.dirName)}`}
+                <button
+                  type="button"
+                  onClick={() => onSelect(pack.dirName)}
                   className="text-[10px] text-zinc-500 hover:text-zinc-200"
                 >
                   {t("openDetail")}
-                </Link>
+                </button>
                 <Link
                   href={`/packs/${encodeURIComponent(pack.dirName)}/studio`}
                   className="inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-200"
@@ -145,11 +146,14 @@ export function PackLibrary({
         })}
       </ul>
       <footer className="border-t border-border p-2">
-        <Button asChild size="sm" variant="ghost" className="w-full">
-          <Link href="/packs/new">
-            <Plus className="size-3.5" />
-            {t("newPack")}
-          </Link>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="w-full"
+          onClick={onNewPack}
+        >
+          <Plus className="size-3.5" />
+          {t("newPack")}
         </Button>
       </footer>
     </>

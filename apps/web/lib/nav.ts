@@ -1,50 +1,64 @@
 import {
-  Activity,
   FlaskConical,
   Gamepad2,
-  GitBranch,
+  Globe2,
   Inbox,
-  LayoutDashboard,
   type LucideIcon,
-  Play,
-  Power,
-  ScrollText,
-  ShieldAlert,
-  ShieldCheck,
+  Package,
   Siren,
-  Store,
-  Wallet,
 } from "lucide-react";
 
 export interface NavItem {
   href: string;
   labelKey: string;
   icon: LucideIcon;
-  exact?: boolean;
+  /** Show the paused-approval badge. Only Approvals sets this. */
   badge?: boolean;
+  /** `g`-prefixed quick-jump key: press `g` then this letter (issue #160). */
+  shortcut: string;
 }
 
+/**
+ * The six first-class console entries (82 §3, issue #160). Everything else is
+ * a drill-down or a legacy route folded into one of these surfaces.
+ */
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/office", labelKey: "office", icon: Gamepad2 },
-  { href: "/", labelKey: "commandCenter", icon: LayoutDashboard, exact: true },
-  { href: "/approvals", labelKey: "approvals", icon: Inbox, badge: true },
-  { href: "/ops", labelKey: "ops", icon: Siren },
-  { href: "/runs", labelKey: "runs", icon: Play },
-  { href: "/iterations", labelKey: "iterations", icon: GitBranch },
-  { href: "/activity", labelKey: "activity", icon: ScrollText },
-  { href: "/workshop", labelKey: "workshop", icon: Store },
-  { href: "/autopilot", labelKey: "autopilot", icon: ShieldCheck },
-  { href: "/degradation", labelKey: "degradation", icon: ShieldAlert },
-  { href: "/budgets", labelKey: "budgets", icon: Wallet },
-  { href: "/evolution", labelKey: "evolution", icon: FlaskConical },
-  { href: "/traces", labelKey: "traces", icon: Activity },
-  { href: "/kill-switch", labelKey: "killSwitch", icon: Power },
+  { href: "/office", labelKey: "office", icon: Gamepad2, shortcut: "o" },
+  { href: "/world", labelKey: "world", icon: Globe2, shortcut: "w" },
+  {
+    href: "/approvals",
+    labelKey: "approvals",
+    icon: Inbox,
+    badge: true,
+    shortcut: "a",
+  },
+  { href: "/workshop", labelKey: "workshop", icon: Package, shortcut: "s" },
+  {
+    href: "/evolution",
+    labelKey: "evolution",
+    icon: FlaskConical,
+    shortcut: "e",
+  },
+  { href: "/ops", labelKey: "ops", icon: Siren, shortcut: "p" },
 ];
 
+/** `g`-prefix quick-jump key → destination, derived from NAV_ITEMS. */
+export const QUICK_JUMP: ReadonlyMap<string, string> = new Map(
+  NAV_ITEMS.map((item) => [item.shortcut, item.href]),
+);
+
+/** Human-readable chord for a nav item, e.g. `g o`. */
+export function shortcutLabel(item: NavItem): string {
+  return `g ${item.shortcut}`;
+}
+
+/** Resolve a quick-jump letter to its href, or null when unbound. */
+export function quickJumpHref(key: string): string | null {
+  return QUICK_JUMP.get(key.toLowerCase()) ?? null;
+}
+
 export function matchNavItem(pathname: string): NavItem | undefined {
-  return NAV_ITEMS.find((item) =>
-    item.exact
-      ? pathname === item.href
-      : pathname === item.href || pathname.startsWith(`${item.href}/`),
+  return NAV_ITEMS.find(
+    (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
   );
 }

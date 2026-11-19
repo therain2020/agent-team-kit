@@ -29,9 +29,8 @@ export function Sidebar({ pausedCount = 0 }: { pausedCount?: number }) {
 
       <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
         {NAV_ITEMS.map((item) => {
-          const active = item.exact
-            ? pathname === item.href
-            : pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const active =
+            pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
           return (
             <Link

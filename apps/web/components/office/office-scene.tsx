@@ -277,7 +277,10 @@ function OfficeSceneBody({
       <Card>
         <CardContent className="p-8 text-center text-xs text-zinc-500">
           {t("noPack")}{" "}
-          <Link href="/packs/new" className="text-emerald-300 hover:underline">
+          <Link
+            href="/workshop?new=1"
+            className="text-emerald-300 hover:underline"
+          >
             {t("createPack")}
           </Link>
         </CardContent>
@@ -331,7 +334,7 @@ function OfficeSceneBody({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button asChild size="sm" variant="ghost">
-            <Link href="/autopilot">
+            <Link href="/ops?section=control">
               <ShieldCheck className="size-3.5" />
               {t("autopilot")}
             </Link>
@@ -876,7 +879,7 @@ function AgentPanel({
         </Button>
         {agent.runId ? (
           <Button size="sm" variant="ghost" asChild>
-            <Link href={`/runs/${encodeURIComponent(agent.runId)}`}>
+            <Link href={`/world?run=${encodeURIComponent(agent.runId)}`}>
               <ArrowUpRight className="size-3.5" />
               {t("openRun")}
             </Link>
@@ -970,7 +973,7 @@ function TaskCard({ mission }: { mission: LiveMission }) {
           : "info";
   return (
     <Link
-      href={`/runs/${encodeURIComponent(mission.runId)}`}
+      href={`/world?run=${encodeURIComponent(mission.runId)}`}
       className="block rounded-md border border-border bg-card px-2 py-1.5 transition-colors hover:border-zinc-600"
       title={mission.acceptance}
     >

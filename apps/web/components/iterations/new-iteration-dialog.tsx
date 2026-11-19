@@ -203,7 +203,7 @@ export function NewIterationDialog({
         t("started", { jobId: payload.jobId, project: draft.project.name }),
       );
       handleOpenChange(false);
-      router.push(`/iterations/${encodeURIComponent(payload.jobId)}`);
+      router.push(`/world?run=${encodeURIComponent(payload.jobId)}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("startFailed"));
     } finally {

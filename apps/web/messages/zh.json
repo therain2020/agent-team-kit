@@ -23,6 +23,7 @@
   },
   "nav": {
     "office": "办公室",
+    "world": "世界",
     "commandCenter": "指挥中心",
     "manager": "Manager",
     "approvals": "审批",
@@ -1394,6 +1395,7 @@
     "assemblyColumn": "装配",
     "assemblyColumnHint": "工作流 · 角色",
     "newPack": "新建模具",
+    "newPackDescription": "从模板或空白创建一套团队模具，完成后进入 Studio。",
     "marketButton": "工坊市场",
     "noPacksTitle": "还没有模具",
     "noPacksDesc": "从模板创建团队，或在 packs/ 下添加 Team Pack。",

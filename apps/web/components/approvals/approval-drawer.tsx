@@ -517,7 +517,7 @@ export function ApprovalDrawer({
                 </span>
               ) : null}
               <Button size="sm" variant="ghost" asChild>
-                <Link href={`/runs/${encodeURIComponent(detail.runId)}`}>
+                <Link href={`/world?run=${encodeURIComponent(detail.runId)}`}>
                   <ExternalLink className="size-3.5" />
                   {t("run")}
                 </Link>
