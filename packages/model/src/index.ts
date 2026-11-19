@@ -1,6 +1,13 @@
 import { loadApiKey, loadModelDefaults } from "@kit/bootstrap";
 import { type PriorityClass, type Quota, loadQuotaPolicies } from "@kit/core";
 import {
+  type PriceTable,
+  type ResolvedModelPrice,
+  computeCostMicro,
+  loadPriceTable,
+  resolveModelPrice,
+} from "./prices";
+import {
   ModelHttpError,
   QuotaTracker,
   type ResilientGatewayOptions,
@@ -10,6 +17,8 @@ import {
   runWithResilience,
 } from "./resilience";
 
+export * from "./cost-tracking";
+export * from "./prices";
 export * from "./resilience";
 
 export interface ModelRequest {
@@ -21,10 +30,22 @@ export interface ModelRequest {
   priority?: PriorityClass;
 }
 
+/** Pricing metadata stamped by the gateway from the versioned price table. */
 export interface ModelUsage {
   inputTokens: number;
   outputTokens: number;
   costCny?: number;
+  costCnyMicro?: number;
+  /** Resolved provider model id (alias expanded by config). */
+  modelId?: string;
+  provider?: string;
+  /** CNY per 1,000 tokens; 0 when untracked. */
+  unitPriceIn?: number;
+  unitPriceOut?: number;
+  priceVersion?: string;
+  /** False when the price is unknown; `untrackedReason` explains why. */
+  tracked?: boolean;
+  untrackedReason?: string;
 }
 
 export interface ModelResponse {
@@ -86,25 +107,61 @@ export interface ModelConfig {
   baseUrl: string;
   apiKey?: string;
   aliases: Record<string, string>;
+  /** Versioned price table used to cost calls and estimates. */
+  priceTable: PriceTable;
 }
 
-const PRICES: Record<string, { input: number; output: number }> = {
-  "deepseek-flash": { input: 0.001, output: 0.002 },
-  "deepseek-pro": { input: 0.002, output: 0.008 },
-};
-
+/**
+ * Cost estimate for budget admission. Returns 0 for an unpriced model (there
+ * is nothing to reserve against); actual calls are recorded as `untracked`
+ * rather than silently charged at zero.
+ */
 export function calculateCostCny(
   modelAlias: string,
   inputTokens: number,
   outputTokens: number,
+  table: PriceTable = loadPriceTable(),
+  at: Date = new Date(),
 ): number {
-  const price = PRICES[modelAlias];
-  if (!price) {
-    return 0;
+  const price = resolveModelPrice(table, modelAlias, at);
+  const micro = computeCostMicro(price, inputTokens, outputTokens);
+  return Math.round(micro) / 1_000_000;
+}
+
+export function priceUsage(
+  usage: { inputTokens: number; outputTokens: number },
+  modelAlias: string,
+  resolvedModel: string,
+  table: PriceTable,
+  at: Date = new Date(),
+): ModelUsage {
+  // Price by alias first (the priced identity), then by the resolved provider
+  // model, mirroring the pre-versioning lookup order.
+  let price: ResolvedModelPrice = resolveModelPrice(table, modelAlias, at);
+  if (!price.tracked && resolvedModel !== modelAlias) {
+    price = resolveModelPrice(table, resolvedModel, at);
   }
-  const cost =
-    (inputTokens / 1000) * price.input + (outputTokens / 1000) * price.output;
-  return Math.round(cost * 1_000_000) / 1_000_000;
+  const costCnyMicro = computeCostMicro(
+    price,
+    usage.inputTokens,
+    usage.outputTokens,
+  );
+  const modelId = price.tracked ? price.modelId : resolvedModel;
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    costCny: costCnyMicro / 1_000_000,
+    costCnyMicro,
+    modelId,
+    provider: price.provider,
+    unitPriceIn: price.inputPer1k,
+    unitPriceOut: price.outputPer1k,
+    priceVersion: price.priceVersion,
+    tracked: price.tracked,
+    ...(price.untrackedReason
+      ? { untrackedReason: price.untrackedReason }
+      : {}),
+  };
 }
 
 export function loadModelConfig(
@@ -128,6 +185,24 @@ export function loadModelConfig(
       "deepseek-pro":
         env.DEEPSEEK_MODEL_PRO ?? defaults.pro ?? "deepseek-v4-pro",
     },
+    priceTable: loadPriceTable(env),
+  };
+}
+
+/** Stub calls cost nothing and are never counted as spend. */
+function stubUsage(model: string): ModelUsage {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    costCny: 0,
+    costCnyMicro: 0,
+    modelId: model,
+    provider: "stub",
+    unitPriceIn: 0,
+    unitPriceOut: 0,
+    priceVersion: "stub@1",
+    tracked: false,
+    untrackedReason: "stub gateway: no provider call",
   };
 }
 
@@ -135,7 +210,7 @@ export class StubModelGateway implements ModelGateway {
   async complete(request: ModelRequest): Promise<ModelResponse> {
     return {
       text: `[stub:${request.model}] ${request.input.slice(0, 120)}`,
-      usage: { inputTokens: 0, outputTokens: 0, costCny: 0 },
+      usage: stubUsage(request.model),
     };
   }
 
@@ -150,7 +225,7 @@ export class StubModelGateway implements ModelGateway {
       text,
       toolCalls: [],
       message: { role: "assistant", content: text },
-      usage: { inputTokens: 0, outputTokens: 0, costCny: 0 },
+      usage: stubUsage(request.model),
     };
   }
 }
@@ -250,19 +325,15 @@ export class OpenAiCompatibleGateway implements ModelGateway {
     const payload = (await response.json()) as ChatCompletionResponse;
     const inputTokens = payload.usage?.prompt_tokens ?? 0;
     const outputTokens = payload.usage?.completion_tokens ?? 0;
-    const price = PRICES[request.model] ?? PRICES[model];
-    const cost = price
-      ? (inputTokens / 1000) * price.input +
-        (outputTokens / 1000) * price.output
-      : 0;
 
     return {
       text: payload.choices?.[0]?.message?.content ?? "",
-      usage: {
-        inputTokens,
-        outputTokens,
-        costCny: Math.round(cost * 1000000) / 1000000,
-      },
+      usage: priceUsage(
+        { inputTokens, outputTokens },
+        request.model,
+        model,
+        this.config.priceTable,
+      ),
     };
   }
 
@@ -334,11 +405,6 @@ export class OpenAiCompatibleGateway implements ModelGateway {
     const text = rawMessage?.content ?? "";
     const inputTokens = payload.usage?.prompt_tokens ?? 0;
     const outputTokens = payload.usage?.completion_tokens ?? 0;
-    const price = PRICES[request.model] ?? PRICES[model];
-    const cost = price
-      ? (inputTokens / 1000) * price.input +
-        (outputTokens / 1000) * price.output
-      : 0;
 
     return {
       text,
@@ -348,11 +414,12 @@ export class OpenAiCompatibleGateway implements ModelGateway {
         ...(text ? { content: text } : {}),
         ...(toolCalls.length > 0 ? { toolCalls } : {}),
       },
-      usage: {
-        inputTokens,
-        outputTokens,
-        costCny: Math.round(cost * 1000000) / 1000000,
-      },
+      usage: priceUsage(
+        { inputTokens, outputTokens },
+        request.model,
+        model,
+        this.config.priceTable,
+      ),
     };
   }
 }

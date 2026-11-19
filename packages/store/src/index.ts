@@ -5,6 +5,7 @@ export * from "./blob";
 export * from "./budget-service";
 export * from "./circuit-breaker-service";
 export * from "./config";
+export * from "./cost-ledger";
 export * from "./cost-service";
 export * from "./db";
 export * from "./event-spool";

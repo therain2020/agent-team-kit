@@ -4,6 +4,7 @@ import { type BlobClient, FsBlobClient, S3BlobClient } from "./blob";
 import { BudgetService } from "./budget-service";
 import { CircuitBreakerService } from "./circuit-breaker-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
+import { CostLedger } from "./cost-ledger";
 import { createDb } from "./db";
 import { SqlEventSpoolStore } from "./event-spool";
 import { LastKnownGoodService } from "./lkg-service";
@@ -107,6 +108,10 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
       driver: handle.driver,
     }),
     circuitBreakerService: new CircuitBreakerService({
+      sql: handle.sql,
+      driver: handle.driver,
+    }),
+    costLedger: new CostLedger({
       sql: handle.sql,
       driver: handle.driver,
     }),

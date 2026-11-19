@@ -439,3 +439,94 @@ export const budgetCharges = pgTable(
     uniqueIndex("budget_charges_reservation_idx").on(table.reservationId),
   ],
 );
+
+/** Per-call cost attribution (60 §2/§3.3). Amounts are micro-CNY. */
+export const costRecords = pgTable(
+  "cost_records",
+  {
+    recordId: text("record_id").primaryKey(),
+    callId: text("call_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    stageId: text("stage_id"),
+    agentId: text("agent_id"),
+    source: text("source").notNull(),
+    artifactId: text("artifact_id"),
+    modelId: text("model_id").notNull(),
+    provider: text("provider").notNull(),
+    tokensIn: bigint("tokens_in", { mode: "number" }).notNull().default(0),
+    tokensOut: bigint("tokens_out", { mode: "number" }).notNull().default(0),
+    unitPriceInMicro: bigint("unit_price_in_micro", { mode: "number" })
+      .notNull()
+      .default(0),
+    unitPriceOutMicro: bigint("unit_price_out_micro", { mode: "number" })
+      .notNull()
+      .default(0),
+    priceVersion: text("price_version").notNull(),
+    currency: text("currency").notNull().default("CNY"),
+    costCnyMicro: bigint("cost_cny_micro", { mode: "number" })
+      .notNull()
+      .default(0),
+    tracked: boolean("tracked").notNull().default(true),
+    untrackedReason: text("untracked_reason"),
+    dayKey: text("day_key").notNull(),
+    ts: timestamp("ts", { withTimezone: true, mode: "string" }).notNull(),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("cost_records_call_idx").on(table.workspaceId, table.callId),
+    index("idx_cost_records_day").on(table.workspaceId, table.dayKey),
+    index("idx_cost_records_run").on(table.workspaceId, table.runId, table.ts),
+    index("idx_cost_records_artifact").on(table.workspaceId, table.artifactId),
+  ],
+);
+
+export const priceTables = pgTable("price_tables", {
+  version: text("version").primaryKey(),
+  effectiveAt: timestamp("effective_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+  currency: text("currency").notNull().default("CNY"),
+  entries: jsonb("entries").$type<unknown[]>().notNull(),
+  updatedAt: timestamp("updated_at", {
+    withTimezone: true,
+    mode: "string",
+  }).notNull(),
+});
+
+export const providerBills = pgTable(
+  "provider_bills",
+  {
+    billId: text("bill_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    provider: text("provider").notNull(),
+    periodStart: text("period_start").notNull(),
+    periodEnd: text("period_end").notNull(),
+    currency: text("currency").notNull().default("CNY"),
+    amountCnyMicro: bigint("amount_cny_micro", { mode: "number" }).notNull(),
+    source: text("source").notNull(),
+    importedAt: timestamp("imported_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("provider_bills_identity_idx").on(
+      table.workspaceId,
+      table.provider,
+      table.periodStart,
+      table.periodEnd,
+      table.source,
+    ),
+    index("idx_provider_bills_period").on(
+      table.workspaceId,
+      table.provider,
+      table.periodStart,
+      table.periodEnd,
+    ),
+  ],
+);
