@@ -65,6 +65,14 @@ async function safeAlert(store: Store, input: AlertInput): Promise<void> {
   }
 }
 
+// The approvals entity is a projection of the approval artifact; failing to
+// write it delays the inbox entry but must never abort the run.
+function logApprovalEnqueueError(error: unknown): void {
+  console.error(
+    `[approvals] ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
 class BudgetPauseError extends Error {
   constructor(
     message: string,
@@ -1479,6 +1487,21 @@ export async function requestApproval(
         expiresAt?: string;
       };
       if (parsed.requestId) {
+        // Re-materialize the entity for runs queued before approvals were a
+        // table; enqueue is idempotent, so this is a no-op after the first run.
+        await store.approvals
+          .enqueue({
+            approvalId: parsed.requestId,
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            stageId: input.stageId,
+            kind: input.requestType,
+            requester: "manager",
+            payloadRef: existing.artifactId,
+            slaDueAt: parsed.expiresAt ?? null,
+            expiresAt: parsed.expiresAt ?? null,
+          })
+          .catch(logApprovalEnqueueError);
         return {
           required: true,
           requestId: parsed.requestId,
@@ -1586,7 +1609,7 @@ async function createApprovalRequest(
     }
   }
 
-  await store.artifactService.publish({
+  const published = await store.artifactService.publish({
     workspaceId: input.workspaceId,
     content: new TextEncoder().encode(
       JSON.stringify({ ...request, notified, notifyError }, null, 2),
@@ -1607,6 +1630,23 @@ async function createApprovalRequest(
     sensitivity: "internal",
     retentionClass: "artifact_365d",
   });
+
+  // The artifact stays the workflow's source of truth; the entity is the
+  // inbox projection. A failed insert must not break a live run, so log and
+  // let the backfill pick the request up later.
+  await store.approvals
+    .enqueue({
+      approvalId: requestId,
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stageId: input.stageId,
+      kind: input.requestType,
+      requester: request.requestedBy,
+      payloadRef: published.artifact.artifactId,
+      slaDueAt: expiresAt,
+      expiresAt,
+    })
+    .catch(logApprovalEnqueueError);
 
   await safeAlert(store, {
     workspaceId: input.workspaceId,

@@ -1,6 +1,6 @@
 ﻿import {
+  decideApprovalRecord,
   findApprovalRequest,
-  findDecisionForRequest,
   recordDecision,
 } from "@kit/manager";
 import { initStore } from "@kit/store";
@@ -45,12 +45,17 @@ export function registerApprove(program: Command): void {
           }
           requestId = approval.requestId;
 
-          const existing = await findDecisionForRequest(
-            store,
+          const recorded = await decideApprovalRecord(store, {
             runId,
             requestId,
-          );
-          if (existing) {
+            decision: options.decision,
+            actor: "operator",
+            note: options.note,
+          });
+          if (!recorded.ok) {
+            throw new Error(recorded.error);
+          }
+          if (recorded.duplicate) {
             console.error(
               `! decision already recorded for ${requestId}; re-signaling`,
             );
@@ -58,6 +63,7 @@ export function registerApprove(program: Command): void {
             await recordDecision(store, runId, options.decision, options.note, {
               requestId,
               actor: "operator",
+              ...(recorded.batchId ? { batchId: recorded.batchId } : {}),
             });
           }
         } catch (error) {

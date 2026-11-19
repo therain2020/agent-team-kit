@@ -395,6 +395,160 @@ export async function findApprovalRequest(
   };
 }
 
+export interface ApprovalRecordDecisionInput {
+  runId: string;
+  requestId: string;
+  decision: "approve" | "abort";
+  actor: string;
+  note?: string;
+  at?: string;
+  batchId?: string;
+}
+
+export type ApprovalRecordDecision =
+  | { ok: true; duplicate: boolean; batchId?: string }
+  | { ok: false; status: number; error: string };
+
+/**
+ * CAS-backed transition of the approvals entity before the decision artifact
+ * is written. Concurrent decisions race on `(approval_id, version)`: exactly
+ * one wins, the loser gets a version conflict unless the decision artifact
+ * already exists (idempotent replay of a completed decision).
+ *
+ * Runs that predate the approvals table have no row; there we keep the
+ * artifact-only behaviour so legacy installs keep working.
+ */
+export async function decideApprovalRecord(
+  store: Store,
+  input: ApprovalRecordDecisionInput,
+): Promise<ApprovalRecordDecision> {
+  const record = await store.approvals.get(input.requestId);
+  if (!record || record.runId !== input.runId) {
+    const existing = await findDecisionForRequest(
+      store,
+      input.runId,
+      input.requestId,
+    );
+    return {
+      ok: true,
+      duplicate: Boolean(existing),
+      ...(existing?.batchId ? { batchId: existing.batchId } : {}),
+    };
+  }
+
+  const existing = await findDecisionForRequest(
+    store,
+    input.runId,
+    input.requestId,
+  );
+  if (existing) {
+    return {
+      ok: true,
+      duplicate: true,
+      ...(existing.batchId ? { batchId: existing.batchId } : {}),
+    };
+  }
+
+  const target = input.decision === "approve" ? "approved" : "rejected";
+  const result = await store.approvals.decide({
+    approvalId: record.approvalId,
+    expectedVersion: record.version,
+    status: target,
+    decisionBy: input.actor,
+    decisionReason: input.note || input.decision,
+    ...(input.at ? { at: input.at } : {}),
+  });
+  if (result.ok) {
+    return {
+      ok: true,
+      duplicate: false,
+      ...(input.batchId ? { batchId: input.batchId } : {}),
+    };
+  }
+
+  // A previous attempt flipped the row but died before writing the decision
+  // artifact; let the caller finish that step instead of dead-ending the run.
+  if (result.code === "not_pending" && result.current?.status === target) {
+    return {
+      ok: true,
+      duplicate: false,
+      ...(input.batchId ? { batchId: input.batchId } : {}),
+    };
+  }
+
+  const raced = await findDecisionForRequest(
+    store,
+    input.runId,
+    input.requestId,
+  );
+  if (raced) {
+    return {
+      ok: true,
+      duplicate: true,
+      ...(raced.batchId ? { batchId: raced.batchId } : {}),
+    };
+  }
+  return {
+    ok: false,
+    status: 409,
+    error:
+      result.code === "not_pending"
+        ? `approval is ${result.current?.status ?? "not pending"}`
+        : "approval version conflict",
+  };
+}
+
+export interface ApprovalBackfillResult {
+  scanned: number;
+  created: number;
+  skipped: number;
+}
+
+/**
+ * Materializes approval entities from runs that are paused on an approval
+ * artifact. Idempotent: rows already materialized are skipped, so it is safe
+ * to call on every tick and on the first inbox read after an upgrade.
+ */
+export async function backfillApprovals(
+  store: Store,
+  options: { workspaceId?: string; limit?: number } = {},
+): Promise<ApprovalBackfillResult> {
+  const paused = await store.runs.list({
+    status: "paused",
+    limit: options.limit ?? 100,
+  });
+  const result: ApprovalBackfillResult = { scanned: 0, created: 0, skipped: 0 };
+  for (const run of paused) {
+    if (options.workspaceId && run.workspaceId !== options.workspaceId) {
+      continue;
+    }
+    result.scanned += 1;
+    const approval = await findApprovalRequest(store, run.runId);
+    if (!approval?.requestId) {
+      result.skipped += 1;
+      continue;
+    }
+    const existing = await store.approvals.get(approval.requestId);
+    if (existing) {
+      result.skipped += 1;
+      continue;
+    }
+    await store.approvals.enqueue({
+      approvalId: approval.requestId,
+      workspaceId: run.workspaceId,
+      runId: run.runId,
+      stageId: approval.stageId || null,
+      kind: approval.requestType,
+      requester: approval.requestedBy,
+      payloadRef: approval.artifactId,
+      slaDueAt: approval.expiresAt || null,
+      expiresAt: approval.expiresAt || null,
+    });
+    result.created += 1;
+  }
+  return result;
+}
+
 export async function findDecisionForRequest(
   store: Store,
   runId: string,
