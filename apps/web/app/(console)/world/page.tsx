@@ -6,7 +6,9 @@ import {
   type WorldDrawerTab,
 } from "@/components/world/world-drawer";
 import { loadAtlasRun } from "@/lib/atlas";
-import { loadWorldDrawerData, loadWorldPageData } from "@/lib/world-page";
+import { loadJobHub } from "@/lib/job-hub";
+import { parseJobHubTab } from "@/lib/job-hub-view";
+import { loadWorldPageData } from "@/lib/world-page";
 import { type WorldKindFilter, parseWorldSearchParams } from "@/lib/world-view";
 
 export const dynamic = "force-dynamic";
@@ -87,14 +89,21 @@ export default async function WorldPage({
     );
   }
 
-  const drawer = await loadWorldDrawerData(runParam, artifactParam);
-  const drawerTab: WorldDrawerTab =
-    tabParam === "activity" || tabParam === "artifacts" ? tabParam : "timeline";
+  // The drawer is the job detail hub (#107): `?run=` without a tab opens the
+  // aggregate view, so legacy `/runs/<id>` and `/iterations/<id>` bookmarks
+  // land on the same lifecycle instead of a second detail page.
+  const { drawer, hub } = await loadJobHub(runParam, artifactParam);
+  const drawerTab: WorldDrawerTab = parseJobHubTab(tabParam);
 
   return (
     <>
       {consolePanel}
-      <WorldDrawer data={drawer} tab={drawerTab} closeHref={closeHref} />
+      <WorldDrawer
+        data={drawer}
+        hub={hub}
+        tab={drawerTab}
+        closeHref={closeHref}
+      />
     </>
   );
 }

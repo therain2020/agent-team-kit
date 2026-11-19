@@ -426,8 +426,9 @@ export function WorldConsole({
   }
 }
 
+// Rows open the job detail hub (#107); the timeline is one tab away.
 function runHref(runId: string): string {
-  return `/world?run=${encodeURIComponent(runId)}&tab=timeline`;
+  return `/world?run=${encodeURIComponent(runId)}&tab=hub`;
 }
 
 function statusVariant(status: string) {
