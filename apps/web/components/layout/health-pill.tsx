@@ -50,7 +50,7 @@ export function HealthPill() {
   ];
 
   return (
-    <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+    <div className="flex items-center gap-3 font-mono text-[10px] tracking-[0.1em] text-px-muted uppercase">
       {items.map((item) => {
         const ok = item.state === "ok";
         const bad = item.state === "error" || item.state === "down";
@@ -58,10 +58,10 @@ export function HealthPill() {
           <span key={item.key} className="flex items-center gap-1.5">
             <span
               className={cn(
-                "size-1.5 rounded-full",
-                ok && "bg-emerald-400",
-                bad && "bg-red-400",
-                !ok && !bad && "bg-zinc-600",
+                "size-1.5 rounded-none border border-px-ink",
+                ok && "bg-px-ok",
+                bad && "bg-px-danger",
+                !ok && !bad && "bg-px-line2",
               )}
             />
             {item.label}
@@ -69,7 +69,7 @@ export function HealthPill() {
         );
       })}
       {health ? (
-        <span className="hidden font-mono uppercase tracking-wide text-zinc-600 lg:inline">
+        <span className="hidden text-px-faint lg:inline">
           {health.blobBackend}
         </span>
       ) : null}

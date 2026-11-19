@@ -3,26 +3,31 @@ import { type VariantProps, cva } from "class-variance-authority";
 import { Slot } from "radix-ui";
 import type * as React from "react";
 
+/**
+ * Pixel Foundry button: hard 1px border, blur-free offset shadow, and a
+ * 1px "press" translation on :active. Variant and size names are stable.
+ */
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 rounded-none border font-mono text-[11px] font-bold uppercase tracking-[0.08em] whitespace-nowrap outline-none transition-[background-color,border-color,color,box-shadow,transform] duration-75 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default:
-          "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90",
+          "border-px-accent-hi bg-px-accent text-px-accent-ink shadow-px-sm hover:border-px-cream hover:bg-px-accent-hi active:translate-x-px active:translate-y-px active:shadow-none",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+          "border-px-line2 bg-px-panel3 text-px-text shadow-px-sm hover:border-zinc-600 hover:bg-px-hi hover:text-px-strong active:translate-x-px active:translate-y-px active:shadow-none",
         outline:
-          "border border-border bg-transparent text-foreground hover:bg-accent",
-        ghost: "text-muted-foreground hover:bg-accent hover:text-foreground",
+          "border-px-line2 bg-transparent text-px-text shadow-px-sm hover:border-zinc-600 hover:bg-px-panel3 hover:text-px-strong active:translate-x-px active:translate-y-px active:shadow-none",
+        ghost:
+          "border-transparent bg-transparent text-px-muted hover:border-px-line hover:bg-px-panel3 hover:text-px-text",
         destructive:
-          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        link: "text-primary underline-offset-4 hover:underline",
+          "border-red-300 bg-px-danger text-destructive-foreground shadow-px-sm hover:border-px-cream hover:bg-red-300 active:translate-x-px active:translate-y-px active:shadow-none",
+        link: "border-transparent bg-transparent p-0 text-px-accent underline-offset-4 hover:text-px-accent-hi hover:underline",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-6",
+        default: "h-8 px-3",
+        sm: "h-7 px-2.5 text-[10px]",
+        lg: "h-9 px-4 text-[11.5px]",
         icon: "size-8",
       },
     },

@@ -3,31 +3,89 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Pixel Foundry design tokens (issue #165 · plan 89 §3.2 / 97 §3.1 / 82 §3)
+
+   One visual language for the whole console: 8-bit hard edges, a 12-colour
+   palette, 1px borders, blur-free offset shadows, a 4px spacing grid and a
+   monospace data face. Tokens are the contract; pages compose tokens and
+   primitives instead of hard-coding hex values.
+
+   `--px-*` are the semantic layer. Components use the Tailwind utilities
+   generated from `@theme` below (`bg-px-panel`, `border-px-line`, …).
+   ───────────────────────────────────────────────────────────────────────── */
 :root {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.17 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.17 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.696 0.17 162.48);
-  --primary-foreground: oklch(0.145 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.637 0.237 25.331);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.269 0 0);
-  --input: oklch(0.269 0 0);
-  --ring: oklch(0.696 0.17 162.48);
-  --sidebar: oklch(0.13 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.22 0 0);
-  --sidebar-border: oklch(0.24 0 0);
-  --radius: 0.5rem;
+  /* surfaces */
+  --px-ink: #04070c;
+  --px-bg: #070b13;
+  --px-panel: #0b0f19;
+  --px-panel-2: #0d1524;
+  --px-panel-3: #101a2b;
+  --px-dot: #111b2b;
+
+  /* rules + text */
+  --px-line: #1e2a3f;
+  --px-line-2: #2b3a55;
+  --px-line-3: #3a4a63; /* hovered/raised rule */
+  --px-text: #dbe4ee;
+  --px-text-strong: #f2f6fb;
+  --px-muted: #8492a8; /* 6.1:1 on panel — AA body/secondary */
+  --px-faint: #75849b; /* meta only — 5.0:1 on panel, AA small text */
+  --px-hi: #16223a; /* raised surface / hover fill */
+
+  /* signal colours */
+  --px-accent: #e8a33d; /* amber — primary action */
+  --px-accent-hi: #f7cd86;
+  --px-accent-ink: #1a1206;
+  --px-ok: #4dd08a;
+  --px-ok-deep: #2f8a57;
+  --px-warn: #e8a33d;
+  --px-danger: #e0555a;
+  --px-danger-deep: #8a3438;
+  --px-info: #4f9dff;
+  --px-violet: #b07cf5;
+  --px-cream: #f0e6d2; /* focus ring */
+
+  /* tinted signal fills — badges and chips, never page backgrounds */
+  --px-ok-bg: #0f2a1d;
+  --px-warn-bg: #21190a;
+  --px-danger-bg: #230c10;
+  --px-info-bg: #0a1b30;
+  --px-violet-bg: #1d1430;
+
+  /* hard, blur-free depth */
+  --px-shadow: #020409;
+  --px-shadow-sm: 2px 2px 0 var(--px-shadow);
+  --px-shadow-md: 4px 4px 0 var(--px-shadow);
+  --px-shadow-lg: 6px 6px 0 var(--px-shadow);
+  --px-shadow-inset: inset 1px 1px 0 rgba(0, 0, 0, 0.35);
+  --px-shadow-inset-b: inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+
+  /* ── shadcn/ui surface tokens, remapped to the pixel palette ── */
+  --background: var(--px-bg);
+  --foreground: var(--px-text);
+  --card: var(--px-panel);
+  --card-foreground: var(--px-text);
+  --popover: var(--px-panel-2);
+  --popover-foreground: var(--px-text);
+  --primary: var(--px-accent);
+  --primary-foreground: var(--px-accent-ink);
+  --secondary: var(--px-panel-3);
+  --secondary-foreground: var(--px-text);
+  --muted: var(--px-panel-3);
+  --muted-foreground: var(--px-muted);
+  --accent: #16223a;
+  --accent-foreground: var(--px-text-strong);
+  --destructive: var(--px-danger);
+  --destructive-foreground: #140406;
+  --border: var(--px-line);
+  --input: var(--px-line-2);
+  --ring: var(--px-cream);
+  --sidebar: #080d16;
+  --sidebar-foreground: var(--px-text);
+  --sidebar-accent: var(--px-panel-3);
+  --sidebar-border: #17223a;
+  --radius: 0px;
 }
 
 @theme inline {
@@ -54,13 +112,134 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-border: var(--sidebar-border);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas,
-    monospace;
+
+  /* semantic pixel tokens → utilities (bg-px-panel, border-px-line, …) */
+  --color-px-ink: var(--px-ink);
+  --color-px-bg: var(--px-bg);
+  --color-px-panel: var(--px-panel);
+  --color-px-panel2: var(--px-panel-2);
+  --color-px-panel3: var(--px-panel-3);
+  --color-px-line: var(--px-line);
+  --color-px-line2: var(--px-line-2);
+  --color-px-line3: var(--px-line-3);
+  --color-px-text: var(--px-text);
+  --color-px-strong: var(--px-text-strong);
+  --color-px-muted: var(--px-muted);
+  --color-px-faint: var(--px-faint);
+  --color-px-hi: var(--px-hi);
+  --color-px-accent: var(--px-accent);
+  --color-px-accent-hi: var(--px-accent-hi);
+  --color-px-accent-ink: var(--px-accent-ink);
+  --color-px-ok: var(--px-ok);
+  --color-px-warn: var(--px-warn);
+  --color-px-danger: var(--px-danger);
+  --color-px-info: var(--px-info);
+  --color-px-violet: var(--px-violet);
+  --color-px-cream: var(--px-cream);
+  --color-px-ok-bg: var(--px-ok-bg);
+  --color-px-warn-bg: var(--px-warn-bg);
+  --color-px-danger-bg: var(--px-danger-bg);
+  --color-px-info-bg: var(--px-info-bg);
+  --color-px-violet-bg: var(--px-violet-bg);
+
+  --shadow-px-sm: var(--px-shadow-sm);
+  --shadow-px: var(--px-shadow-md);
+  --shadow-px-lg: var(--px-shadow-lg);
+  --shadow-px-inset: var(--px-shadow-inset);
+  --shadow-px-inset-b: var(--px-shadow-inset-b);
+
+  --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial,
+    "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas,
+    "Courier New", monospace;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Bridge: remap the Tailwind palettes that predate the design system.
+
+   Pages under world/ops/workshop/approvals are owned by other agents and
+   cannot be rewritten here. Remapping the five colour families they use
+   (zinc + the signal colours) makes them inherit the pixel palette through
+   tokens instead of hard-coded values. New code should use `px-*` tokens.
+   ───────────────────────────────────────────────────────────────────────── */
+@theme {
+  --color-zinc-50: #f4f8fc;
+  --color-zinc-100: #e8eef6;
+  --color-zinc-200: #dbe4ee;
+  --color-zinc-300: #c7d2e2;
+  --color-zinc-400: #a7b4c8;
+  --color-zinc-500: #8492a8;
+  --color-zinc-600: #6d7c93;
+  --color-zinc-700: #3a4a63;
+  --color-zinc-800: #22304a;
+  --color-zinc-900: #131d2e;
+  --color-zinc-950: #080d16;
+
+  --color-emerald-200: #b3f0cf;
+  --color-emerald-300: #6fdc9f;
+  --color-emerald-400: #4dd08a;
+  --color-emerald-500: #2f8a57;
+  --color-emerald-600: #237347;
+  --color-emerald-700: #1c5c39;
+  --color-emerald-800: #12432a;
+
+  --color-amber-100: #fdf0d5;
+  --color-amber-200: #fae0ae;
+  --color-amber-300: #f0b95f;
+  --color-amber-400: #e8a33d;
+  --color-amber-500: #c98a2e;
+  --color-amber-700: #8a6425;
+  --color-amber-900: #3c2f16;
+  --color-amber-950: #21190a;
+
+  --color-red-100: #ffe0e1;
+  --color-red-200: #ffb9bc;
+  --color-red-300: #ff8f93;
+  --color-red-400: #e0555a;
+  --color-red-500: #c9474c;
+  --color-red-600: #a93a3f;
+  --color-red-700: #8a3438;
+  --color-red-900: #4a1d22;
+  --color-red-950: #230c10;
+
+  --color-sky-200: #b8d8ff;
+  --color-sky-300: #7fb8ff;
+  --color-sky-400: #4f9dff;
+  --color-sky-500: #3a7fd4;
+  --color-sky-800: #1c3a63;
+  --color-sky-950: #0a1b30;
+
+  --color-violet-300: #c9a2f8;
+  --color-violet-400: #b07cf5;
+  --color-violet-500: #8f5fd1;
+
+  /* Type scale — body is 13px; nothing slimmer than 10px, and 10px is
+     reserved for uppercase labels/meta, never prose. 4px spacing grid is
+     Tailwind's default `--spacing` (0.25rem). */
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 1.4;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.45;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.5;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.5;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.35;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.2;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.15;
+
+  /* Square everything: corners are a rendering artefact, not decoration. */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
 }
 
 @layer base {
@@ -76,33 +255,158 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
   }
 
   ::selection {
-    @apply bg-primary/25;
+    background: var(--px-accent);
+    color: var(--px-accent-ink);
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+  }
+
+  /* Keyboard focus must always be visible — a 2px hard cream ring, no blur. */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  summary:focus-visible,
+  textarea:focus-visible,
+  [role="tab"]:focus-visible,
+  [role="option"]:focus-visible,
+  [role="menuitem"]:focus-visible,
+  [role="switch"]:focus-visible,
+  [role="radio"]:focus-visible,
+  [role="checkbox"]:focus-visible {
+    outline: 2px solid var(--px-cream);
+    outline-offset: 2px;
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
+    scrollbar-color: var(--px-line-2) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--px-line-2);
+    border: 2px solid var(--px-bg);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--px-line-3);
+  }
+
+  /* Sprites and icons stay crisp at integer zoom. */
+  img,
+  canvas,
+  .pixelated {
+    image-rendering: pixelated;
+  }
+
+  svg.lucide {
+    shape-rendering: crispEdges;
+  }
+
+  hr {
+    border: 0;
+    height: 4px;
+    background-image: repeating-linear-gradient(
+      90deg,
+      var(--px-line-2) 0 4px,
+      transparent 4px 8px
+    );
   }
 }
 
 @layer components {
+  /* Faint pixel-dot floor, echoing the reference factory floor. */
+  .pixel-grid {
+    background-image: radial-gradient(var(--px-dot) 1px, transparent 1px);
+    background-size: 12px 12px;
+  }
+
+  /* Corner ticks drawn with CSS only — no bitmaps, no extra DOM. */
+  .pixel-corners {
+    position: relative;
+  }
+
+  .pixel-corners::after {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    content: "";
+    background-repeat: no-repeat;
+    background-image: linear-gradient(var(--px-line-2), var(--px-line-2)),
+      linear-gradient(var(--px-line-2), var(--px-line-2)),
+      linear-gradient(var(--px-line-2), var(--px-line-2)),
+      linear-gradient(var(--px-line-2), var(--px-line-2)),
+      linear-gradient(var(--px-line-2), var(--px-line-2)),
+      linear-gradient(var(--px-line-2), var(--px-line-2)),
+      linear-gradient(var(--px-line-2), var(--px-line-2)),
+      linear-gradient(var(--px-line-2), var(--px-line-2));
+    background-size: 6px 1px, 1px 6px, 6px 1px, 1px 6px, 6px 1px, 1px 6px, 6px
+      1px, 1px 6px;
+    background-position: left top, left top, right top, right top, left bottom,
+      left bottom, right bottom, right bottom;
+  }
+
+  /* Pixel separators: a row of 4px dashes, not a hairline. */
+  .pixel-sep-h {
+    width: 100%;
+    height: 4px;
+    background-image: repeating-linear-gradient(
+      90deg,
+      var(--px-line-2) 0 4px,
+      transparent 4px 8px
+    );
+  }
+
+  .pixel-sep-v {
+    width: 4px;
+    height: 100%;
+    background-image: repeating-linear-gradient(
+      180deg,
+      var(--px-line-2) 0 4px,
+      transparent 4px 8px
+    );
+  }
+
+  /* The office room belongs to the same world: square frame, hard shadow. */
+  .office-room {
+    border-radius: 0 !important;
+    box-shadow: var(--px-shadow-lg) !important;
+  }
+
   .prose-kit {
-    @apply text-sm leading-6 text-zinc-200;
+    @apply text-sm leading-6 text-px-text;
   }
 
   .prose-kit h1 {
-    @apply mt-6 mb-3 text-xl font-semibold text-zinc-50;
+    @apply mt-6 mb-3 text-xl font-semibold text-px-strong;
   }
 
   .prose-kit h2 {
-    @apply mt-6 mb-2 text-lg font-semibold text-zinc-50;
+    @apply mt-6 mb-2 text-lg font-semibold text-px-strong;
   }
 
   .prose-kit h3 {
-    @apply mt-5 mb-2 text-base font-semibold text-zinc-100;
+    @apply mt-5 mb-2 text-base font-semibold text-px-text;
   }
 
   .prose-kit p {
@@ -118,15 +422,15 @@
   }
 
   .prose-kit a {
-    @apply text-emerald-400 underline underline-offset-2 hover:text-emerald-300;
+    @apply text-px-accent underline underline-offset-2 hover:text-px-accent-hi;
   }
 
   .prose-kit code {
-    @apply rounded bg-zinc-800 px-1 py-0.5 font-mono text-[0.85em] text-zinc-100;
+    @apply bg-px-panel3 px-1 py-0.5 font-mono text-[0.85em] text-px-text;
   }
 
   .prose-kit pre {
-    @apply my-3 overflow-x-auto rounded-md border border-zinc-800 bg-zinc-950 p-3;
+    @apply my-3 overflow-x-auto border border-px-line2 bg-px-ink p-3;
   }
 
   .prose-kit pre code {
@@ -134,7 +438,7 @@
   }
 
   .prose-kit blockquote {
-    @apply my-3 border-l-2 border-zinc-700 pl-3 text-zinc-400;
+    @apply my-3 border-l-2 border-px-line2 pl-3 text-px-muted;
   }
 
   .prose-kit table {
@@ -143,15 +447,15 @@
 
   .prose-kit th,
   .prose-kit td {
-    @apply border border-zinc-800 px-2 py-1 text-left;
+    @apply border border-px-line px-2 py-1 text-left;
   }
 
   .prose-kit th {
-    @apply bg-zinc-900 font-medium;
+    @apply bg-px-panel2 font-medium;
   }
 
   .prose-kit hr {
-    @apply my-4 border-zinc-800;
+    @apply my-4;
   }
 }
 
@@ -199,10 +503,10 @@
 .factory-belt {
   background-image: repeating-linear-gradient(
     90deg,
-    #18181b 0,
-    #18181b 18px,
-    #27272a 18px,
-    #27272a 20px
+    var(--px-ink) 0,
+    var(--px-ink) 18px,
+    var(--px-line) 18px,
+    var(--px-line) 20px
   );
   animation: factory-belt 1.6s linear infinite;
 }

@@ -56,17 +56,21 @@ export default async function ConsoleLayout({
         {backendDown ? (
           <div
             role="alert"
-            className="border-b border-amber-700/40 bg-amber-950/30 px-5 py-2 text-xs text-amber-200"
+            className="border-b border-amber-700 bg-amber-950 px-5 py-2 font-mono text-[11px] text-amber-200"
           >
             Backend unreachable — run{" "}
-            <code className="rounded bg-amber-900/40 px-1">bun run kit up</code>
+            <code className="border border-amber-700 bg-amber-900 px-1">
+              bun run kit up
+            </code>
             . Packs and Studio still work. 后端不可达——请运行{" "}
-            <code className="rounded bg-amber-900/40 px-1">bun run kit up</code>
+            <code className="border border-amber-700 bg-amber-900 px-1">
+              bun run kit up
+            </code>
             ，团队与 Studio 仍可使用。
           </div>
         ) : null}
         {!keyConfigured ? (
-          <output className="block border-b border-sky-800/40 bg-sky-950/30 px-5 py-2 text-xs text-sky-200">
+          <output className="block border-b border-sky-800 bg-sky-950 px-5 py-2 font-mono text-[11px] text-sky-200">
             No model key configured —{" "}
             <a className="underline" href="/welcome">
               open /welcome
@@ -78,7 +82,7 @@ export default async function ConsoleLayout({
             添加。
           </output>
         ) : null}
-        <main className="flex-1 overflow-y-auto px-5 py-6 lg:px-8">
+        <main className="pixel-grid flex-1 overflow-y-auto px-5 py-6 lg:px-8">
           {children}
         </main>
       </div>

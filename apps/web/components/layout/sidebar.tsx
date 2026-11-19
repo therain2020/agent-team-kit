@@ -13,10 +13,15 @@ export function Sidebar({ pausedCount = 0 }: { pausedCount?: number }) {
 
   return (
     <aside className="hidden h-full min-h-0 w-56 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar md:flex">
-      <div className="flex h-14 items-center border-b border-sidebar-border px-4">
-        <Link href="/" className="flex items-center gap-2">
-          <Boxes className="size-4 text-emerald-400" />
-          <span className="font-mono text-xs font-medium tracking-tight text-zinc-200">
+      <div className="flex h-14 items-center border-b border-sidebar-border px-3">
+        <Link
+          href="/"
+          className="flex items-center gap-2.5 border border-transparent px-1 py-1 hover:border-px-line hover:bg-px-panel2"
+        >
+          <span className="flex size-7 items-center justify-center border border-px-accent-hi bg-px-accent text-px-accent-ink shadow-px-sm">
+            <Boxes className="size-4" />
+          </span>
+          <span className="font-mono text-[11px] leading-tight font-bold tracking-[0.14em] text-px-text uppercase">
             agent-team-kit
           </span>
         </Link>
@@ -32,15 +37,17 @@ export function Sidebar({ pausedCount = 0 }: { pausedCount?: number }) {
             <Link
               key={item.href}
               href={item.href}
+              aria-current={active ? "page" : undefined}
               className={cn(
-                "flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] text-zinc-400 transition-colors hover:bg-sidebar-accent hover:text-zinc-100",
-                active && "bg-sidebar-accent text-zinc-100",
+                "flex items-center gap-2.5 rounded-none border border-transparent px-2.5 py-1.5 font-mono text-[12px] text-px-muted transition-colors hover:border-px-line hover:bg-px-panel2 hover:text-px-text",
+                active &&
+                  "border-px-line2 bg-px-panel3 text-px-strong shadow-[inset_2px_0_0_var(--px-accent)]",
               )}
             >
-              <Icon className="size-4" />
+              <Icon className={cn("size-4", active ? "text-px-accent" : "")} />
               <span className="flex-1">{t(item.labelKey)}</span>
               {item.badge && pausedCount > 0 ? (
-                <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                <span className="border border-amber-700 bg-amber-900/40 px-1 py-0.5 font-mono text-[10px] leading-none font-bold text-amber-300">
                   {pausedCount}
                 </span>
               ) : null}
@@ -50,10 +57,10 @@ export function Sidebar({ pausedCount = 0 }: { pausedCount?: number }) {
       </nav>
 
       <div className="shrink-0 border-t border-sidebar-border px-3 py-2">
-        <p className="text-[10px] uppercase tracking-widest text-zinc-600">
+        <p className="font-mono text-[10px] tracking-[0.14em] text-px-muted uppercase">
           {t("localWorkspace")}
         </p>
-        <p className="mt-1 font-mono text-[11px] text-zinc-500">
+        <p className="mt-1 font-mono text-[10.5px] text-px-faint">
           {t("defaultLine")}
         </p>
       </div>

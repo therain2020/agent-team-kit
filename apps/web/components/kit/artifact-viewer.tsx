@@ -71,9 +71,9 @@ export function ArtifactViewer({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-border px-4 py-3">
+      <div className="border-b border-px-line bg-px-panel2 px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-xs text-zinc-200">
+          <span className="font-mono text-xs font-bold text-px-text">
             {artifact.artifactId}
           </span>
           <Badge variant="outline">v{artifact.version}</Badge>
@@ -100,40 +100,40 @@ export function ArtifactViewer({
             ) : null}
           </div>
         </div>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-500">
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10.5px] text-px-muted">
           <span>
             {t("producer")}{" "}
-            <span className="text-zinc-300">
+            <span className="text-px-text">
               {manifest?.producer.agentId ?? common("unknown")}
             </span>
           </span>
           <span>
             {t("model")}{" "}
-            <span className="text-zinc-300">
+            <span className="text-px-text">
               {manifest?.producer.modelId ?? common("unknown")}
             </span>
           </span>
           <span>
             {t("mode")}{" "}
-            <span className="text-zinc-300">
+            <span className="text-px-text">
               {manifest?.runMode ?? common("unknown")}
             </span>
           </span>
           <span>
             {t("cost")}{" "}
-            <span className="text-zinc-300">
+            <span className="text-px-text">
               {formatCny(manifest?.cost.amount ?? 0)}
             </span>
           </span>
           <span>
             {t("tokens")}{" "}
-            <span className="text-zinc-300">
+            <span className="text-px-text tabular-nums">
               {formatNumber(manifest?.cost.tokens ?? 0)}
             </span>
           </span>
           <span>
             {t("stage")}{" "}
-            <span className="font-mono text-zinc-400">
+            <span className="font-mono text-px-muted">
               {manifest?.stageId ?? common("unknown")}
             </span>
           </span>
@@ -141,7 +141,7 @@ export function ArtifactViewer({
       </div>
 
       <Tabs defaultValue="content" className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between border-b border-border px-4 py-2">
+        <div className="flex items-center justify-between border-b border-px-line bg-px-ink/40 px-4 py-2">
           <TabsList>
             <TabsTrigger value="content">{t("content")}</TabsTrigger>
             <TabsTrigger value="manifest">{t("manifest")}</TabsTrigger>
@@ -154,7 +154,7 @@ export function ArtifactViewer({
             </TabsTrigger>
           </TabsList>
           {truncated ? (
-            <span className="text-[11px] text-amber-400">
+            <span className="font-mono text-[10.5px] text-amber-300">
               {t("previewTruncated")}
             </span>
           ) : null}
@@ -167,7 +167,7 @@ export function ArtifactViewer({
           {unavailable ? (
             <p className="text-xs text-amber-400">{t("unavailable")}</p>
           ) : sourceMode || isJson ? (
-            <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-300">
+            <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-px-text">
               {displayContent || t("empty")}
             </pre>
           ) : (
@@ -179,7 +179,7 @@ export function ArtifactViewer({
           value="manifest"
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
         >
-          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-zinc-300">
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-px-text">
             {JSON.stringify(manifest, null, 2)}
           </pre>
         </TabsContent>
@@ -189,19 +189,19 @@ export function ArtifactViewer({
           className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
         >
           {lineage.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t("noInputs")}</p>
+            <p className="text-xs text-px-muted">{t("noInputs")}</p>
           ) : (
             <ul className="space-y-2">
               {lineage.map((item) => (
                 <li key={`${item.artifactId}:${item.version}`}>
                   <Link
                     href={item.href}
-                    className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-xs text-zinc-300 transition-colors hover:bg-accent"
+                    className="flex items-center justify-between rounded-none border border-px-line bg-px-panel2 px-3 py-2 text-xs text-px-text transition-colors hover:border-px-line2 hover:bg-px-panel3"
                   >
                     <span className="font-mono">
                       {item.label} · {item.artifactId} v{item.version}
                     </span>
-                    <ExternalLink className="size-3.5 text-zinc-500" />
+                    <ExternalLink className="size-3.5 text-px-muted" />
                   </Link>
                 </li>
               ))}
@@ -216,9 +216,7 @@ export function ArtifactViewer({
           {diff ? (
             <div>
               {diffLabel ? (
-                <p className="mb-2 text-[11px] text-muted-foreground">
-                  {diffLabel}
-                </p>
+                <p className="mb-2 text-[11px] text-px-muted">{diffLabel}</p>
               ) : null}
               <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5">
                 {diff.map((part) => (
@@ -228,7 +226,7 @@ export function ArtifactViewer({
                       "block",
                       part.added && "bg-emerald-500/10 text-emerald-300",
                       part.removed && "bg-red-500/10 text-red-300",
-                      !part.added && !part.removed && "text-zinc-400",
+                      !part.added && !part.removed && "text-px-muted",
                     )}
                   >
                     {part.value
@@ -246,7 +244,7 @@ export function ArtifactViewer({
               </pre>
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">{t("noDiff")}</p>
+            <p className="text-xs text-px-muted">{t("noDiff")}</p>
           )}
         </TabsContent>
       </Tabs>

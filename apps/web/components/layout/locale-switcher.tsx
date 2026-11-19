@@ -25,7 +25,7 @@ export function LocaleSwitcher() {
 
   return (
     <fieldset
-      className="m-0 flex min-w-0 items-center rounded-md border border-border p-0.5"
+      className="m-0 flex min-w-0 items-center rounded-none border border-px-line2 bg-px-ink p-0.5"
       aria-label={t("label")}
     >
       {locales.map((item) => (
@@ -36,8 +36,8 @@ export function LocaleSwitcher() {
           aria-pressed={locale === item}
           onClick={() => change(item)}
           className={cn(
-            "rounded px-1.5 py-0.5 text-[10px] text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-50",
-            locale === item && "bg-zinc-800 text-zinc-100",
+            "rounded-none px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-[0.1em] text-px-muted uppercase transition-colors hover:text-px-text disabled:opacity-50",
+            locale === item && "bg-px-accent text-px-accent-ink",
           )}
         >
           {t(item)}

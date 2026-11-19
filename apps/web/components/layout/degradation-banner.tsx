@@ -56,12 +56,12 @@ export function DegradationBanner({
   return (
     <div
       role="alert"
-      className="border-b border-red-700/40 bg-red-950/40 px-5 py-2 text-xs text-red-100"
+      className="border-b border-red-700 bg-red-950 px-5 py-2 font-mono text-[11px] text-red-100"
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
         {modes.map((mode) => (
           <span key={mode.modeId} className="flex items-center gap-2">
-            <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider">
+            <span className="border border-red-700 bg-red-900 px-1 py-0.5 text-[10px] font-bold tracking-[0.12em] text-red-200 uppercase">
               {mode.kind === "read_only"
                 ? t("kindReadOnly")
                 : t("kindDegraded")}
@@ -71,7 +71,7 @@ export function DegradationBanner({
                 ? t("bannerReadOnly")
                 : t("bannerDegraded")}
             </span>
-            <span className="font-mono text-[10px] text-red-200/70">
+            <span className="text-[10px] text-red-200/80">
               {mode.scope === "global"
                 ? t("globalLabel")
                 : `${t("workspaceLabel")} ${mode.workspaceId}`}{" "}

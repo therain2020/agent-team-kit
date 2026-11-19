@@ -11,33 +11,33 @@ export function GateCard({ gate }: { gate: GateResult }) {
   const dimensions = Object.keys(gate.scores);
 
   return (
-    <div className="rounded-md border border-border bg-zinc-950/40">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+    <div className="border border-px-line bg-px-ink/40">
+      <div className="flex flex-wrap items-center gap-2 border-b border-px-line bg-px-panel2/60 px-3 py-2">
         {gate.pass ? (
-          <ShieldCheck className="size-4 text-emerald-400" />
+          <ShieldCheck className="size-4 text-px-ok" />
         ) : (
-          <ShieldX className="size-4 text-red-400" />
+          <ShieldX className="size-4 text-px-danger" />
         )}
-        <span className="text-xs font-medium text-zinc-200">
+        <span className="font-mono text-[11px] font-bold tracking-[0.08em] text-px-text">
           {t("attempt", { attempt: gate.attempt })}
         </span>
         <Badge variant={gate.pass ? "success" : "danger"}>
           {gate.pass ? t("pass") : t("fail")}
         </Badge>
-        <span className="text-[11px] text-zinc-500">
+        <span className="font-mono text-[10px] text-px-muted">
           {t("judge", {
             model: gate.judgeModel,
             cost: formatCny(gate.costCny),
           })}
         </span>
-        <span className="ml-auto font-mono text-[10px] text-zinc-600">
+        <span className="ml-auto font-mono text-[10px] text-px-faint">
           {gate.stageId}
         </span>
       </div>
       <div className="grid gap-3 px-3 py-3 sm:grid-cols-[1fr_auto]">
         <div className="space-y-2">
           {dimensions.length === 0 ? (
-            <p className="text-xs text-zinc-500">{t("noScores")}</p>
+            <p className="text-xs text-px-muted">{t("noScores")}</p>
           ) : (
             dimensions.map((name) => {
               const score = gate.scores[name] ?? 0;
@@ -48,21 +48,21 @@ export function GateCard({ gate }: { gate: GateResult }) {
                   key={name}
                   className="grid grid-cols-[9rem_1fr_3.5rem] items-center gap-2"
                 >
-                  <span className="truncate text-[11px] text-zinc-400">
+                  <span className="truncate font-mono text-[10.5px] text-px-muted">
                     {name}
                   </span>
-                  <div className="relative h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                  <div className="relative h-2 overflow-hidden border border-px-line bg-px-ink">
                     <div
                       className={cn(
-                        "h-full rounded-full",
-                        passed ? "bg-emerald-500/70" : "bg-red-500/70",
+                        "h-full",
+                        passed ? "bg-emerald-400" : "bg-red-400",
                       )}
                       style={{
                         width: `${Math.min(100, Math.max(0, score * 100))}%`,
                       }}
                     />
                     <span
-                      className="absolute top-[-2px] h-2.5 w-px bg-zinc-400"
+                      className="absolute top-0 h-full w-0.5 bg-px-cream"
                       style={{
                         left: `${Math.min(100, Math.max(0, threshold * 100))}%`,
                       }}
@@ -70,12 +70,12 @@ export function GateCard({ gate }: { gate: GateResult }) {
                   </div>
                   <span
                     className={cn(
-                      "text-right font-mono text-[11px]",
+                      "text-right font-mono text-[10.5px] tabular-nums",
                       passed ? "text-emerald-300" : "text-red-300",
                     )}
                   >
                     {score.toFixed(2)}
-                    <span className="text-zinc-600">
+                    <span className="text-px-faint">
                       /{threshold.toFixed(2)}
                     </span>
                   </span>
@@ -85,7 +85,7 @@ export function GateCard({ gate }: { gate: GateResult }) {
           )}
         </div>
         {gate.rationale ? (
-          <p className="max-w-sm text-[11px] leading-5 text-zinc-500 sm:text-right">
+          <p className="max-w-sm text-[11px] leading-5 text-px-muted sm:text-right">
             {gate.rationale}
           </p>
         ) : null}

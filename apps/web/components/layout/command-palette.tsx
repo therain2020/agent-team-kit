@@ -22,7 +22,7 @@ const RECENT_KEY = "kit.command-palette.recent";
 const RECENT_LIMIT = 5;
 
 const itemClass =
-  "flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-xs text-zinc-400 data-[selected=true]:bg-accent data-[selected=true]:text-zinc-100";
+  "flex cursor-pointer items-center gap-2 rounded-none px-2 py-2 font-mono text-[11px] text-px-muted data-[selected=true]:bg-px-panel3 data-[selected=true]:text-px-strong data-[selected=true]:shadow-[inset_2px_0_0_var(--px-accent)]";
 
 function PaletteItem({
   value,
@@ -158,11 +158,11 @@ export function CommandPalette() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="hidden items-center gap-2 rounded-md border border-border px-2 py-1 text-[11px] text-zinc-500 transition-colors hover:bg-accent hover:text-zinc-300 sm:flex"
+        className="hidden items-center gap-2 rounded-none border border-px-line2 bg-px-ink px-2 py-1 font-mono text-[10px] tracking-[0.1em] text-px-muted uppercase transition-colors hover:border-zinc-600 hover:bg-px-panel3 hover:text-px-text sm:flex"
       >
         <Search className="size-3" />
         {t("jumpTo").replace("…", "")}
-        <kbd className="rounded border border-border bg-zinc-900 px-1 font-mono text-[10px] text-zinc-500">
+        <kbd className="border border-px-line2 bg-px-panel2 px-1 font-mono text-[10px] text-px-muted">
           ⌘K
         </kbd>
       </button>
@@ -172,18 +172,18 @@ export function CommandPalette() {
           <DialogTitle className="sr-only">{t("paletteTitle")}</DialogTitle>
           <Command
             loop
-            className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-zinc-600"
+            className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.14em] [&_[cmdk-group-heading]]:text-px-muted"
           >
-            <div className="flex items-center gap-2 border-b border-border px-3">
-              <Search className="size-4 text-zinc-500" />
+            <div className="flex items-center gap-2 border-b border-px-line px-3">
+              <Search className="size-4 text-px-muted" />
               <Command.Input
                 autoFocus
                 placeholder={t("jumpTo")}
-                className="h-11 w-full bg-transparent text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                className="h-11 w-full bg-transparent font-mono text-[13px] text-px-text outline-none placeholder:text-px-faint"
               />
             </div>
             <Command.List className="max-h-80 overflow-y-auto p-2">
-              <Command.Empty className="px-2 py-6 text-center text-xs text-zinc-500">
+              <Command.Empty className="px-2 py-6 text-center font-mono text-[11px] text-px-muted">
                 {t("noMatches")}
               </Command.Empty>
               {recentItems.length > 0 ? (
