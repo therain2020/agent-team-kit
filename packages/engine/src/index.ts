@@ -1,5 +1,6 @@
 export * from "./admission";
 export * from "./circuit-breaker";
+export * from "./cost-attribution";
 export * from "./degradation-guard";
 export * from "./fair-queue";
 export * from "./heartbeat";

@@ -68,6 +68,11 @@ import type {
   RunCoderActivityInput,
   VerifyTaskActivityInput,
 } from "@kit/workflow";
+import {
+  attachStageArtifact,
+  recordCoderCost,
+  trackedGateway,
+} from "./cost-attribution";
 import { heartbeat } from "./heartbeat";
 import { assertKillSwitchClear } from "./kill-switch";
 
@@ -287,7 +292,17 @@ export async function planIteration(
       },
       "model",
     );
-    const gateway = createModelGateway();
+    const gateway = trackedGateway(
+      store,
+      {
+        workspaceId: input.workspaceId,
+        runId: input.iterationId,
+        stageId: `${input.iterationId}:plan`,
+        agentId: "planner",
+        source: "planning",
+      },
+      createModelGateway(),
+    );
     const context = await buildRepoContext(repoRoot);
     const domains = Object.entries(iteration.domains)
       .map(
@@ -378,6 +393,14 @@ ${context}`;
         costCny,
         runMode: input.runMode,
       }).catch(() => undefined);
+      if (rawArtifactId) {
+        await attachStageArtifact(store, {
+          workspaceId: input.workspaceId,
+          runId: input.iterationId,
+          stageId: `${input.iterationId}:plan`,
+          artifactId: rawArtifactId,
+        });
+      }
       throw new Error(
         `planner output rejected: ${toErrorMessage(error)}${
           rawArtifactId ? ` (raw artifact ${rawArtifactId})` : ""
@@ -409,6 +432,12 @@ ${context}`;
     tokens,
     costCny,
     runMode: input.runMode,
+  });
+  await attachStageArtifact(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: `${input.iterationId}:plan`,
+    artifactId,
   });
 
   await startIteration(store, input, plan, artifactId);
@@ -658,6 +687,18 @@ export async function runIterationCoder(
     console.error("[iteration] coder token usage exceeded the reserved bound");
   }
 
+  const coderResultStageId = `${input.iterationId}:${input.task.id}:attempt-${input.attempt}:coder:result`;
+  await recordCoderCost(
+    store,
+    {
+      workspaceId: input.workspaceId,
+      runId: input.iterationId,
+      stageId: coderResultStageId,
+      agentId: `coder:${coder}`,
+    },
+    { coder: result.coder, tokens: result.tokens ?? 0 },
+  );
+
   const resultArtifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,
     workspaceId: input.workspaceId,
@@ -681,6 +722,12 @@ export async function runIterationCoder(
     modelId: result.coder,
     tokens: result.tokens ?? 0,
     runMode: input.runMode,
+  });
+  await attachStageArtifact(store, {
+    workspaceId: input.workspaceId,
+    runId: input.iterationId,
+    stageId: coderResultStageId,
+    artifactId: resultArtifactId,
   });
   const transcriptArtifactId = await publishIterationArtifact(store, {
     iterationId: input.iterationId,

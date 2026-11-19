@@ -342,3 +342,76 @@ export const budgetCharges = sqliteTable(
     uniqueIndex("budget_charges_reservation_idx").on(table.reservationId),
   ],
 );
+
+/** Per-call cost attribution (60 §2/§3.3). Amounts are micro-CNY. */
+export const costRecords = sqliteTable(
+  "cost_records",
+  {
+    recordId: text("record_id").primaryKey(),
+    callId: text("call_id").notNull(),
+    workspaceId: text("workspace_id").notNull(),
+    runId: text("run_id").notNull(),
+    stageId: text("stage_id"),
+    agentId: text("agent_id"),
+    source: text("source").notNull(),
+    artifactId: text("artifact_id"),
+    modelId: text("model_id").notNull(),
+    provider: text("provider").notNull(),
+    tokensIn: integer("tokens_in").notNull().default(0),
+    tokensOut: integer("tokens_out").notNull().default(0),
+    unitPriceInMicro: integer("unit_price_in_micro").notNull().default(0),
+    unitPriceOutMicro: integer("unit_price_out_micro").notNull().default(0),
+    priceVersion: text("price_version").notNull(),
+    currency: text("currency").notNull().default("CNY"),
+    costCnyMicro: integer("cost_cny_micro").notNull().default(0),
+    tracked: integer("tracked", { mode: "boolean" }).notNull().default(true),
+    untrackedReason: text("untracked_reason"),
+    dayKey: text("day_key").notNull(),
+    ts: text("ts").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("cost_records_call_idx").on(table.workspaceId, table.callId),
+    index("idx_cost_records_day").on(table.workspaceId, table.dayKey),
+    index("idx_cost_records_run").on(table.workspaceId, table.runId, table.ts),
+    index("idx_cost_records_artifact").on(table.workspaceId, table.artifactId),
+  ],
+);
+
+export const priceTables = sqliteTable("price_tables", {
+  version: text("version").primaryKey(),
+  effectiveAt: text("effective_at").notNull(),
+  currency: text("currency").notNull().default("CNY"),
+  entries: text("entries", { mode: "json" }).$type<unknown[]>().notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const providerBills = sqliteTable(
+  "provider_bills",
+  {
+    billId: text("bill_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    provider: text("provider").notNull(),
+    periodStart: text("period_start").notNull(),
+    periodEnd: text("period_end").notNull(),
+    currency: text("currency").notNull().default("CNY"),
+    amountCnyMicro: integer("amount_cny_micro").notNull(),
+    source: text("source").notNull(),
+    importedAt: text("imported_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("provider_bills_identity_idx").on(
+      table.workspaceId,
+      table.provider,
+      table.periodStart,
+      table.periodEnd,
+      table.source,
+    ),
+    index("idx_provider_bills_period").on(
+      table.workspaceId,
+      table.provider,
+      table.periodStart,
+      table.periodEnd,
+    ),
+  ],
+);

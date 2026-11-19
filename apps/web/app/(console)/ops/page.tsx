@@ -3,6 +3,7 @@ import { OpsSurface } from "@/components/ops/ops-surface";
 import { loadAutopilotOverview } from "@/lib/autopilot";
 import { loadBudgetOverview } from "@/lib/budgets";
 import { loadCapacityOverview } from "@/lib/capacity";
+import { loadCostOverview } from "@/lib/costs";
 import { loadActiveModes, loadDegradationAudit } from "@/lib/degradation";
 import { loadKillSwitchState } from "@/lib/kill-switch";
 import { loadLkgOverview } from "@/lib/lkg";
@@ -26,6 +27,7 @@ export default async function OpsPage({
     modes,
     audit,
     budgets,
+    costs,
     killSwitch,
     autopilot,
     lkg,
@@ -37,6 +39,7 @@ export default async function OpsPage({
     loadActiveModes(),
     loadDegradationAudit(20),
     loadBudgetOverview(),
+    loadCostOverview(),
     loadKillSwitchState(),
     loadAutopilotOverview(),
     loadLkgOverview(),
@@ -59,6 +62,7 @@ export default async function OpsPage({
             description: dependency.description,
           })),
           budgets,
+          costs,
           killSwitch,
           autopilot,
           lkg,
