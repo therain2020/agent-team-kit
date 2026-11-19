@@ -1,8 +1,5 @@
-import { PageHeader } from "@/components/kit/page-header";
-import { loadIncidentOverview } from "@/lib/incident";
+import type { IncidentOverview } from "@/lib/incident";
 import { RPO_TARGET_MINUTES, RTO_TARGET_MINUTES } from "@kit/core";
-
-export const dynamic = "force-dynamic";
 
 const MODE = "font-mono text-[11px]";
 const HEADING =
@@ -28,8 +25,11 @@ function coverageLabel(
   return "uncovered";
 }
 
-export default async function IncidentsPage() {
-  const overview = await loadIncidentOverview();
+/**
+ * Read-only incident/runbook panel rendered inside /ops so the console keeps
+ * its eight-route IA budget (#160).
+ */
+export function IncidentsSection({ overview }: { overview: IncidentOverview }) {
   const { coverage, incidents, runbooks, recoveryDrills, recoveryDrillDue } =
     overview;
   const lastDrill = recoveryDrills[0] ?? null;
@@ -44,38 +44,42 @@ export default async function IncidentsPage() {
     "No runbooks yet. Seed templates with bun run runbook:drill --execute --seed-runbooks.";
 
   return (
-    <div className="flex flex-col gap-6">
-      <PageHeader title="Incidents · Runbooks" description={description} />
+    <section className="flex flex-col gap-4">
+      <header className="flex flex-col gap-1">
+        <h2 className={HEADING}>Incidents · Runbooks</h2>
+        <p className={`text-px-muted ${MODE}`}>{description}</p>
+      </header>
 
-      <section className="flex flex-col gap-3">
-        <h2 className={HEADING}>Degradation mode coverage</h2>
+      <div className="flex flex-col gap-2">
+        <h3 className={HEADING}>Degradation mode coverage</h3>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {coverage.requiredModes.map((mode) => {
             const covered = coverage.coveredModes.includes(mode);
             const missing = coverage.missingModes.includes(mode);
             const undrilled = coverage.undrilledModes.includes(mode);
-            const label = coverageLabel(covered, missing, undrilled);
             return (
               <div
                 key={mode}
                 className="border border-px-line bg-px-panel px-3 py-2 font-mono text-[11px]"
               >
                 <div className="text-px-strong">{mode}</div>
-                <div className={covered ? PASS : WARN}>{label}</div>
+                <div className={covered ? PASS : WARN}>
+                  {coverageLabel(covered, missing, undrilled)}
+                </div>
               </div>
             );
           })}
         </div>
-      </section>
+      </div>
 
-      <section className="flex flex-col gap-2">
-        <h2 className={HEADING}>Recovery drills</h2>
+      <div className="flex flex-col gap-2">
+        <h3 className={HEADING}>Recovery drills</h3>
         <div className={recoveryDrillDue ? WARN : PASS}>{lastDrillLine}</div>
         <p className={`text-px-muted ${MODE}`}>{drillHint}</p>
-      </section>
+      </div>
 
-      <section className="flex flex-col gap-2">
-        <h2 className={HEADING}>Incidents</h2>
+      <div className="flex flex-col gap-2">
+        <h3 className={HEADING}>Incidents</h3>
         {incidents.length === 0 ? (
           <p className={`text-px-muted ${MODE}`}>{emptyIncidents}</p>
         ) : (
@@ -110,10 +114,10 @@ export default async function IncidentsPage() {
             </tbody>
           </table>
         )}
-      </section>
+      </div>
 
-      <section className="flex flex-col gap-2">
-        <h2 className={HEADING}>Runbooks</h2>
+      <div className="flex flex-col gap-2">
+        <h3 className={HEADING}>Runbooks</h3>
         {runbooks.length === 0 ? (
           <p className={`text-px-muted ${MODE}`}>{emptyRunbooks}</p>
         ) : (
@@ -127,7 +131,7 @@ export default async function IncidentsPage() {
             ))}
           </ul>
         )}
-      </section>
-    </div>
+      </div>
+    </section>
   );
 }
