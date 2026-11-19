@@ -5,7 +5,7 @@ import { findApprovalRequest, recordDecision } from "@kit/manager";
 import { initStore, loadStoreConfig } from "@kit/store";
 import type { PackRunInput, PackStageSpec } from "@kit/workflow";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runPackWorkflowLocal } from "../src/local-runner";
+import { enqueueLocalRun, runPackWorkflowLocal } from "../src/local-runner";
 import { closeEngineStore } from "../src/pack-activities";
 
 let dir: string;
@@ -132,6 +132,31 @@ describe("local pack runner", () => {
       await store.close();
     }
   }, 30_000);
+
+  it("merges a duplicate enqueue and stamps the priority class", async () => {
+    const store = await storeFor(env);
+    try {
+      const runId = "run_engine_duplicate";
+      const queued = {
+        ...input(runId, [stage("draft")]),
+        workspaceId: "alpha",
+      };
+      const first = await enqueueLocalRun(queued, store);
+      const second = await enqueueLocalRun(queued, store);
+
+      expect(second.requestId).toBe(first.requestId);
+      const record = await store.runRequests.find(runId);
+      const payload = JSON.parse(record?.payload ?? "{}") as {
+        priority?: string;
+        workspaceId?: string;
+      };
+      expect(payload.workspaceId).toBe("alpha");
+      // DRY_RUN is background work, so the derived class is P3.
+      expect(payload.priority).toBe("P3");
+    } finally {
+      await store.close();
+    }
+  });
 
   it("fails the run when the approval is aborted", async () => {
     const store = await storeFor(env);

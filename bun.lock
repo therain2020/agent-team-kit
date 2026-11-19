@@ -251,6 +251,7 @@
       "version": "0.9.0",
       "dependencies": {
         "@kit/bootstrap": "workspace:*",
+        "@kit/core": "workspace:*",
       },
     },
     "packages/ops": {

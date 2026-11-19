@@ -8,6 +8,7 @@ export const OPS_SECTIONS = [
   "alerts",
   "degradation",
   "budget",
+  "capacity",
   "control",
 ] as const;
 
@@ -29,6 +30,7 @@ export type LegacyOpsPath = keyof typeof LEGACY_OPS_REDIRECTS;
 export const OPS_SHORTCUTS = {
   d: "degradation",
   b: "budget",
+  c: "capacity",
   k: "control",
 } as const satisfies Record<string, OpsSection>;
 
