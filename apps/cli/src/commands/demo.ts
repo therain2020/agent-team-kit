@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { CliError } from "@kit/core";
 import {
   type LoadedPack,
   type SimulationReport,
@@ -11,6 +12,7 @@ import {
   simulatePack,
 } from "@kit/pack";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 import { kitCommand } from "../repo";
 
 const TEAM_DIR = "research-team";
@@ -20,59 +22,97 @@ export function registerDemo(program: Command): void {
     .command("demo")
     .description("Create a demo team and a static team plan (no Docker)")
     .option("--open", "open the generated plan in the browser", false)
-    .action(async (options: { open: boolean }) => {
-      const command = kitCommand();
-      const demoRoot = path.join(kitHome(), "demo");
-      const teamDir = path.join(demoRoot, TEAM_DIR);
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        open: boolean;
+        idempotencyKey?: string;
+        json: boolean;
+      }) => {
+        const json = wantsJson(options);
+        const command = kitCommand();
+        const demoRoot = path.join(kitHome(), "demo");
+        const teamDir = path.join(demoRoot, TEAM_DIR);
+        let reused = false;
 
-      if (existsSync(path.join(teamDir, "team.yaml"))) {
-        console.log(`✔ reusing demo team at ${teamDir}`);
-      } else {
-        try {
-          await createPack({
-            root: demoRoot,
-            dirName: TEAM_DIR,
-            name: "Research Team",
-            description: "Demo team created by kit demo",
-            template: "research",
-            managerName: "manager",
-            managerModel: "deepseek-pro",
-          });
-          console.log(`✔ demo team created at ${teamDir}`);
-        } catch (error) {
-          console.error(
-            `✖ demo failed: ${error instanceof Error ? error.message : String(error)}`,
+        if (existsSync(path.join(teamDir, "team.yaml"))) {
+          reused = true;
+          if (!json) {
+            console.log(`✔ reusing demo team at ${teamDir}`);
+          }
+        } else {
+          try {
+            await createPack({
+              root: demoRoot,
+              dirName: TEAM_DIR,
+              name: "Research Team",
+              description: "Demo team created by kit demo",
+              template: "research",
+              managerName: "manager",
+              managerModel: "deepseek-pro",
+            });
+            if (!json) {
+              console.log(`✔ demo team created at ${teamDir}`);
+            }
+          } catch (error) {
+            emitError(
+              json,
+              new CliError(
+                "internal",
+                `demo failed: ${error instanceof Error ? error.message : String(error)}`,
+              ),
+            );
+            return;
+          }
+        }
+
+        const loaded = await loadPack(teamDir);
+        if (!loaded.ok) {
+          emitError(
+            json,
+            new CliError("usage", "the demo team is invalid", {
+              details: loaded.errors,
+            }),
           );
-          process.exitCode = 1;
           return;
         }
-      }
 
-      const loaded = await loadPack(teamDir);
-      if (!loaded.ok) {
-        console.error("✖ the demo team is invalid");
-        for (const issue of loaded.errors) {
-          console.error(`  - ${issue}`);
+        const report = simulatePack(loaded);
+        const htmlPath = path.join(demoRoot, "team-plan.html");
+        await writeFile(htmlPath, renderPlan(loaded, report), "utf8");
+
+        if (options.open) {
+          openPath(htmlPath);
         }
-        process.exitCode = 1;
-        return;
-      }
 
-      const report = simulatePack(loaded);
-      const htmlPath = path.join(demoRoot, "team-plan.html");
-      await writeFile(htmlPath, renderPlan(loaded, report), "utf8");
-
-      console.log(`✔ team plan written to ${htmlPath}`);
-      console.log("  (static preview — no model call was made)");
-      if (options.open) {
-        openPath(htmlPath);
-      }
-
-      console.log("\nNext steps:");
-      console.log(`  ${command} pack validate "${teamDir}"`);
-      console.log(`  ${command} pack simulate "${teamDir}"`);
-      console.log(`  ${command} up --web   # open /packs and run ${TEAM_DIR}`);
-    });
+        emit(
+          json,
+          {
+            teamDir,
+            reused,
+            planPath: htmlPath,
+            pack: report.pack,
+            ...(options.idempotencyKey
+              ? { idempotencyKey: options.idempotencyKey }
+              : {}),
+          },
+          () => {
+            console.log(`✔ team plan written to ${htmlPath}`);
+            console.log("  (static preview — no model call was made)");
+            console.log("\nNext steps:");
+            console.log(`  ${command} pack validate "${teamDir}"`);
+            console.log(`  ${command} pack simulate "${teamDir}"`);
+            console.log(
+              `  ${command} up --web   # open /packs and run ${TEAM_DIR}`,
+            );
+          },
+        );
+      },
+    );
 }
 
 function kitHome(): string {

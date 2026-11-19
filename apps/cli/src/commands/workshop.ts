@@ -1,3 +1,4 @@
+import { CliError } from "@kit/core";
 import {
   type WorkshopPublishResult,
   installWorkshop,
@@ -6,6 +7,7 @@ import {
   searchWorkshop,
 } from "@kit/workshop";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 
 export function registerWorkshop(program: Command): void {
   const workshop = program
@@ -17,26 +19,36 @@ export function registerWorkshop(program: Command): void {
     .description("Search GitHub topic agent-team-workshop")
     .option("--query <text>", "extra search terms")
     .option("--limit <n>", "results", "12")
-    .action(async (options: { query?: string; limit: string }) => {
-      const candidates = await searchWorkshop({
-        query: options.query,
-        limit: Number(options.limit) || 12,
-        token: process.env.GITHUB_TOKEN,
-      });
-      console.log(JSON.stringify(candidates, null, 2));
-    });
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: { query?: string; limit: string; json?: boolean }) => {
+        const json = wantsJson(options);
+        const candidates = await searchWorkshop({
+          query: options.query,
+          limit: Number(options.limit) || 12,
+          token: process.env.GITHUB_TOKEN,
+        });
+        emit(json, candidates, () => {
+          console.log(JSON.stringify(candidates, null, 2));
+        });
+      },
+    );
 
   workshop
     .command("preview <repo>")
     .description("Preview a workshop manifest without executing code")
     .option("--ref <ref>", "commit or branch", "main")
-    .action(async (repo: string, options: { ref: string }) => {
+    .option("--json", "machine-readable output", false)
+    .action(async (repo: string, options: { ref: string; json?: boolean }) => {
+      const json = wantsJson(options);
       const preview = await previewWorkshop({
         repo,
         ref: options.ref === "main" ? undefined : options.ref,
         token: process.env.GITHUB_TOKEN,
       });
-      console.log(JSON.stringify(preview, null, 2));
+      emit(json, preview, () => {
+        console.log(JSON.stringify(preview, null, 2));
+      });
     });
 
   workshop
@@ -56,6 +68,11 @@ export function registerWorkshop(program: Command): void {
       "accept high-risk permissions (network/code)",
       false,
     )
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
+    .option("--json", "machine-readable output", false)
     .action(
       async (
         repo: string,
@@ -66,24 +83,47 @@ export function registerWorkshop(program: Command): void {
           acceptUnsigned: boolean;
           allowCode: boolean;
           acceptRisk: boolean;
+          idempotencyKey?: string;
+          json?: boolean;
         },
       ) => {
+        const json = wantsJson(options);
         if (!options.yes) {
-          console.error("✖ pass --yes to accept third-party workshop content");
-          process.exitCode = 1;
+          emitError(
+            json,
+            new CliError(
+              "needs_confirmation",
+              "pass --yes to accept third-party workshop content",
+            ),
+          );
           return;
         }
-        const installed = await installWorkshop({
-          repo,
-          ref: options.ref,
-          root: options.target,
-          acceptThirdParty: true,
-          acceptUnsigned: options.acceptUnsigned,
-          allowCode: options.allowCode,
-          acceptHighRisk: options.acceptRisk,
-          token: process.env.GITHUB_TOKEN,
-        });
-        console.log(JSON.stringify(installed, null, 2));
+        try {
+          const installed = await installWorkshop({
+            repo,
+            ref: options.ref,
+            root: options.target,
+            acceptThirdParty: true,
+            acceptUnsigned: options.acceptUnsigned,
+            allowCode: options.allowCode,
+            acceptHighRisk: options.acceptRisk,
+            token: process.env.GITHUB_TOKEN,
+          });
+          emit(
+            json,
+            {
+              ...installed,
+              ...(options.idempotencyKey
+                ? { idempotencyKey: options.idempotencyKey }
+                : {}),
+            },
+            () => {
+              console.log(JSON.stringify(installed, null, 2));
+            },
+          );
+        } catch (error) {
+          emitError(json, error);
+        }
       },
     );
 
@@ -99,18 +139,28 @@ export function registerWorkshop(program: Command): void {
         dir: string | undefined,
         options: { check?: boolean; json?: boolean },
       ) => {
+        const json = wantsJson(options);
         const result = await publishWorkshop({
           dir: dir ?? process.cwd(),
           write: !options.check,
         });
-        if (options.json) {
-          console.log(JSON.stringify(result, null, 2));
-        } else {
-          printPublish(result);
-        }
         if (!result.ok) {
-          process.exitCode = 1;
+          if (json) {
+            emitError(
+              true,
+              new CliError("usage", "publish check failed", {
+                details: result,
+              }),
+            );
+          } else {
+            printPublish(result);
+            process.exitCode = 2;
+          }
+          return;
         }
+        emit(json, result, () => {
+          printPublish(result);
+        });
       },
     );
 }

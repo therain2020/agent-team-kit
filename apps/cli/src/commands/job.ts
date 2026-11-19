@@ -1,4 +1,5 @@
 import path from "node:path";
+import { CliError } from "@kit/core";
 import { closeIterationStore, startLocalRunner } from "@kit/engine";
 import {
   JobError,
@@ -13,6 +14,7 @@ import {
 import { initStore } from "@kit/store";
 import { createTemporalClient } from "@kit/workflow";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 
 export interface StartIterationOptions {
   goal: string;
@@ -27,6 +29,8 @@ export interface StartIterationOptions {
   stub?: boolean;
   budgetCny?: string;
   dedupeKey?: string;
+  idempotencyKey?: string;
+  json?: boolean;
   wait?: boolean;
 }
 
@@ -54,14 +58,23 @@ export function registerJob(program: Command): void {
     .option("--stub", "use the deterministic planner", false)
     .option("--budget-cny <n>", "optional iteration budget")
     .option("--dedupe-key <key>", "attach to an existing run")
+    .option(
+      "--idempotency-key <key>",
+      "alias for --dedupe-key on iterations (no ledger for pack runs yet)",
+    )
     .option("--no-wait", "return immediately instead of waiting for the result")
+    .option("--json", "machine-readable output", false)
     .action(async (options: Record<string, unknown>) => {
+      const json = wantsJson(options);
       const kind = parseKind(options.kind);
       if (!kind) {
-        console.error("✖ --kind must be pack-run or iteration");
-        process.exitCode = 1;
+        emitError(
+          json,
+          new CliError("usage", "--kind must be pack-run or iteration"),
+        );
         return;
       }
+      const dedupeKey = pickString(options.dedupeKey ?? options.idempotencyKey);
       const store = await initStore();
       try {
         const result = await startJob(
@@ -99,48 +112,58 @@ export function registerJob(program: Command): void {
               options.budgetCny !== undefined
                 ? Number(options.budgetCny)
                 : undefined,
-            dedupeKey:
-              typeof options.dedupeKey === "string"
-                ? options.dedupeKey
-                : undefined,
+            dedupeKey,
             evidenceText:
               typeof options.input === "string" ? options.input : undefined,
           },
           { repoRoot: path.resolve(process.cwd()) },
         );
-        console.log(
-          JSON.stringify(
-            {
-              jobId: result.jobId,
-              kind: result.kind,
-              workflowId: result.workflowId,
-              runMode: result.runMode,
-              ...(result.applyMode ? { applyMode: result.applyMode } : {}),
-              pack: result.pack,
-              ...(result.workflow ? { workflow: result.workflow } : {}),
-              engine: result.engine,
-              ...(result.requestId ? { requestId: result.requestId } : {}),
-              ...(result.engine === "temporal"
-                ? { temporalUi: "http://localhost:8080" }
-                : {}),
-            },
-            null,
-            2,
-          ),
-        );
+        const startData = {
+          jobId: result.jobId,
+          kind: result.kind,
+          workflowId: result.workflowId,
+          runMode: result.runMode,
+          ...(result.applyMode ? { applyMode: result.applyMode } : {}),
+          pack: result.pack,
+          ...(result.workflow ? { workflow: result.workflow } : {}),
+          engine: result.engine,
+          ...(result.requestId ? { requestId: result.requestId } : {}),
+          ...(dedupeKey ? { dedupeKey } : {}),
+          ...(result.engine === "temporal"
+            ? { temporalUi: "http://localhost:8080" }
+            : {}),
+        };
+        const renderStart = () => {
+          console.log(JSON.stringify(startData, null, 2));
+        };
 
         if (options.wait === false) {
+          emit(json, startData, renderStart);
           return;
         }
         if (result.engine === "local") {
           if (result.kind === "iteration") {
-            await waitForLocalJob(store, "iteration", result.jobId);
+            const final = await waitForLocalJob(
+              store,
+              "iteration",
+              result.jobId,
+              !json,
+            );
+            emitJobResult(json, { ...startData, final }, renderStart);
+          } else {
+            emit(json, startData, renderStart);
           }
           return;
         }
-        await waitForJob(result.kind, result.jobId, result.workflowId);
+        const final = await waitForJob(
+          result.kind,
+          result.jobId,
+          result.workflowId,
+          !json,
+        );
+        emitJobResult(json, { ...startData, final }, renderStart);
       } catch (error) {
-        printJobError(error);
+        printJobError(error, json);
       } finally {
         await store.close();
       }
@@ -152,8 +175,15 @@ export function registerJob(program: Command): void {
     .option("--kind <kind>", "pack-run | iteration")
     .option("--status <status>", "filter by status")
     .option("--limit <n>", "maximum jobs", "20")
+    .option("--json", "machine-readable output", false)
     .action(
-      async (options: { kind?: string; status?: string; limit?: string }) => {
+      async (options: {
+        kind?: string;
+        status?: string;
+        limit?: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
         const store = await initStore();
         try {
           const kind = options.kind ? parseKind(options.kind) : undefined;
@@ -162,24 +192,26 @@ export function registerJob(program: Command): void {
             ...(options.status ? { status: options.status } : {}),
             limit: Number(options.limit ?? 20),
           });
-          if (jobs.length === 0) {
-            console.log("No jobs yet.");
-            return;
-          }
-          for (const item of jobs) {
-            console.log(
-              [
-                item.kind.padEnd(9),
-                item.status.padEnd(9),
-                item.jobId,
-                item.goal ?? "",
-              ]
-                .join("  ")
-                .trim(),
-            );
-          }
+          emit(json, { jobs }, () => {
+            if (jobs.length === 0) {
+              console.log("No jobs yet.");
+              return;
+            }
+            for (const item of jobs) {
+              console.log(
+                [
+                  item.kind.padEnd(9),
+                  item.status.padEnd(9),
+                  item.jobId,
+                  item.goal ?? "",
+                ]
+                  .join("  ")
+                  .trim(),
+              );
+            }
+          });
         } catch (error) {
-          printJobError(error);
+          printJobError(error, json);
         } finally {
           await store.close();
         }
@@ -190,66 +222,83 @@ export function registerJob(program: Command): void {
     .command("show <jobId>")
     .description("Show a job summary")
     .option("--kind <kind>", "pack-run | iteration")
-    .action(async (jobId: string, options: { kind?: string }) => {
-      const store = await initStore();
-      try {
-        const kinds: JobKind[] = options.kind
-          ? [parseKind(options.kind) ?? "iteration"]
-          : ["iteration", "packRun"];
-        for (const kind of kinds) {
-          const found = await getJob(store, kind, jobId);
-          if (found) {
-            console.log(JSON.stringify(found, null, 2));
-            return;
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (jobId: string, options: { kind?: string; json?: boolean }) => {
+        const json = wantsJson(options);
+        const store = await initStore();
+        try {
+          const kinds: JobKind[] = options.kind
+            ? [parseKind(options.kind) ?? "iteration"]
+            : ["iteration", "packRun"];
+          for (const kind of kinds) {
+            const found = await getJob(store, kind, jobId);
+            if (found) {
+              emit(json, found, () => {
+                console.log(JSON.stringify(found, null, 2));
+              });
+              return;
+            }
           }
+          emitError(json, new CliError("not_found", "job not found"));
+        } catch (error) {
+          printJobError(error, json);
+        } finally {
+          await store.close();
         }
-        console.error("✖ job not found");
-        process.exitCode = 1;
-      } catch (error) {
-        printJobError(error);
-      } finally {
-        await store.close();
-      }
-    });
+      },
+    );
 
   job
     .command("abort <jobId>")
     .description("Abort a running job")
     .requiredOption("--kind <kind>", "pack-run | iteration")
-    .action(async (jobId: string, options: { kind: string }) => {
-      const kind = parseKind(options.kind);
-      if (!kind) {
-        console.error("✖ --kind must be pack-run or iteration");
-        process.exitCode = 1;
-        return;
-      }
-      const store = await initStore();
-      try {
-        const result = await abortJob(store, kind, jobId, {
-          repoRoot: path.resolve(process.cwd()),
-        });
-        console.log(JSON.stringify(result, null, 2));
-      } catch (error) {
-        printJobError(error);
-      } finally {
-        await store.close();
-      }
-    });
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (jobId: string, options: { kind: string; json?: boolean }) => {
+        const json = wantsJson(options);
+        const kind = parseKind(options.kind);
+        if (!kind) {
+          emitError(
+            json,
+            new CliError("usage", "--kind must be pack-run or iteration"),
+          );
+          return;
+        }
+        const store = await initStore();
+        try {
+          const result = await abortJob(store, kind, jobId, {
+            repoRoot: path.resolve(process.cwd()),
+          });
+          emit(json, result, () => {
+            console.log(JSON.stringify(result, null, 2));
+          });
+        } catch (error) {
+          printJobError(error, json);
+        } finally {
+          await store.close();
+        }
+      },
+    );
 
   job
     .command("changes [jobId]")
     .description("List pending changes that require manual apply")
-    .action(async (jobId?: string) => {
+    .option("--json", "machine-readable output", false)
+    .action(async (jobId: string | undefined, options: { json?: boolean }) => {
+      const json = wantsJson(options);
       const store = await initStore();
       try {
         const changes = await listPendingChanges(store, jobId);
-        if (changes.length === 0) {
-          console.log("No pending changes.");
-          return;
-        }
-        console.log(JSON.stringify(changes, null, 2));
+        emit(json, { changes }, () => {
+          if (changes.length === 0) {
+            console.log("No pending changes.");
+            return;
+          }
+          console.log(JSON.stringify(changes, null, 2));
+        });
       } catch (error) {
-        printJobError(error);
+        printJobError(error, json);
       } finally {
         await store.close();
       }
@@ -259,26 +308,50 @@ export function registerJob(program: Command): void {
     .command("apply <ticketId>")
     .description("Apply a pending change (requires a note)")
     .requiredOption("--note <text>", "reason for applying")
-    .action(async (ticketId: string, options: { note: string }) => {
-      const store = await initStore();
-      try {
-        const result = await applyPendingChange(store, ticketId, {
-          actor: "operator:cli",
-          note: options.note,
-          repoRoot: path.resolve(process.cwd()),
-        });
-        console.log(JSON.stringify(result, null, 2));
-      } catch (error) {
-        printJobError(error);
-      } finally {
-        await store.close();
-      }
-    });
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        ticketId: string,
+        options: { note: string; idempotencyKey?: string; json?: boolean },
+      ) => {
+        const json = wantsJson(options);
+        const store = await initStore();
+        try {
+          const result = await applyPendingChange(store, ticketId, {
+            actor: "operator:cli",
+            note: options.note,
+            repoRoot: path.resolve(process.cwd()),
+          });
+          emit(
+            json,
+            {
+              ...result,
+              ...(options.idempotencyKey
+                ? { idempotencyKey: options.idempotencyKey }
+                : {}),
+            },
+            () => {
+              console.log(JSON.stringify(result, null, 2));
+            },
+          );
+        } catch (error) {
+          printJobError(error, json);
+        } finally {
+          await store.close();
+        }
+      },
+    );
 }
 
 export async function startIterationFromCli(
   options: StartIterationOptions,
 ): Promise<void> {
+  const json = wantsJson(options);
+  const dedupeKey = pickString(options.dedupeKey ?? options.idempotencyKey);
   const store = await initStore();
   try {
     const result = await startJob(
@@ -309,38 +382,49 @@ export async function startIterationFromCli(
           options.budgetCny !== undefined
             ? Number(options.budgetCny)
             : undefined,
-        dedupeKey: options.dedupeKey,
+        dedupeKey,
       },
       { repoRoot: path.resolve(process.cwd()) },
     );
-    console.log(
-      JSON.stringify(
-        {
-          iterationId: result.jobId,
-          workflowId: result.workflowId,
-          runMode: result.runMode,
-          applyMode: result.applyMode,
-          pack: result.pack,
-          engine: result.engine,
-          ...(result.requestId ? { requestId: result.requestId } : {}),
-          ...(result.engine === "temporal"
-            ? { temporalUi: "http://localhost:8080" }
-            : {}),
-        },
-        null,
-        2,
-      ),
-    );
+    const startData = {
+      iterationId: result.jobId,
+      workflowId: result.workflowId,
+      runMode: result.runMode,
+      applyMode: result.applyMode,
+      pack: result.pack,
+      engine: result.engine,
+      ...(dedupeKey ? { dedupeKey } : {}),
+      ...(result.requestId ? { requestId: result.requestId } : {}),
+      ...(result.engine === "temporal"
+        ? { temporalUi: "http://localhost:8080" }
+        : {}),
+    };
+    const renderStart = () => {
+      console.log(JSON.stringify(startData, null, 2));
+    };
     if (options.wait === false) {
+      emit(json, startData, renderStart);
       return;
     }
     if (result.engine === "local") {
-      await waitForLocalJob(store, "iteration", result.jobId);
+      const final = await waitForLocalJob(
+        store,
+        "iteration",
+        result.jobId,
+        !json,
+      );
+      emitJobResult(json, { ...startData, final }, renderStart);
       return;
     }
-    await waitForJob("iteration", result.jobId, result.workflowId);
+    const final = await waitForJob(
+      "iteration",
+      result.jobId,
+      result.workflowId,
+      !json,
+    );
+    emitJobResult(json, { ...startData, final }, renderStart);
   } catch (error) {
-    printJobError(error);
+    printJobError(error, json);
   } finally {
     await store.close();
   }
@@ -354,6 +438,14 @@ const TERMINAL_STATUSES = new Set([
   "completed",
 ]);
 
+interface LocalJobOutcome {
+  ok: boolean;
+  job?: unknown;
+  requestStatus?: string;
+  error?: unknown;
+  exitCode?: number;
+}
+
 /**
  * Local mode has no workflow handle to await. Run the queue in this process
  * (another runner may exist; the claim makes that safe) and poll SQLite.
@@ -362,17 +454,21 @@ async function waitForLocalJob(
   store: Awaited<ReturnType<typeof initStore>>,
   kind: JobKind,
   jobId: string,
-): Promise<void> {
+  humanProgress: boolean,
+): Promise<LocalJobOutcome> {
   const stop = startLocalRunner({ store, tickMs: 250 });
   try {
     for (;;) {
       const job = await getJob(store, kind, jobId);
       if (job && TERMINAL_STATUSES.has(job.status)) {
-        console.log(JSON.stringify(job, null, 2));
-        if (job.status === "failed" || job.status === "cancelled") {
-          process.exitCode = 1;
+        const ok = job.status !== "failed" && job.status !== "cancelled";
+        if (humanProgress) {
+          console.log(JSON.stringify(job, null, 2));
+          if (!ok) {
+            process.exitCode = 1;
+          }
         }
-        return;
+        return { ok, job };
       }
       // A request can fail before the run row is finalized (bad payload, queue
       // error); surface that instead of polling forever.
@@ -381,22 +477,24 @@ async function waitForLocalJob(
         request &&
         (request.status === "failed" || request.status === "cancelled")
       ) {
-        console.log(
-          JSON.stringify(
-            {
-              jobId,
-              kind,
-              status: job?.status ?? "unknown",
-              phase: job?.phase ?? null,
-              requestStatus: request.status,
-              error: request.error,
-            },
-            null,
-            2,
-          ),
-        );
-        process.exitCode = 1;
-        return;
+        const outcome: LocalJobOutcome = {
+          ok: false,
+          job: {
+            jobId,
+            kind,
+            status: job?.status ?? "unknown",
+            phase: job?.phase ?? null,
+            requestStatus: request.status,
+            error: request.error,
+          },
+          requestStatus: request.status,
+          error: request.error,
+        };
+        if (humanProgress) {
+          console.log(JSON.stringify(outcome.job, null, 2));
+          process.exitCode = 1;
+        }
+        return outcome;
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
@@ -410,36 +508,68 @@ async function waitForJob(
   kind: JobKind,
   jobId: string,
   workflowId: string,
-): Promise<void> {
+  humanProgress: boolean,
+): Promise<unknown> {
   const { client, connection } = await createTemporalClient();
   let timer: ReturnType<typeof setInterval> | undefined;
   try {
     const handle = client.workflow.getHandle(workflowId);
-    timer = setInterval(() => {
-      void (async () => {
-        try {
-          const description = await handle.describe();
-          console.log(
-            `[job] ${kind} ${jobId} status=${description.status.name}`,
-          );
-        } catch {
-          // workflow may be closing
-        }
-      })();
-    }, 15_000);
+    if (humanProgress) {
+      timer = setInterval(() => {
+        void (async () => {
+          try {
+            const description = await handle.describe();
+            console.log(
+              `[job] ${kind} ${jobId} status=${description.status.name}`,
+            );
+          } catch {
+            // workflow may be closing
+          }
+        })();
+      }, 15_000);
+    }
     const result = await handle.result();
-    console.log(JSON.stringify(result, null, 2));
+    if (humanProgress) {
+      console.log(JSON.stringify(result, null, 2));
+    }
+    return result;
   } catch (error) {
-    console.error(
-      `✖ job failed: ${error instanceof Error ? error.message : String(error)}`,
+    throw new CliError(
+      "internal",
+      `job failed: ${error instanceof Error ? error.message : String(error)}`,
+      { details: { kind, jobId, workflowId } },
     );
-    process.exitCode = 1;
   } finally {
     if (timer) {
       clearInterval(timer);
     }
     await connection.close();
   }
+}
+
+function emitJobResult(
+  json: boolean,
+  data: Record<string, unknown> & { final: LocalJobOutcome | unknown },
+  renderStart: () => void,
+): void {
+  const final = data.final as LocalJobOutcome | unknown;
+  const failed =
+    !!final &&
+    typeof final === "object" &&
+    "ok" in (final as Record<string, unknown>) &&
+    (final as LocalJobOutcome).ok === false;
+  if (json) {
+    if (failed) {
+      emitError(
+        true,
+        new CliError("internal", "job did not succeed", { details: data }),
+      );
+      return;
+    }
+    emit(true, data);
+    return;
+  }
+  renderStart();
 }
 
 function parseKind(value: unknown): JobKind | null {
@@ -458,13 +588,16 @@ function parseApplyMode(value: unknown): "none" | "low" | "low-medium" {
     : "low";
 }
 
-function printJobError(error: unknown): void {
-  if (error instanceof JobError) {
-    console.error(`✖ ${error.code}: ${error.message}`);
-  } else {
-    console.error(
-      `✖ ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  process.exitCode = 1;
+function pickString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function printJobError(error: unknown, json: boolean): void {
+  emitError(json, error, (classified) => {
+    if (error instanceof JobError) {
+      console.error(`✖ ${error.code}: ${error.message}`);
+      return;
+    }
+    console.error(`✖ ${classified.message}`);
+  });
 }

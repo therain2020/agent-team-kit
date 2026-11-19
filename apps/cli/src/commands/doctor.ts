@@ -1,5 +1,7 @@
 import { collectPreflight } from "@kit/bootstrap";
+import { exitCodeForCode } from "@kit/core";
 import type { Command } from "commander";
+import { emit } from "../output";
 import { printPreflight } from "../preflight-output";
 
 export function registerDoctor(program: Command): void {
@@ -11,14 +13,12 @@ export function registerDoctor(program: Command): void {
     .option("--json", "machine-readable output", false)
     .action(async (options: { json: boolean }) => {
       const report = await collectPreflight({ probe: true });
-      if (options.json) {
-        console.log(JSON.stringify(report, null, 2));
-      } else {
+      emit(options.json, report, () => {
         printPreflight(report);
         console.log("\nDocs: docs/install.md");
-      }
+      });
       if (!report.ok) {
-        process.exitCode = 1;
+        process.exitCode = exitCodeForCode("dependency_unavailable");
       }
     });
 }

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { CliError } from "@kit/core";
 import {
   StoreEvolutionRepository,
   canaryStatus,
@@ -18,6 +19,11 @@ import {
 } from "@kit/evolution";
 import { initStore, loadStoreConfig } from "@kit/store";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
+
+interface JsonFlag {
+  json?: boolean;
+}
 
 export function registerEvolve(program: Command): void {
   const evolve = program
@@ -29,22 +35,33 @@ export function registerEvolve(program: Command): void {
     .description("Create a baseline variant from a pack")
     .requiredOption("--out <dir>", "variant output directory")
     .requiredOption("--name <name>", "variant name")
-    .action(async (packDir: string, options: { out: string; name: string }) => {
-      try {
-        const result = await withEvolutionRepo(async (repo) => {
-          const created = await initVariant(packDir, options.out, options.name);
-          await repo.saveVariant({
-            meta: created.meta,
-            dir: created.dir,
-            packDir: path.resolve(packDir),
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        packDir: string,
+        options: { out: string; name: string; json?: boolean },
+      ) => {
+        const json = wantsJson(options);
+        try {
+          const result = await withEvolutionRepo(async (repo) => {
+            const created = await initVariant(
+              packDir,
+              options.out,
+              options.name,
+            );
+            await repo.saveVariant({
+              meta: created.meta,
+              dir: created.dir,
+              packDir: path.resolve(packDir),
+            });
+            return created;
           });
-          return created;
-        });
-        console.log(JSON.stringify(result, null, 2));
-      } catch (error) {
-        reportError("init", error);
-      }
-    });
+          emitResult(json, result);
+        } catch (error) {
+          reportError("init", error, json);
+        }
+      },
+    );
 
   evolve
     .command("propose <fromDir>")
@@ -54,6 +71,7 @@ export function registerEvolve(program: Command): void {
     .requiredOption("--out <dir>", "variant output directory")
     .requiredOption("--name <name>", "variant name")
     .option("--model <alias>", "override model alias")
+    .option("--json", "machine-readable output", false)
     .action(
       async (
         fromDir: string,
@@ -63,8 +81,10 @@ export function registerEvolve(program: Command): void {
           out: string;
           name: string;
           model?: string;
+          json?: boolean;
         },
       ) => {
+        const json = wantsJson(options);
         try {
           const result = await withEvolutionRepo(async (repo) => {
             const created = await proposeVariant(
@@ -82,9 +102,9 @@ export function registerEvolve(program: Command): void {
             });
             return created;
           });
-          console.log(JSON.stringify(result, null, 2));
+          emitResult(json, result);
         } catch (error) {
-          reportError("propose", error);
+          reportError("propose", error, json);
         }
       },
     );
@@ -97,6 +117,7 @@ export function registerEvolve(program: Command): void {
     .requiredOption("--agent <id>", "agent id to score")
     .option("--rubric <ref>", "rubric ref", "evals/rubrics.yaml#radar")
     .option("--stub", "deterministic stub instead of live models", false)
+    .option("--json", "machine-readable output", false)
     .action(
       async (
         variantDir: string,
@@ -106,8 +127,10 @@ export function registerEvolve(program: Command): void {
           agent: string;
           rubric: string;
           stub: boolean;
+          json?: boolean;
         },
       ) => {
+        const json = wantsJson(options);
         try {
           const record = await withEvolutionRepo((repo) =>
             scoreVariant(
@@ -118,9 +141,9 @@ export function registerEvolve(program: Command): void {
               { stub: options.stub, rubricRef: options.rubric, repo },
             ),
           );
-          console.log(JSON.stringify(record, null, 2));
+          emitResult(json, record);
         } catch (error) {
-          reportError("score", error);
+          reportError("score", error, json);
         }
       },
     );
@@ -135,12 +158,15 @@ export function registerEvolve(program: Command): void {
     .requiredOption("--baseline <dir>", "champion variant directory")
     .requiredOption("--variant <dir>", "canary variant directory")
     .option("--percent <n>", "traffic percent (0 stays in shadow)", "0")
+    .option("--json", "machine-readable output", false)
     .action(
       async (options: {
         baseline: string;
         variant: string;
         percent: string;
+        json?: boolean;
       }) => {
+        const json = wantsJson(options);
         try {
           const state = await withEvolutionRepo((repo) =>
             startCanary(options.baseline, options.variant, {
@@ -148,9 +174,9 @@ export function registerEvolve(program: Command): void {
               repo,
             }),
           );
-          console.log(JSON.stringify(state, null, 2));
+          emitResult(json, state);
         } catch (error) {
-          reportError("canary start", error);
+          reportError("canary start", error, json);
         }
       },
     );
@@ -159,14 +185,16 @@ export function registerEvolve(program: Command): void {
     .command("traffic")
     .description("Set the live traffic percent for the active canary")
     .requiredOption("--percent <n>", "traffic percent between 0 and 99")
-    .action(async (options: { percent: string }) => {
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { percent: string; json?: boolean }) => {
+      const json = wantsJson(options);
       try {
         const state = await withEvolutionRepo((repo) =>
           setCanaryTraffic(Number(options.percent), { repo }),
         );
-        console.log(JSON.stringify(state, null, 2));
+        emitResult(json, state);
       } catch (error) {
-        reportError("canary traffic", error);
+        reportError("canary traffic", error, json);
       }
     });
 
@@ -176,8 +204,15 @@ export function registerEvolve(program: Command): void {
     .requiredOption("--inputs <list>", "comma-separated input files")
     .option("--stub", "deterministic stub instead of live models", false)
     .option("--incident <text>", "force rollback for an incident")
+    .option("--json", "machine-readable output", false)
     .action(
-      async (options: { inputs: string; stub: boolean; incident?: string }) => {
+      async (options: {
+        inputs: string;
+        stub: boolean;
+        incident?: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
         try {
           const inputs = options.inputs
             .split(",")
@@ -190,9 +225,9 @@ export function registerEvolve(program: Command): void {
               ...(options.incident ? { incident: options.incident } : {}),
             }),
           );
-          console.log(JSON.stringify(result, null, 2));
+          emitResult(json, result);
         } catch (error) {
-          reportError("canary evaluate", error);
+          reportError("canary evaluate", error, json);
         }
       },
     );
@@ -200,9 +235,11 @@ export function registerEvolve(program: Command): void {
   canary
     .command("status")
     .description("Show canary state")
-    .action(async () => {
+    .option("--json", "machine-readable output", false)
+    .action(async (options: JsonFlag) => {
+      const json = wantsJson(options);
       const state = await withEvolutionRepo((repo) => canaryStatus({ repo }));
-      console.log(JSON.stringify(state, null, 2));
+      emitResult(json, state);
     });
 
   canary
@@ -210,21 +247,29 @@ export function registerEvolve(program: Command): void {
     .description("Manually roll back the canary")
     .option("--reason <text>", "rollback reason", "manual rollback")
     .option("--trigger <kind>", "manual | incident", "manual")
-    .action(async (options: { reason: string; trigger: string }) => {
-      try {
-        const state = await withEvolutionRepo((repo) =>
-          rollbackCanary(options.reason, {
-            repo,
-            ...(options.trigger === "incident"
-              ? { trigger: "incident" as const }
-              : {}),
-          }),
-        );
-        console.log(JSON.stringify(state, null, 2));
-      } catch (error) {
-        reportError("canary rollback", error);
-      }
-    });
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        reason: string;
+        trigger: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        try {
+          const state = await withEvolutionRepo((repo) =>
+            rollbackCanary(options.reason, {
+              repo,
+              ...(options.trigger === "incident"
+                ? { trigger: "incident" as const }
+                : {}),
+            }),
+          );
+          emitResult(json, state);
+        } catch (error) {
+          reportError("canary rollback", error, json);
+        }
+      },
+    );
 
   evolve
     .command("cycle <packDir>")
@@ -253,6 +298,7 @@ export function registerEvolve(program: Command): void {
       "--approval-ref <id>",
       "approval reference for the evaluator change",
     )
+    .option("--json", "machine-readable output", false)
     .action(
       async (
         packDir: string,
@@ -268,8 +314,10 @@ export function registerEvolve(program: Command): void {
           hiddenEvals?: string;
           approveEvaluatorChange: boolean;
           approvalRef?: string;
+          json?: boolean;
         },
       ) => {
+        const json = wantsJson(options);
         try {
           const record = await withEvolutionRepo((repo) =>
             runEvolutionCycle({
@@ -294,12 +342,12 @@ export function registerEvolve(program: Command): void {
               repo,
             }),
           );
-          console.log(JSON.stringify(record, null, 2));
+          emitResult(json, record);
           if (record.decision === "failed") {
             process.exitCode = 1;
           }
         } catch (error) {
-          reportError("cycle", error);
+          reportError("cycle", error, json);
         }
       },
     );
@@ -308,16 +356,13 @@ export function registerEvolve(program: Command): void {
     .command("cycles")
     .description("Show recent evolution cycles")
     .option("--limit <n>", "max records", "20")
-    .action(async (options: { limit: string }) => {
-      console.log(
-        JSON.stringify(
-          await withEvolutionRepo((repo) =>
-            loadEvolutionCycles(undefined, Number(options.limit), repo),
-          ),
-          null,
-          2,
-        ),
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { limit: string; json?: boolean }) => {
+      const json = wantsJson(options);
+      const cycles = await withEvolutionRepo((repo) =>
+        loadEvolutionCycles(undefined, Number(options.limit), repo),
       );
+      emitResult(json, cycles);
     });
 
   const snapshot = evolve
@@ -328,28 +373,38 @@ export function registerEvolve(program: Command): void {
     .command("verify <cycleId>")
     .description("Verify a frozen eval snapshot against its manifest")
     .option("--cycles-root <dir>", "external root for frozen eval snapshots")
-    .action(async (cycleId: string, options: { cyclesRoot?: string }) => {
-      try {
-        const cyclesRoot = options.cyclesRoot ?? defaultCyclesRoot();
-        const dir = path.join(cyclesRoot, cycleId, "eval");
-        const verification = await verifyEvalSnapshot(dir);
-        console.log(JSON.stringify({ cycleId, dir, ...verification }, null, 2));
-        if (!verification.ok) {
-          process.exitCode = 1;
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        cycleId: string,
+        options: { cyclesRoot?: string; json?: boolean },
+      ) => {
+        const json = wantsJson(options);
+        try {
+          const cyclesRoot = options.cyclesRoot ?? defaultCyclesRoot();
+          const dir = path.join(cyclesRoot, cycleId, "eval");
+          const verification = await verifyEvalSnapshot(dir);
+          const data = { cycleId, dir, ...verification };
+          emitResult(json, data);
+          if (!verification.ok) {
+            process.exitCode = 1;
+          }
+        } catch (error) {
+          reportError("snapshot verify", error, json);
         }
-      } catch (error) {
-        reportError("snapshot verify", error);
-      }
-    });
+      },
+    );
 
   evolve
     .command("compare")
     .description("Compare latest scores per variant")
-    .action(async () => {
+    .option("--json", "machine-readable output", false)
+    .action(async (options: JsonFlag) => {
+      const json = wantsJson(options);
       const variants = await withEvolutionRepo((repo) =>
         compareVariants(undefined, repo),
       );
-      console.log(JSON.stringify(variants, null, 2));
+      emitResult(json, variants);
     });
 
   evolve
@@ -357,21 +412,29 @@ export function registerEvolve(program: Command): void {
     .description("Promote a variant into a target pack")
     .requiredOption("--target <dir>", "target pack directory")
     .option("--apply", "write changes (default is dry-run)", false)
+    .option("--json", "machine-readable output", false)
     .action(
       async (
         variantDir: string,
-        options: { target: string; apply: boolean },
+        options: { target: string; apply: boolean; json?: boolean },
       ) => {
+        const json = wantsJson(options);
         try {
           const result = await withEvolutionRepo((repo) =>
             promoteVariant(variantDir, options.target, options.apply, repo),
           );
-          console.log(JSON.stringify(result, null, 2));
+          emitResult(json, result);
         } catch (error) {
-          reportError("promote", error);
+          reportError("promote", error, json);
         }
       },
     );
+}
+
+function emitResult(json: boolean, data: unknown): void {
+  emit(json, data, () => {
+    console.log(JSON.stringify(data, null, 2));
+  });
 }
 
 async function withEvolutionRepo<T>(
@@ -388,10 +451,14 @@ async function withEvolutionRepo<T>(
   }
 }
 
-function reportError(command: string, error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`✖ evolve ${command} failed: ${message}`);
-  process.exitCode = 1;
+function reportError(command: string, error: unknown, json = false): void {
+  emitError(
+    json,
+    new CliError(
+      "internal",
+      `evolve ${command} failed: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
 }
 
 function collect(value: string, previous: string[]): string[] {

@@ -1,8 +1,10 @@
 import path from "node:path";
 import { bootstrapHome } from "@kit/bootstrap";
+import { CliError } from "@kit/core";
 import { renderRunFiles } from "@kit/publish";
 import { initStore } from "@kit/store";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 import { PublishSafetyError, buildPublishedRun } from "../publish-model";
 import {
   getRemoteUrl,
@@ -26,6 +28,8 @@ interface PublishOptions {
   siteDescription?: string;
   repoUrl?: string;
   baseUrl?: string;
+  idempotencyKey?: string;
+  json?: boolean;
 }
 
 export function registerPublish(program: Command): void {
@@ -44,19 +48,30 @@ export function registerPublish(program: Command): void {
     .option("--site-description <text>", "site description")
     .option("--repo-url <url>", "source repository URL")
     .option("--base-url <url>", "public site base URL for canonical links")
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
+    .option("--json", "machine-readable output", false)
     .action(async (runId: string, options: PublishOptions) => {
+      const json = wantsJson(options);
       let store: Awaited<ReturnType<typeof initStore>>;
       try {
         store = await initStore();
       } catch (error) {
-        console.error("✖ cannot reach the kit database");
-        console.error(
-          `  ${error instanceof Error ? error.message : String(error)}`,
+        emitError(
+          json,
+          new CliError(
+            "dependency_unavailable",
+            "cannot reach the kit database",
+            {
+              hint: "start the stack with `kit up`, or point KIT_DB_URL at a running Postgres",
+              details: {
+                detail: error instanceof Error ? error.message : String(error),
+              },
+            },
+          ),
         );
-        console.error(
-          "  start the stack with `kit up`, or point KIT_DB_URL at a running Postgres",
-        );
-        process.exitCode = 1;
         return;
       }
 
@@ -88,27 +103,54 @@ export function registerPublish(program: Command): void {
           explicitDescription: options.siteDescription !== undefined,
         });
 
-        console.log(
-          `✔ run page: ${path.join(localDir, "runs", safeSegment(runId), "index.html")}`,
+        const runPage = path.join(
+          localDir,
+          "runs",
+          safeSegment(runId),
+          "index.html",
         );
-        console.log(`  site root: ${localDir}`);
-        console.log(`  ${run.artifacts.length} artifact page(s)`);
+
+        if (!json) {
+          console.log(`✔ run page: ${runPage}`);
+          console.log(`  site root: ${localDir}`);
+          console.log(`  ${run.artifacts.length} artifact page(s)`);
+        }
 
         if (!options.push) {
+          emit(json, {
+            runId,
+            runPage,
+            siteRoot: localDir,
+            artifacts: run.artifacts.length,
+            pushed: false,
+            ...(options.idempotencyKey
+              ? { idempotencyKey: options.idempotencyKey }
+              : {}),
+          });
           return;
         }
 
         if (!options.yes) {
-          console.error(
-            "✖ publishing makes artifact content public; pass --yes to confirm",
+          emitError(
+            json,
+            new CliError(
+              "needs_confirmation",
+              "publishing makes artifact content public; pass --yes to confirm",
+            ),
           );
-          process.exitCode = 1;
           return;
         }
         if (!remote) {
-          console.error(`✖ git remote not found: ${options.remote}`);
-          console.error("  add a remote first: git remote add origin <url>");
-          process.exitCode = 1;
+          emitError(
+            json,
+            new CliError(
+              "not_found",
+              `git remote not found: ${options.remote}`,
+              {
+                hint: "add a remote first: git remote add origin <url>",
+              },
+            ),
+          );
           return;
         }
 
@@ -127,29 +169,51 @@ export function registerPublish(program: Command): void {
           },
         });
 
-        if (changed) {
-          console.log(`✔ published to ${options.remote}/${options.branch}`);
-        } else {
-          console.log(
-            `✔ ${options.remote}/${options.branch} is already current`,
-          );
-        }
         const url = pagesUrl(remote);
-        if (url) {
-          console.log(`  ${url}`);
-          console.log(
-            "  enable Pages in the repository settings (deploy from the branch)",
-          );
-        }
+        const data = {
+          runId,
+          runPage,
+          siteRoot: localDir,
+          artifacts: run.artifacts.length,
+          pushed: true,
+          remote: options.remote,
+          branch: options.branch,
+          changed,
+          ...(url ? { url } : {}),
+          ...(options.idempotencyKey
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+        };
+        emit(json, data, () => {
+          if (changed) {
+            console.log(`✔ published to ${options.remote}/${options.branch}`);
+          } else {
+            console.log(
+              `✔ ${options.remote}/${options.branch} is already current`,
+            );
+          }
+          if (url) {
+            console.log(`  ${url}`);
+            console.log(
+              "  enable Pages in the repository settings (deploy from the branch)",
+            );
+          }
+        });
       } catch (error) {
         if (error instanceof PublishSafetyError) {
-          console.error(`✖ refusing to publish: ${error.message}`);
+          emitError(
+            json,
+            new CliError("permission", `refusing to publish: ${error.message}`),
+          );
         } else {
-          console.error(
-            `✖ publish failed: ${error instanceof Error ? error.message : String(error)}`,
+          emitError(
+            json,
+            new CliError(
+              "internal",
+              `publish failed: ${error instanceof Error ? error.message : String(error)}`,
+            ),
           );
         }
-        process.exitCode = 1;
       } finally {
         await store.close();
       }
