@@ -14,6 +14,7 @@ import {
   validateBudgetCascade,
 } from "@kit/core";
 import type { SqlClient, StoreDriverName } from "./db";
+import { appendOp } from "./op-log";
 
 export interface BudgetStore {
   sql: SqlClient;
@@ -563,6 +564,28 @@ export class BudgetService {
             ${"reserved"}, ${expiresAt}, ${nowIso}, ${nowIso}
           )
         `;
+        await appendOp(
+          { sql: tx },
+          {
+            workspaceId: input.workspaceId,
+            entityKind: "budget_reservation",
+            entityId: reservationId,
+            op: "budget.reserve",
+            actor: "budget-service",
+            origin: "system",
+            idempotencyKey: `budget.reserve:${reservationId}`,
+            payload: {
+              runId: input.runId,
+              stageId: input.stageId ?? null,
+              agentId: input.agentId ?? null,
+              purpose: input.purpose,
+              amountCnyMicro,
+              amountTokens,
+              budgetIds: reservedIds,
+            },
+            createdAt: nowIso,
+          },
+        );
 
         return rows.map(({ row }) => ({
           ...row,
@@ -694,17 +717,41 @@ export class BudgetService {
         SET status = ${"committed"}, updated_at = ${nowIso}
         WHERE reservation_id = ${reservationId} AND status = ${"reserved"}
       `;
+      const chargeId = newId("bch");
       await tx`
         INSERT INTO budget_charges (
           charge_id, reservation_id, workspace_id, run_id, stage_id, agent_id,
           purpose, cost_cny_micro, tokens, created_at
         ) VALUES (
-          ${newId("bch")}, ${reservationId}, ${reservation.workspace_id},
+          ${chargeId}, ${reservationId}, ${reservation.workspace_id},
           ${reservation.run_id}, ${reservation.stage_id ?? null},
           ${reservation.agent_id ?? null}, ${reservation.purpose},
           ${actualCnyMicro}, ${actualTokens}, ${nowIso}
         ) ON CONFLICT DO NOTHING
       `;
+      await appendOp(
+        { sql: tx },
+        {
+          workspaceId: reservation.workspace_id,
+          entityKind: "budget_charge",
+          entityId: chargeId,
+          op: "budget.charge",
+          actor: "budget-service",
+          origin: "system",
+          idempotencyKey: `budget.charge:${reservationId}`,
+          payload: {
+            reservationId,
+            runId: reservation.run_id,
+            stageId: reservation.stage_id ?? null,
+            agentId: reservation.agent_id ?? null,
+            purpose: reservation.purpose,
+            costCnyMicro: actualCnyMicro,
+            tokens: actualTokens,
+            budgetIds,
+          },
+          createdAt: nowIso,
+        },
+      );
       return { rows, alerts };
     });
 
@@ -751,6 +798,25 @@ export class BudgetService {
         SET status = ${"released"}, updated_at = ${nowIso}
         WHERE reservation_id = ${reservationId} AND status = ${"reserved"}
       `;
+      await appendOp(
+        { sql: tx },
+        {
+          workspaceId: reservation.workspace_id,
+          entityKind: "budget_reservation",
+          entityId: reservationId,
+          op: "budget.release",
+          actor: "budget-service",
+          origin: "system",
+          idempotencyKey: `budget.release:${reservationId}`,
+          payload: {
+            runId: reservation.run_id,
+            stageId: reservation.stage_id ?? null,
+            agentId: reservation.agent_id ?? null,
+            budgetIds,
+          },
+          createdAt: nowIso,
+        },
+      );
     });
   }
 

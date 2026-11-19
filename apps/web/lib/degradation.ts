@@ -9,7 +9,7 @@ import {
   isExecutionBlocked,
   newId,
 } from "@kit/core";
-import type { DegradationStateRecord } from "@kit/store";
+import { type DegradationStateRecord, appendOp } from "@kit/store";
 import { ensureStoreSchema, getStore } from "./store";
 
 export const DEFAULT_WORKSPACE = "default";
@@ -176,7 +176,8 @@ async function appendAudit(
   mode: DegradedMode,
   detail: Record<string, unknown>,
 ): Promise<void> {
-  await getStore().degradation.appendAudit({
+  const store = getStore();
+  await store.degradation.appendAudit({
     auditId: newId("daud"),
     occurredAt: new Date().toISOString(),
     actor: "web-console",
@@ -185,5 +186,20 @@ async function appendAudit(
     workspaceId: mode.scope === "global" ? "*" : mode.workspaceId,
     modeId: mode.modeId,
     detail,
+  });
+  await appendOp(store, {
+    workspaceId: mode.scope === "global" ? "*" : mode.workspaceId,
+    entityKind: "degradation_mode",
+    entityId: mode.modeId,
+    op: `degradation.${action}`,
+    actor: "web-console",
+    origin: "web",
+    idempotencyKey: `degradation.${action}:${mode.modeId}`,
+    payload: {
+      scope: mode.scope,
+      kind: mode.kind,
+      modeId: mode.modeId,
+      ...detail,
+    },
   });
 }

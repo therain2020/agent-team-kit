@@ -48,7 +48,7 @@ import {
 import { calculateCostCny, createModelGateway } from "@kit/model";
 import { getOpsGate } from "@kit/ops";
 import { loadPack } from "@kit/pack";
-import { initStore } from "@kit/store";
+import { type OpLogEntry, appendOp, initStore } from "@kit/store";
 import { securityScanCodeTool } from "@kit/tools";
 import type {
   ApplyTaskActivityInput,
@@ -86,6 +86,17 @@ async function safeActivity(store: Store, input: ActivityInput): Promise<void> {
   } catch (error) {
     console.error(
       `[activity] ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+// The op log is audit; a failed audit write must not fail an iteration.
+async function safeOp(store: Store, entry: OpLogEntry): Promise<void> {
+  try {
+    await appendOp(store, entry);
+  } catch (error) {
+    console.error(
+      `[op-log] ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -400,6 +411,20 @@ ${context}`;
   });
 
   await startIteration(store, input, plan, artifactId);
+  await safeOp(store, {
+    workspaceId: input.workspaceId,
+    entityKind: "iteration_run",
+    entityId: input.iterationId,
+    op: "iteration.start",
+    actor: "engine",
+    origin: "system",
+    idempotencyKey: `iteration.start:${input.iterationId}`,
+    payload: {
+      planArtifactId: artifactId,
+      tasks: plan.tasks.map((task) => task.id),
+      runMode: input.runMode,
+    },
+  });
   await safeActivity(store, {
     workspaceId: input.workspaceId,
     runId: input.iterationId,
@@ -1248,6 +1273,16 @@ export async function failIterationActivity(
   const store = await getStore();
   const message = toErrorMessage(input.error);
   await failIteration(store, input.iterationId, message);
+  await safeOp(store, {
+    workspaceId: input.workspaceId,
+    entityKind: "iteration_run",
+    entityId: input.iterationId,
+    op: "iteration.status",
+    actor: "engine",
+    origin: "system",
+    idempotencyKey: `iteration.status:${input.iterationId}:failed`,
+    payload: { status: "failed", error: message },
+  });
   await safeActivity(store, {
     workspaceId: input.workspaceId,
     runId: input.iterationId,
@@ -1291,6 +1326,16 @@ export async function cancelIteration(input: {
     phase: "cancelled",
     error: input.reason,
     finishedAt: new Date().toISOString(),
+  });
+  await safeOp(store, {
+    workspaceId: input.workspaceId,
+    entityKind: "iteration_run",
+    entityId: input.iterationId,
+    op: "iteration.status",
+    actor: "engine",
+    origin: "system",
+    idempotencyKey: `iteration.status:${input.iterationId}:cancelled`,
+    payload: { status: "cancelled", reason: input.reason },
   });
 }
 
@@ -1517,6 +1562,22 @@ export async function reportIteration(
     reportArtifactId,
     finishedAt: new Date().toISOString(),
     ...(status === "failed" ? { error: "iteration failed" } : {}),
+  });
+  await safeOp(store, {
+    workspaceId: input.workspaceId,
+    entityKind: "iteration_run",
+    entityId: input.iterationId,
+    op: "iteration.status",
+    actor: "engine",
+    origin: "system",
+    idempotencyKey: `iteration.status:${input.iterationId}:${status}`,
+    payload: {
+      status,
+      reportArtifactId,
+      tokens: totalTokens,
+      passed,
+      applied,
+    },
   });
   await appendEvent(store, {
     iterationId: input.iterationId,

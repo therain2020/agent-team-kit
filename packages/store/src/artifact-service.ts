@@ -9,6 +9,7 @@ import {
   newId,
 } from "@kit/core";
 import type { BlobClient } from "./blob";
+import { type OpLogStore, appendOp } from "./op-log";
 import type { ArtifactStore, BlobRepository } from "./repositories";
 
 export interface PublishInput {
@@ -36,6 +37,7 @@ export class ArtifactService {
     private readonly blobs: BlobRepository,
     private readonly artifacts: ArtifactStore,
     private readonly blobClient: BlobClient,
+    private readonly ops?: OpLogStore,
   ) {}
 
   async publish(input: PublishInput): Promise<PublishResult> {
@@ -100,6 +102,28 @@ export class ArtifactService {
     };
 
     await this.artifacts.createCommitted(manifest, artifact);
+
+    // Artifact ids are unique per publish, so the commit is append-only and
+    // needs no idempotency key; the op records the durable publish boundary.
+    if (this.ops) {
+      await appendOp(this.ops, {
+        workspaceId: input.workspaceId,
+        entityKind: "artifact",
+        entityId: artifact.artifactId,
+        op: "artifact.commit",
+        actor: input.producer.agentId,
+        origin: "system",
+        payload: {
+          version: artifact.version,
+          manifestId: manifest.manifestId,
+          blobId: blob.blobId,
+          runId: input.runId,
+          stageId: input.stageId,
+          runMode: input.runMode,
+          deduped,
+        },
+      });
+    }
 
     return { artifact, manifest, blob, deduped };
   }

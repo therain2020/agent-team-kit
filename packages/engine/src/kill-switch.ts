@@ -12,7 +12,7 @@ import {
   normalizeKillSwitchIdentity,
   resolveKillSwitch,
 } from "@kit/core";
-import type { initStore } from "@kit/store";
+import { type OpLogEntry, appendOp, type initStore } from "@kit/store";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -22,6 +22,18 @@ async function safeActivity(store: Store, input: ActivityInput): Promise<void> {
   } catch (error) {
     console.error(
       `[kill-switch] failed to write audit event: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+async function safeOp(store: Store, entry: OpLogEntry): Promise<void> {
+  try {
+    await appendOp(store, entry);
+  } catch (error) {
+    console.error(
+      `[kill-switch] failed to write op log: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -98,6 +110,22 @@ export async function activateKillSwitch(
 
   const result = await store.killSwitches.activate(draft);
   if (result.changed) {
+    await safeOp(store, {
+      workspaceId: identity.workspaceId ?? "default",
+      entityKind: "kill_switch",
+      entityId: result.record.switchId,
+      op: "kill_switch.activate",
+      actor: input.actor,
+      origin: "system",
+      idempotencyKey: `kill_switch.activate:${result.record.switchId}:v${result.record.version}`,
+      payload: {
+        scope: result.record.scope,
+        target: result.record.target,
+        reason: result.record.reason,
+        role: input.role,
+        version: result.record.version,
+      },
+    });
     await safeActivity(store, {
       workspaceId: identity.workspaceId ?? "default",
       kind: "kill_switch.activated",
@@ -145,6 +173,22 @@ export async function releaseKillSwitch(
     throw new Error(`kill switch not found: ${input.switchId}`);
   }
   if (result.changed) {
+    await safeOp(store, {
+      workspaceId: result.record.workspaceId ?? "default",
+      entityKind: "kill_switch",
+      entityId: result.record.switchId,
+      op: "kill_switch.release",
+      actor: input.actor,
+      origin: "system",
+      idempotencyKey: `kill_switch.release:${result.record.switchId}:v${result.record.version}`,
+      payload: {
+        scope: result.record.scope,
+        target: result.record.target,
+        reason: input.reason,
+        role: input.role,
+        version: result.record.version,
+      },
+    });
     await safeActivity(store, {
       workspaceId: result.record.workspaceId ?? "default",
       kind: "kill_switch.released",
