@@ -128,6 +128,16 @@ export function classifyChangedFile(file: string): ChangedFileVerdict {
       reason: `substrate orchestration requires approval: ${path}`,
     };
   }
+  if (LOW_RISK_PATH.test(path)) {
+    return {
+      path,
+      category: "low",
+      risk: "low",
+      forbidden: false,
+      requiresApproval: false,
+      reason: `low-risk path: ${path}`,
+    };
+  }
   if (CORE_PATH.test(path)) {
     return {
       path,
@@ -146,16 +156,6 @@ export function classifyChangedFile(file: string): ChangedFileVerdict {
       forbidden: false,
       requiresApproval: false,
       reason: `server code: ${path}`,
-    };
-  }
-  if (LOW_RISK_PATH.test(path)) {
-    return {
-      path,
-      category: "low",
-      risk: "low",
-      forbidden: false,
-      requiresApproval: false,
-      reason: `low-risk path: ${path}`,
     };
   }
   return {
