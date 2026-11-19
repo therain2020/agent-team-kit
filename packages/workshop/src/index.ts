@@ -682,9 +682,7 @@ export async function importInstalledPack(input: {
     await cp(source, staging, { recursive: true });
     const loaded = await loadPack(staging);
     if (!loaded.ok) {
-      throw new Error(
-        `imported pack is invalid: ${loaded.errors.join("; ")}`,
-      );
+      throw new Error(`imported pack is invalid: ${loaded.errors.join("; ")}`);
     }
   } catch (error) {
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);

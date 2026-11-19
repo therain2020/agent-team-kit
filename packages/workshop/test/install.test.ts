@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -243,9 +243,9 @@ describe("workshop install conflicts", () => {
     await writeFile(path.join(first.dir, "marker.txt"), "old", "utf8");
 
     await expect(install(dirs)).rejects.toThrow(/already exists/);
-    expect(
-      await readFile(path.join(first.dir, "marker.txt"), "utf8"),
-    ).toBe("old");
+    expect(await readFile(path.join(first.dir, "marker.txt"), "utf8")).toBe(
+      "old",
+    );
 
     const replaced = await install(dirs, { overwrite: true });
     expect(replaced.dir).toBe(first.dir);
@@ -286,9 +286,9 @@ describe("workshop install rollback", () => {
       /installed pack is invalid/,
     );
 
-    expect(
-      await readFile(path.join(first.dir, "marker.txt"), "utf8"),
-    ).toBe("old");
+    expect(await readFile(path.join(first.dir, "marker.txt"), "utf8")).toBe(
+      "old",
+    );
     expect(await readdir(dirs.packs)).toEqual(["demo-team"]);
   });
 });
