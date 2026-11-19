@@ -2,7 +2,12 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { type ActivityInput, appendActivity } from "@kit/activity";
-import { type CoderResult, coderSandboxRoot, runCoderTask } from "@kit/coder";
+import {
+  type CoderResult,
+  type CoderStreamEvent,
+  coderSandboxRoot,
+  runCoderTask,
+} from "@kit/coder";
 import { cnyToMicro, newId } from "@kit/core";
 import { deliverArtifact } from "@kit/delivery";
 import {
@@ -36,6 +41,17 @@ import type {
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { heartbeat } from "./heartbeat";
 import { assertKillSwitchClear } from "./kill-switch";
+import {
+  type TranscriptToolCall,
+  type TranscriptTurn,
+  computeGateScore,
+  publishStageInstructions,
+  publishStageTranscript,
+  summarizeRequest,
+  summarizeResponse,
+  summarizeToolArgs,
+  summarizeToolResult,
+} from "./stage-dossier";
 import { writeLeaseOptions } from "./write-lease";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
@@ -446,12 +462,11 @@ async function executePackStageInner(
     return { artifactId: existing.artifactId, text, reused: true };
   }
 
+  const startedAt = new Date().toISOString();
   await store.stages.updateStatus(
     input.stageId,
     "running",
-    {
-      startedAt: new Date().toISOString(),
-    },
+    { startedAt },
     writeLeaseOptions(),
   );
   await safeOp(store, {
@@ -463,6 +478,21 @@ async function executePackStageInner(
     origin: "system",
     payload: { runId: input.runId, status: "running", type: input.type },
   });
+
+  const promptHash = hash(input.instructions ?? input.stageName);
+  const run = await store.runs.get(input.runId).catch(() => null);
+  const workflowId = run?.workflowId ?? null;
+  const workflowVersion = run?.workflowVersion ?? null;
+  const instructionsArtifactId = await publishStageInstructions(store, input, {
+    promptHash,
+    modelId:
+      input.type === "coder"
+        ? (input.coder ?? "dsh")
+        : (input.modelAlias ?? "deepseek-flash"),
+    workflowId,
+    workflowVersion,
+  });
+
   await safeActivity(store, {
     workspaceId: input.workspaceId,
     runId: input.runId,
@@ -471,11 +501,15 @@ async function executePackStageInner(
     kind: "stage.started",
     status: "running",
     summary: input.stageName,
-    payload: { type: input.type },
+    payload: {
+      type: input.type,
+      ...(instructionsArtifactId ? { instructionsArtifactId } : {}),
+    },
   });
 
   let draftText = input.inputText;
   let draftArtifactId = input.inputArtifactId;
+  let gateScore: number | null = null;
 
   if (input.gate && !input.gateApproved) {
     const gate = await gateWithRevisions(
@@ -484,6 +518,8 @@ async function executePackStageInner(
       draftText,
       draftArtifactId,
     );
+
+    gateScore = gate.gateScore;
 
     if (gate.approvalRequired) {
       return {
@@ -509,6 +545,7 @@ async function executePackStageInner(
   let tokens = 0;
   let modelId = "none";
   let coderFailure: string | undefined;
+  const turns: TranscriptTurn[] = [];
 
   if (input.type === "agent") {
     const modelAlias = input.modelAlias ?? "deepseek-flash";
@@ -534,6 +571,7 @@ async function executePackStageInner(
       text = result.text;
       costAmount = result.costCny;
       tokens = result.tokens;
+      turns.push(...result.turns);
     } else {
       await assertKillSwitchClear(
         store,
@@ -572,6 +610,13 @@ async function executePackStageInner(
       text = response.text;
       costAmount = response.usage.costCny ?? 0;
       tokens = response.usage.inputTokens + response.usage.outputTokens;
+      turns.push({
+        index: 1,
+        kind: "model",
+        requestSummary: summarizeRequest(modelInput).text,
+        responseSummary: summarizeResponse(response.text).text,
+        toolCalls: [],
+      });
       await safeActivity(store, {
         workspaceId: input.workspaceId,
         runId: input.runId,
@@ -608,6 +653,7 @@ async function executePackStageInner(
       text = coder.text;
       tokens = coder.tokens;
       modelId = input.coder ?? "dsh";
+      turns.push(...coder.turns);
       coderFailure = coder.ok
         ? undefined
         : (coder.error ?? coder.summary ?? "coder failed");
@@ -618,27 +664,44 @@ async function executePackStageInner(
 
   heartbeat();
 
+  const inputRefs = (
+    input.inputArtifactIds?.length
+      ? input.inputArtifactIds
+      : draftArtifactId
+        ? [draftArtifactId]
+        : []
+  ).map((artifactId) => ({ artifactId, version: 1 }));
+
   const published = await store.artifactService.publish({
     workspaceId: input.workspaceId,
     content: new TextEncoder().encode(text),
     producer: {
       agentId: input.agentId ?? "workflow",
       agentVersion: "1.0.0",
-      promptHash: hash(input.instructions ?? input.stageName),
+      promptHash,
       modelId,
     },
-    inputs: (input.inputArtifactIds?.length
-      ? input.inputArtifactIds
-      : draftArtifactId
-        ? [draftArtifactId]
-        : []
-    ).map((artifactId) => ({ artifactId, version: 1 })),
+    inputs: inputRefs,
     runId: input.runId,
     stageId: input.stageId,
     runMode: input.runMode,
     cost: { currency: "CNY", amount: costAmount, tokens },
     sensitivity: "internal",
     retentionClass: "artifact_365d",
+  });
+
+  const transcriptArtifactId = await publishStageTranscript(store, input, {
+    instructionsArtifactId,
+    outputArtifactId: published.artifact.artifactId,
+    inputs: inputRefs,
+    gateScore,
+    turns,
+    finalResponse: text,
+    promptHash,
+    modelId,
+    workflowId,
+    workflowVersion,
+    startedAt,
   });
 
   await safeActivity(store, {
@@ -649,7 +712,13 @@ async function executePackStageInner(
     kind: "artifact.published",
     status: "completed",
     summary: published.artifact.artifactId,
-    payload: { modelId, tokens, costCny: costAmount },
+    payload: {
+      modelId,
+      tokens,
+      costCny: costAmount,
+      ...(instructionsArtifactId ? { instructionsArtifactId } : {}),
+      ...(transcriptArtifactId ? { transcriptArtifactId } : {}),
+    },
   });
 
   if (coderFailure) {
@@ -678,6 +747,10 @@ async function executePackStageInner(
       kind: "stage.finished",
       status: "failed",
       summary: coderFailure,
+      payload: {
+        ...(instructionsArtifactId ? { instructionsArtifactId } : {}),
+        ...(transcriptArtifactId ? { transcriptArtifactId } : {}),
+      },
     });
     throw new Error(`coder stage failed: ${coderFailure}`);
   }
@@ -712,7 +785,12 @@ async function executePackStageInner(
     kind: "stage.finished",
     status: "succeeded",
     summary: input.stageName,
-    payload: { artifactId: published.artifact.artifactId, tokens },
+    payload: {
+      artifactId: published.artifact.artifactId,
+      tokens,
+      ...(instructionsArtifactId ? { instructionsArtifactId } : {}),
+      ...(transcriptArtifactId ? { transcriptArtifactId } : {}),
+    },
   });
 
   return {
@@ -879,6 +957,7 @@ async function runCoderStage(
   ok: boolean;
   summary: string;
   error?: string;
+  turns: TranscriptTurn[];
 }> {
   const coder = input.coder ?? "dsh";
   const repoRoot = resolveRepoRoot();
@@ -911,6 +990,7 @@ async function runCoderStage(
   });
 
   let eventChain = Promise.resolve();
+  const coderEvents: CoderStreamEvent[] = [];
   let result: CoderResult;
   try {
     result = await withBudget(
@@ -933,6 +1013,7 @@ async function runCoderStage(
           installDeps: process.env.KIT_CODER_INSTALL !== "0",
           keepSandbox: process.env.KIT_CODER_KEEP === "1",
           onEvent: (event) => {
+            coderEvents.push(event);
             eventChain = eventChain.then(() =>
               safeActivity(store, {
                 workspaceId: input.workspaceId,
@@ -1001,7 +1082,66 @@ async function runCoderStage(
     ok: result.ok,
     summary: result.summary,
     ...(result.error ? { error: result.error } : {}),
+    turns: buildCoderTurns(coderEvents, coder, goal, result),
   };
+}
+
+function buildCoderTurns(
+  events: readonly CoderStreamEvent[],
+  coder: string,
+  goal: string,
+  result: CoderResult,
+): TranscriptTurn[] {
+  const toolCalls: TranscriptToolCall[] = [];
+  const byCallId = new Map<string, TranscriptToolCall>();
+  let finalSummary = "";
+
+  for (const event of events) {
+    if (event.kind === "tool_call" && event.tool) {
+      if (toolCalls.length >= 50) {
+        continue;
+      }
+      const rawArgs = event.payload?.input;
+      const args =
+        rawArgs && typeof rawArgs === "object"
+          ? (rawArgs as Record<string, unknown>)
+          : {};
+      const call: TranscriptToolCall = {
+        index: toolCalls.length + 1,
+        tool: event.tool,
+        argsSummary: summarizeToolArgs(args).text,
+        resultSummary: "",
+        isError: false,
+      };
+      toolCalls.push(call);
+      if (event.callId) {
+        byCallId.set(event.callId, call);
+      }
+      continue;
+    }
+    if (event.kind === "tool_result") {
+      const call = event.callId ? byCallId.get(event.callId) : undefined;
+      if (call) {
+        call.resultSummary = summarizeToolResult(event.summary ?? "").text;
+        call.isError = event.status === "failed";
+      }
+      continue;
+    }
+    if (event.kind === "final") {
+      finalSummary = event.summary ?? "";
+    }
+  }
+
+  const response = finalSummary || result.summary || result.error || "";
+  return [
+    {
+      index: 1,
+      kind: "coder",
+      requestSummary: summarizeRequest(`${coder}: ${goal}`).text,
+      responseSummary: summarizeResponse(response).text,
+      toolCalls,
+    },
+  ];
 }
 
 async function publishCoderArtifacts(
@@ -1103,7 +1243,12 @@ async function runAgentWithTools(input: {
   modelInput: string;
   tools: ReturnType<typeof toolDefinitions>;
   extraTools: Tool[];
-}): Promise<{ text: string; costCny: number; tokens: number }> {
+}): Promise<{
+  text: string;
+  costCny: number;
+  tokens: number;
+  turns: TranscriptTurn[];
+}> {
   const gateway = createModelGateway();
   const repoRoot = resolveRepoRoot();
   const sandboxRoot = path.join(
@@ -1161,6 +1306,7 @@ async function runAgentWithTools(input: {
   let toolIndex = 0;
   let lastText = "";
   const startedAt = Date.now();
+  const turns: TranscriptTurn[] = [];
 
   for (let step = 0; step < maxSteps; step += 1) {
     heartbeat();
@@ -1201,6 +1347,15 @@ async function runAgentWithTools(input: {
     if (response.text) {
       lastText = response.text;
     }
+    const turn: TranscriptTurn = {
+      index: step + 1,
+      kind: "model",
+      requestSummary: summarizeRequest(`step ${step + 1}: ${input.modelInput}`)
+        .text,
+      responseSummary: summarizeResponse(response.text).text,
+      toolCalls: [],
+    };
+    turns.push(turn);
     await safeActivity(input.store, {
       workspaceId: input.input.workspaceId,
       runId: input.input.runId,
@@ -1222,6 +1377,7 @@ async function runAgentWithTools(input: {
         text: response.text || lastText || "(no output)",
         costCny,
         tokens,
+        turns,
       };
     }
     messages.push(response.message);
@@ -1230,6 +1386,16 @@ async function runAgentWithTools(input: {
       toolCalls += 1;
       toolIndex += 1;
       if (toolCalls > maxToolCalls) {
+        const clipped = summarizeToolResult(
+          "ERROR: tool call budget exhausted",
+        );
+        turn.toolCalls.push({
+          index: toolIndex,
+          tool: call.name,
+          argsSummary: summarizeToolArgs(call.arguments).text,
+          resultSummary: clipped.text,
+          isError: true,
+        });
         messages.push({
           role: "tool",
           toolCallId: call.id,
@@ -1280,6 +1446,14 @@ async function runAgentWithTools(input: {
         isError = true;
       }
       const durationMs = Date.now() - started;
+      turn.toolCalls.push({
+        index: toolIndex,
+        tool: call.name,
+        argsSummary: summarizeToolArgs(call.arguments).text,
+        resultSummary: summarizeToolResult(content).text,
+        isError,
+        durationMs,
+      });
       await publishToolArtifact(input.store, input.input, {
         index: toolIndex,
         tool: call.name,
@@ -1352,10 +1526,20 @@ async function runAgentWithTools(input: {
   );
   costCny += final.usage.costCny ?? 0;
   tokens += final.usage.inputTokens + final.usage.outputTokens;
+  const finalText =
+    final.text || lastText || "(tool budget reached; no final summary)";
+  turns.push({
+    index: turns.length + 1,
+    kind: "model",
+    requestSummary: summarizeRequest("tool budget reached: final summary").text,
+    responseSummary: summarizeResponse(finalText).text,
+    toolCalls: [],
+  });
   return {
-    text: final.text || lastText || "(tool budget reached; no final summary)",
+    text: finalText,
     costCny,
     tokens,
+    turns,
   };
 }
 
@@ -1442,6 +1626,7 @@ async function gateWithRevisions(
   text: string;
   artifactId?: string;
   summary: string;
+  gateScore: number | null;
   approvalRequired?: boolean;
   approvalRequestId?: string;
   approvalExpiresAt?: string;
@@ -1449,6 +1634,7 @@ async function gateWithRevisions(
   let text = initialText;
   let artifactId = initialArtifactId;
   let summary = "";
+  let gateScore: number | null = null;
   const gateRefs: Array<{ artifactId: string; version: number }> = [];
 
   for (let attempt = 0; attempt <= MAX_REVISIONS; attempt += 1) {
@@ -1456,6 +1642,7 @@ async function gateWithRevisions(
     if (gate.artifactId) {
       gateRefs.push({ artifactId: gate.artifactId, version: 1 });
     }
+    gateScore = gate.score;
     await safeActivity(store, {
       workspaceId: input.workspaceId,
       runId: input.runId,
@@ -1467,10 +1654,11 @@ async function gateWithRevisions(
       payload: {
         attempt: attempt + 1,
         ...(gate.artifactId ? { artifactId: gate.artifactId } : {}),
+        ...(gate.score !== null ? { score: gate.score } : {}),
       },
     });
     if (gate.pass) {
-      return { text, artifactId, summary: gate.summary };
+      return { text, artifactId, summary: gate.summary, gateScore };
     }
 
     summary = gate.summary;
@@ -1521,7 +1709,7 @@ async function gateWithRevisions(
       summary,
       payload: { riskClass, runCostCny, requestType: "gate_failure" },
     });
-    return { text, artifactId, summary };
+    return { text, artifactId, summary, gateScore };
   }
 
   const request = await createApprovalRequest(store, {
@@ -1560,6 +1748,7 @@ async function gateWithRevisions(
     text,
     artifactId,
     summary,
+    gateScore,
     approvalRequired: true,
     approvalRequestId: request.requestId,
     approvalExpiresAt: request.expiresAt,
@@ -1961,7 +2150,12 @@ async function evaluateGate(
   draftText: string,
   draftArtifactId: string | undefined,
   attempt: number,
-): Promise<{ pass: boolean; artifactId: string; summary: string }> {
+): Promise<{
+  pass: boolean;
+  artifactId: string;
+  summary: string;
+  score: number | null;
+}> {
   if (!input.gate) {
     throw new Error("gate input missing");
   }
@@ -1978,17 +2172,23 @@ async function evaluateGate(
       const parsed = JSON.parse(content) as {
         pass?: boolean;
         rationale?: string;
+        scores?: Record<string, number>;
       };
       return {
         pass: parsed.pass === true,
         artifactId: existing.artifactId,
         summary: parsed.rationale ?? "",
+        score: computeGateScore(
+          parsed.scores ?? {},
+          gateDimensionWeights(input.gate.dimensions),
+        ),
       };
     } catch {
       return {
         pass: false,
         artifactId: existing.artifactId,
         summary: "invalid gate artifact",
+        score: null,
       };
     }
   }
@@ -2110,7 +2310,19 @@ async function evaluateGate(
     pass,
     artifactId: published.artifact.artifactId,
     summary: rationale,
+    score: computeGateScore(
+      scores,
+      gateDimensionWeights(input.gate.dimensions),
+    ),
   };
+}
+
+function gateDimensionWeights(
+  dimensions: NonNullable<PackStageExecutionInput["gate"]>["dimensions"],
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(dimensions).map(([name, config]) => [name, config.weight]),
+  );
 }
 
 async function reviseDraft(
