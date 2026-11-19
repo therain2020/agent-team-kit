@@ -1390,6 +1390,7 @@
     "teamSize": "{count} people",
     "working": "{count} working",
     "blocked": "{count} blocked",
+    "waiting": "{count} waiting",
     "room": "Office",
     "floor": "floor 01 · agent-team-kit",
     "local": "local",
@@ -1407,13 +1408,19 @@
     "statusIdle": "idle",
     "statusWorking": "working",
     "statusBlocked": "blocked",
+    "statusWaiting": "waiting approval",
     "statusError": "error",
     "activityTeamIdle": "Team is idle",
     "activityWaitingDecision": "Waiting for a human decision",
+    "activityWaitingApproval": "Waiting for approval",
+    "activityUsingTool": "Using {tool}",
+    "activityWorkingStage": "Working on {stage}",
     "activitySupervising": "Supervising {workflow}",
     "activityLastActive": "Last active in {workflow}",
     "activityAssigned": "Assigned to {workflow}",
     "activityWaitingMission": "Waiting for a mission",
+    "currentStage": "Current stage",
+    "starting": "starting",
     "tools": "Tools",
     "skills": "Skills",
     "askManager": "Ask Manager",
@@ -1631,5 +1638,12 @@
     "saved": "Plan saved for {pack}",
     "daemonSyncFailed": "The file was saved, but the daemon switch did not update. Use Start/Pause on the pack card.",
     "failed": "Could not generate or save the plan"
+  },
+  "world": {
+    "live": "live",
+    "reconnecting": "reconnecting",
+    "offline": "offline",
+    "lastUpdated": "last updated {when}",
+    "stateFor": "for {duration}"
   }
 }

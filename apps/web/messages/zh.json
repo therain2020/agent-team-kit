@@ -1390,6 +1390,7 @@
     "teamSize": "{count} 人",
     "working": "{count} 人在工作",
     "blocked": "{count} 个阻塞",
+    "waiting": "{count} 个待审批",
     "room": "办公室",
     "floor": "01 层 · agent-team-kit",
     "local": "本地",
@@ -1407,13 +1408,19 @@
     "statusIdle": "空闲",
     "statusWorking": "工作中",
     "statusBlocked": "阻塞",
+    "statusWaiting": "待审批",
     "statusError": "出错",
     "activityTeamIdle": "团队空闲",
     "activityWaitingDecision": "等待人工决策",
+    "activityWaitingApproval": "等待审批",
+    "activityUsingTool": "正在使用 {tool}",
+    "activityWorkingStage": "正在处理 {stage}",
     "activitySupervising": "正在监督 {workflow}",
     "activityLastActive": "最近活跃于 {workflow}",
     "activityAssigned": "已分配到 {workflow}",
     "activityWaitingMission": "等待任务",
+    "currentStage": "当前阶段",
+    "starting": "启动中",
     "tools": "工具",
     "skills": "技能",
     "askManager": "问经理",
@@ -1631,5 +1638,12 @@
     "saved": "已保存 {pack} 的运行计划",
     "daemonSyncFailed": "文件已保存，但守护开关未同步。请用卡片上的启动/暂停按钮重试。",
     "failed": "生成或保存计划失败"
+  },
+  "world": {
+    "live": "实时",
+    "reconnecting": "重连中",
+    "offline": "离线",
+    "lastUpdated": "最后更新 {when}",
+    "stateFor": "已持续 {duration}"
   }
 }
