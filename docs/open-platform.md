@@ -200,6 +200,41 @@ The `/evolution` page shows a plain-language explainer, an evolution-cycle
 timeline, scores, costs, and the existing variant/canary controls. Stub mode is
 for demos and deterministic tests; it cannot auto-promote.
 
+### Evolution budget
+
+Evolution is an independent budget subject (`scope: evolution`), never a draw
+on the production workspace/month/day budgets (D-38, 70 §3.8). Each UTC month
+gets its own hard cap sized from the production month budget:
+
+```
+evolution cap = production month budget × KIT_EVOLUTION_BUDGET_SHARE
+```
+
+`KIT_EVOLUTION_BUDGET_SHARE` defaults to `0.1` (10%) and is bounded to
+`[0, 1]`. With the D-38 defaults (¥200/month) a month may spend at most ¥20 on
+evolution. A share change applies to the next month; raise an active cap
+explicitly with `increaseLimit`, which is audited like every other change.
+
+Every cycle:
+
+1. admits before any model call — if the remaining evolution budget is below
+   the conservative cycle estimate, the cycle is recorded as
+   `decision: skipped` with `budgetStatus: budget_exceeded` and no calls are
+   made;
+2. reserves before, and commits after, each phase — `proposal`, `score`
+   (baseline + candidate) and `canary` are each charged exactly once;
+3. records `budgetRefs` (phase, reservation id, charge id, estimated and
+   committed micro-CNY/tokens) and `budgetReconciliation`, which compares the
+   ledger's charges for the cycle with the cycle record (`deltaCnyMicro` must
+   be zero).
+
+A denial mid-cycle stops the remaining phases and keeps what was already
+charged, so the cycle record always matches the ledger. Denied reservations
+are written to the op log as `budget.reserve.denied`. The per-cycle
+`budgetCny` in `autopilot.yaml` remains a second, stricter cap: an estimate or
+phase that would exceed it also stops the cycle. Autopilot logs the budget
+outcome for every evolution cycle.
+
 ## 7. Task-centric team and controlled tools
 
 - Every agent has `role: builder | seller | manager | specialist`.

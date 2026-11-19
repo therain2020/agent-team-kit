@@ -1,3 +1,4 @@
+import type { EvolutionBudgetLedger } from "@kit/core";
 import type { CanaryState, EvolutionDecisionRecord } from "./canary";
 import type { EvolutionCycleRecord } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
@@ -22,6 +23,12 @@ export interface StoredVariant {
 export interface EvolutionRepository {
   readonly kind: "postgres" | "sqlite" | "file";
   readonly workspaceId: string;
+  /**
+   * Shared budget ledger. Store-backed repositories expose the budget service
+   * so every cycle reserves/commits its model calls; file repositories (tests,
+   * legacy local flows) leave it undefined and cycles stay `unledgered`.
+   */
+  readonly budget?: EvolutionBudgetLedger;
   ensureReady(): Promise<void>;
   saveVariant(input: {
     meta: VariantMeta;

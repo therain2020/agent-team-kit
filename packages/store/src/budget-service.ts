@@ -3,11 +3,22 @@ import {
   type BudgetLimit,
   type BudgetPolicy,
   type BudgetScope,
+  type EvolutionBudgetAdmitInput,
+  type EvolutionBudgetAdmitResult,
+  type EvolutionBudgetCommitResult,
+  type EvolutionBudgetLedger,
+  type EvolutionBudgetReconcileResult,
+  type EvolutionBudgetReserveInput,
+  type EvolutionBudgetReserveResult,
   type RunBudgetSpec,
   cnyToMicro,
+  evolutionBudgetLimit,
+  evolutionBudgetPurpose,
   hasBudgetLimit,
   is80Percent,
+  isEvolutionBudgetPurpose,
   loadBudgetPolicy,
+  loadEvolutionBudgetShare,
   newId,
   utcDayKey,
   utcMonthKey,
@@ -125,7 +136,17 @@ export interface CommitResult {
   budgets: BudgetRecord[];
   alerts: BudgetRecord[];
   overshoot: boolean;
+  /** Charge row created by this commit; absent when nothing was billed. */
+  chargeId?: string;
   message?: string;
+}
+
+export interface EnsureEvolutionBudgetResult {
+  ok: boolean;
+  errors: string[];
+  budget: BudgetRecord | null;
+  share: number;
+  monthKey: string;
 }
 
 export interface ListBudgetsQuery {
@@ -222,7 +243,7 @@ export function budgetIdFor(
   return `bdg_${digest}`;
 }
 
-export class BudgetService {
+export class BudgetService implements EvolutionBudgetLedger {
   private lastReapAt = 0;
 
   constructor(private readonly store: BudgetStore) {}
@@ -417,7 +438,6 @@ export class BudgetService {
     const now = input.now ?? new Date();
     await this.releaseExpired(now);
 
-    const nowIso = now.toISOString();
     const dayKey = utcDayKey(now);
     const monthKey = utcMonthKey(now);
     const policy = loadBudgetPolicy();
@@ -481,16 +501,50 @@ export class BudgetService {
       });
     }
 
+    return await this.reserveAgainst({
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      purpose: input.purpose,
+      amountCnyMicro,
+      amountTokens,
+      targets,
+      now,
+      ...(input.stageId === undefined ? {} : { stageId: input.stageId }),
+      ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+      ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
+    });
+  }
+
+  /**
+   * Atomic reservation shared by runs and the evolution subject: every target
+   * is checked and incremented inside one transaction, and the reservation row
+   * plus its op-log entry are written there too.
+   */
+  private async reserveAgainst(input: {
+    workspaceId: string;
+    runId: string;
+    stageId?: string;
+    agentId?: string;
+    purpose: string;
+    amountCnyMicro: number;
+    amountTokens: number;
+    targets: BudgetTarget[];
+    ttlMs?: number;
+    now: Date;
+  }): Promise<ReserveResult> {
+    const nowIso = input.now.toISOString();
+    const amountCnyMicro = input.amountCnyMicro;
+    const amountTokens = input.amountTokens;
     const reservationId = newId("brs");
     const expiresAt = new Date(
-      now.getTime() + (input.ttlMs ?? RESERVATION_TTL_MS),
+      input.now.getTime() + (input.ttlMs ?? RESERVATION_TTL_MS),
     ).toISOString();
     let reservedIds: string[] = [];
 
     try {
       const budgets = await this.store.sql.begin(async (tx) => {
         const rows: Array<{ target: BudgetTarget; row: BudgetRecord }> = [];
-        for (const target of targets) {
+        for (const target of input.targets) {
           const budgetId = budgetIdFor(
             input.workspaceId,
             target.scope,
@@ -515,7 +569,7 @@ export class BudgetService {
           if (!row) {
             throw new BudgetDeniedError(
               null,
-              `missing ${target.scope} budget (${target.targetKey}); ensure the run was admitted`,
+              `missing ${target.scope} budget (${target.targetKey}); ensure the subject was admitted`,
             );
           }
           if (
@@ -597,6 +651,33 @@ export class BudgetService {
       return { ok: true, reservationId, budgets };
     } catch (error) {
       if (error instanceof BudgetDeniedError) {
+        if (isEvolutionBudgetPurpose(input.purpose)) {
+          // A denied evolution reservation must leave an audit trail: the
+          // cycle itself records `budget_exceeded`, and the op log keeps the
+          // blocking budget so operators can reconcile it later.
+          await appendOp(
+            { sql: this.store.sql },
+            {
+              workspaceId: input.workspaceId,
+              entityKind: "budget_reservation",
+              entityId: reservationId,
+              op: "budget.reserve.denied",
+              actor: "budget-service",
+              origin: "system",
+              idempotencyKey: `budget.reserve.denied:${reservationId}`,
+              payload: {
+                runId: input.runId,
+                purpose: input.purpose,
+                amountCnyMicro,
+                amountTokens,
+                blockingBudgetId: error.blocking?.budgetId ?? null,
+                blockingScope: error.blocking?.scope ?? null,
+                message: error.message,
+              },
+              createdAt: nowIso,
+            },
+          ).catch(() => undefined);
+        }
         return {
           ok: false,
           blocking: error.blocking,
@@ -650,7 +731,7 @@ export class BudgetService {
     const result = await this.store.sql.begin(async (tx) => {
       const current = await this.selectReservationById(tx, reservationId, true);
       if (!current || current.status !== "reserved") {
-        return { rows: [], alerts: [] };
+        return { rows: [], alerts: [], chargeId: null as string | null };
       }
       const rows: BudgetRecord[] = [];
       const alerts: BudgetRecord[] = [];
@@ -752,7 +833,7 @@ export class BudgetService {
           createdAt: nowIso,
         },
       );
-      return { rows, alerts };
+      return { rows, alerts, chargeId };
     });
 
     return {
@@ -760,6 +841,7 @@ export class BudgetService {
       budgets: result.rows,
       alerts: result.alerts,
       overshoot,
+      ...(result.chargeId ? { chargeId: result.chargeId } : {}),
     };
   }
 
@@ -835,6 +917,238 @@ export class BudgetService {
       await this.release(row.reservation_id, now);
     }
     return rows.length;
+  }
+
+  /**
+   * D-38 / 70 §3.8: evolution is an independent subject capped at a share of
+   * the production month budget. The row is created once per UTC month; a
+   * later share change applies to the next month instead of silently raising
+   * an active hard cap mid-period (operators raise it explicitly, audited).
+   */
+  async ensureEvolutionBudget(input: {
+    workspaceId: string;
+    share?: number;
+    policy?: BudgetPolicy;
+    now?: Date;
+  }): Promise<EnsureEvolutionBudgetResult> {
+    const now = input.now ?? new Date();
+    const nowIso = now.toISOString();
+    const monthKey = utcMonthKey(now);
+    const share = input.share ?? loadEvolutionBudgetShare();
+    const policy = input.policy ?? loadBudgetPolicy();
+    const limit = evolutionBudgetLimit(policy.month, share);
+    const errors: string[] = [];
+    if (!hasBudgetLimit(limit)) {
+      errors.push(
+        `evolution budget share ${share} of the production month budget leaves no hard limit`,
+      );
+    }
+    if (errors.length > 0) {
+      return { ok: false, errors, budget: null, share, monthKey };
+    }
+    const target: BudgetTarget = {
+      scope: "evolution",
+      targetKey: monthKey,
+      period: monthKey,
+      dayKey: null,
+      monthKey,
+      limit,
+      requiredScope: true,
+    };
+    await this.insertBudget(this.store.sql, {
+      workspaceId: input.workspaceId,
+      target,
+      nowIso,
+    });
+    const budget = await this.selectBudgetById(
+      this.store.sql,
+      budgetIdFor(input.workspaceId, "evolution", monthKey),
+    );
+    return budget
+      ? { ok: true, errors: [], budget, share, monthKey }
+      : {
+          ok: false,
+          errors: ["evolution budget missing after insert"],
+          budget: null,
+          share,
+          monthKey,
+        };
+  }
+
+  async admitEvolution(
+    input: EvolutionBudgetAdmitInput,
+  ): Promise<EvolutionBudgetAdmitResult> {
+    const now = input.now ?? new Date();
+    const ensured = await this.ensureEvolutionBudget({
+      workspaceId: input.workspaceId,
+      now,
+      ...(input.share === undefined ? {} : { share: input.share }),
+      ...(input.policy === undefined ? {} : { policy: input.policy }),
+    });
+    const estimateCnyMicro = Math.max(0, Math.round(input.estimateCnyMicro));
+    const estimateTokens = Math.max(0, Math.round(input.estimateTokens ?? 0));
+    const budget = ensured.budget;
+    if (!ensured.ok || !budget) {
+      return {
+        ok: false,
+        reason:
+          ensured.errors.join("; ") || "evolution budget is not available",
+        budgetId: null,
+        limitCnyMicro: null,
+        limitTokens: null,
+        remainingCnyMicro: null,
+        remainingTokens: null,
+        share: ensured.share,
+      };
+    }
+    const remainingCnyMicro =
+      budget.limitCnyMicro === null
+        ? null
+        : budget.limitCnyMicro - budget.spentCnyMicro - budget.reservedCnyMicro;
+    const remainingTokens =
+      budget.limitTokens === null
+        ? null
+        : budget.limitTokens - budget.spentTokens - budget.reservedTokens;
+    const base = {
+      budgetId: budget.budgetId,
+      limitCnyMicro: budget.limitCnyMicro,
+      limitTokens: budget.limitTokens,
+      remainingCnyMicro,
+      remainingTokens,
+      share: ensured.share,
+    };
+    if (remainingCnyMicro === null && remainingTokens === null) {
+      return {
+        ...base,
+        ok: false,
+        reason: "evolution budget has no hard limit",
+      };
+    }
+    if (remainingCnyMicro !== null && estimateCnyMicro > remainingCnyMicro) {
+      return {
+        ...base,
+        ok: false,
+        reason: `evolution budget remaining ${microCny(remainingCnyMicro)} CNY is below the cycle estimate ${microCny(estimateCnyMicro)} CNY`,
+      };
+    }
+    if (remainingTokens !== null && estimateTokens > remainingTokens) {
+      return {
+        ...base,
+        ok: false,
+        reason: `evolution token budget remaining ${remainingTokens} is below the cycle estimate ${estimateTokens}`,
+      };
+    }
+    return { ...base, ok: true, reason: null };
+  }
+
+  async reserveEvolution(
+    input: EvolutionBudgetReserveInput,
+  ): Promise<EvolutionBudgetReserveResult> {
+    const now = input.now ?? new Date();
+    const ensured = await this.ensureEvolutionBudget({
+      workspaceId: input.workspaceId,
+      now,
+      ...(input.share === undefined ? {} : { share: input.share }),
+      ...(input.policy === undefined ? {} : { policy: input.policy }),
+    });
+    if (!ensured.ok || !ensured.budget) {
+      return {
+        ok: false,
+        reservationId: null,
+        budgetId: ensured.budget?.budgetId ?? null,
+        message:
+          ensured.errors.join("; ") || "evolution budget is not available",
+      };
+    }
+    await this.releaseExpired(now);
+    const policy = input.policy ?? loadBudgetPolicy();
+    const reserved = await this.reserveAgainst({
+      workspaceId: input.workspaceId,
+      // The cycle id doubles as the run id so charges stay attributable and
+      // can be reconciled per cycle without a synthetic run.
+      runId: input.cycleId,
+      purpose: evolutionBudgetPurpose(input.phase),
+      amountCnyMicro: Math.max(0, Math.round(input.amountCnyMicro)),
+      amountTokens: Math.max(0, Math.round(input.amountTokens)),
+      targets: [
+        {
+          scope: "evolution",
+          targetKey: ensured.monthKey,
+          period: ensured.monthKey,
+          dayKey: null,
+          monthKey: ensured.monthKey,
+          limit: evolutionBudgetLimit(policy.month, ensured.share),
+          requiredScope: true,
+        },
+      ],
+      now,
+    });
+    if (!reserved.ok) {
+      return {
+        ok: false,
+        reservationId: null,
+        budgetId: ensured.budget.budgetId,
+        message: reserved.message,
+      };
+    }
+    return {
+      ok: true,
+      reservationId: reserved.reservationId || null,
+      budgetId: ensured.budget.budgetId,
+      message: null,
+    };
+  }
+
+  async commitEvolution(
+    reservationId: string,
+    actual: { cnyMicro: number; tokens: number },
+    now: Date = new Date(),
+  ): Promise<EvolutionBudgetCommitResult> {
+    const result = await this.commit(reservationId, actual, now);
+    return {
+      ok: result.ok,
+      chargeId: result.chargeId ?? null,
+      overshoot: result.overshoot,
+      ...(result.message === undefined ? {} : { message: result.message }),
+    };
+  }
+
+  async releaseEvolution(
+    reservationId: string,
+    now: Date = new Date(),
+  ): Promise<void> {
+    await this.release(reservationId, now);
+  }
+
+  async reconcileEvolution(input: {
+    workspaceId: string;
+    cycleId: string;
+  }): Promise<EvolutionBudgetReconcileResult> {
+    const rows = await this.store.sql<
+      Array<{
+        charge_id: string;
+        reservation_id: string;
+        cost_cny_micro: number | string;
+        tokens: number | string;
+      }>
+    >`
+      SELECT charge_id, reservation_id, cost_cny_micro, tokens
+      FROM budget_charges
+      WHERE workspace_id = ${input.workspaceId} AND run_id = ${input.cycleId}
+      ORDER BY created_at ASC
+    `;
+    let chargedCnyMicro = 0;
+    let chargedTokens = 0;
+    for (const row of rows) {
+      chargedCnyMicro += Number(row.cost_cny_micro);
+      chargedTokens += Number(row.tokens);
+    }
+    return {
+      chargedCnyMicro,
+      chargedTokens,
+      chargeIds: rows.map((row) => row.charge_id),
+      reservationIds: rows.map((row) => row.reservation_id),
+    };
   }
 
   async listBudgets(query: ListBudgetsQuery): Promise<BudgetRecord[]> {
