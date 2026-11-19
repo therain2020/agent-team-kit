@@ -12,8 +12,13 @@ export {
   PixelMotionProvider,
   PixelMotionToggle,
   usePixelMotion,
-} from "./motion-preference";
+} from "./use-pixel-motion";
 export { PixelAgent } from "./pixel-agent";
+export { PixelDesk, PixelProgress } from "./pixel-desk";
+export { PixelPlant } from "./pixel-plant";
+export { PixelRoom } from "./pixel-room";
+export { PixelWorkpiece, workpieceTone } from "./pixel-workpiece";
+export type { WorkpieceTone } from "./pixel-workpiece";
 export { PixelCrate } from "./pixel-crate";
 export type { CrateTone } from "./pixel-crate";
 export {

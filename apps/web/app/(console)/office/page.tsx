@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/kit/page-header";
 import { OfficeScene } from "@/components/office/office-scene";
 import { loadOfficeChatHistory, loadOfficeData } from "@/lib/office";
+import { parseOfficeView } from "@/lib/office-view";
 import { getTranslations } from "next-intl/server";
 
 export const dynamic = "force-dynamic";
@@ -8,9 +9,13 @@ export const dynamic = "force-dynamic";
 export default async function OfficePage({
   searchParams,
 }: {
-  searchParams: Promise<{ pack?: string; panel?: string }>;
+  searchParams: Promise<{
+    pack?: string;
+    panel?: string;
+    view?: string | string[];
+  }>;
 }) {
-  const { pack, panel } = await searchParams;
+  const { pack, panel, view } = await searchParams;
   const t = await getTranslations("office");
   const data = await loadOfficeData(pack);
   const initialMessages = data.active
@@ -28,6 +33,7 @@ export default async function OfficePage({
         initialMessages={initialMessages}
         stubMode={stubMode}
         initialPanel={panel === "manager" ? "chat" : "agent"}
+        initialView={parseOfficeView(view)}
       />
     </div>
   );
