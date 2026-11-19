@@ -45,11 +45,15 @@ a signed event gateway, a supervised `kit up` runtime, and a task-centric
 iteration loop (`kit iterate`) that plans, delegates, verifies, classifies risk
 and applies low-risk changes.
 
-**1.0 is not claimed yet.** 1.0 means the system runs without the operator and
-optimizes itself: a goal and budget go in, tasks are planned and executed,
-low-risk changes land automatically, and the operator only handles high-risk
-approval and release confirmation. The acceptance gate is public in
-[ROADMAP.md](./ROADMAP.md).
+**1.0 is not claimed yet.** 1.0 means information-driven self-manufacture:
+sources are collected continuously and drive predefined workflows, reactions
+are judged effective, and the system manufactures what it needs — sources,
+agents, managers, workflows, components and code (assets first, code through
+sandboxed evidence and review). The operator only observes, edits and
+interrupts, with recovery and audit in place. The earlier unattended operation
+and self-optimization criteria remain as supporting conditions. The primary
+gate is `98-information-driven-self-manufacture.md` §5.2 (plan, kept outside
+this repo); see [ROADMAP.md](./ROADMAP.md) for the public gate.
 
 ## Requirements
 

@@ -23,7 +23,10 @@ bun run kit up --web        # 基础设施 + 运行时 + worker + autopilot + �
 ```
 
 打开 `http://localhost:3000/welcome` 填入模型 API key，或运行
-`bun run kit bootstrap`。当前是 **0.9.0 自治预览**，1.0 尚未声称；验收门槛见
+`bun run kit bootstrap`。当前是 **0.9.0 自治预览**，1.0 尚未声称。1.0 =
+信息驱动 + 自制造：信源持续驱动预定工作流，反应有效，资产与代码按风险自造，
+人只观察/编辑/中断，恢复与审计在位；原“无人值守 + 自优化”为支撑条件（主门禁见
+`98-information-driven-self-manufacture.md` §5.2）。验收门槛见
 [ROADMAP.md](./ROADMAP.md)。
 
 ## 核心概念

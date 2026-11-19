@@ -32,16 +32,20 @@ improve. Teams are files; runs are auditable; external effects require approval.
 - [ ] Adoption playbook: pilot workflow, approval mapping, business KPIs
 - [ ] A 30-day unattended reference case with public evidence
 
-## 1.0 gate — unattended autonomy
+## 1.0 gate — information-driven self-manufacture
 
-1.0 means: a goal and budget go in; tasks are planned and executed; low-risk
-changes land automatically after independent checks; the operator only handles
-high-risk approval and release confirmation; self-improvement is proposed,
-evaluated and reversible.
+1.0 means: sources drive work continuously — information is collected, scored
+and turned into jobs without manual task creation; assets (agents, workflows,
+pipelines, sources) and low-risk code are manufactured, validated and adopted;
+the operator only handles high-risk approval, release and budget confirmation,
+and every action is auditable. Unattended self-optimization (plan, execute,
+apply low-risk changes, reversible self-improvement) remains a supporting
+condition, not the definition.
 
-The system must run without an operator for the acceptance window, survive a bad
-self-change through the external recovery kernel, and leave an auditable trail.
-Until that is demonstrated, the version stays below 1.0.
+The system must operate continuously from its sources for the acceptance
+window, survive a bad self-change through the external recovery kernel, and
+leave an auditable trail. Until that is demonstrated, the version stays below
+1.0.
 
 ## Community milestones
 

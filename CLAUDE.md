@@ -11,8 +11,8 @@
 
 ## 核心上下文
 
-- 设计基线：`D:\GitHub\plans\agent-pipeline`（`README.md` 为唯一入口；`85-autonomy-1.0.md` 为 1.0 门禁；`90-decisions.md` 为 ADR 日志；`REVIEW-2026-11-14.md` 为用户裁定）。
-- 当前状态：0.9.0 自治预览；1.0 = 无人值守 + 自优化，尚未声称达成。
+- 设计基线：`D:\GitHub\plans\agent-pipeline`（`README.md` 为唯一入口；`98-information-driven-self-manufacture.md` §5.2 为 1.0 主门禁；`85-autonomy-1.0.md` 为 1.0 支撑门禁；`90-decisions.md` 为 ADR 日志；`REVIEW-2026-11-14.md` 为用户裁定）。
+- 当前状态：0.9.0 自治预览；1.0 = 信息驱动 + 自制造闭环，尚未声称达成。
 - 计划目录默认不纳入 git（D-15 拟定）；本仓库是实现代码。
 - 修改计划文档或让实现偏离计划前，先与用户讨论（全局 Plan-First 规则）。
 
