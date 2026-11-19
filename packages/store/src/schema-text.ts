@@ -375,6 +375,28 @@ CREATE TABLE IF NOT EXISTS activity_events (
   created_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS op_log (
+  seq BIGSERIAL PRIMARY KEY,
+  op_id TEXT NOT NULL UNIQUE,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  entity_kind TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  op TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  idempotency_key TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_op_log_idempotency
+  ON op_log(workspace_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_op_log_workspace_seq
+  ON op_log(workspace_id, seq);
+CREATE INDEX IF NOT EXISTS idx_op_log_entity
+  ON op_log(entity_kind, entity_id, seq);
+
 CREATE TABLE IF NOT EXISTS degradation_state (
   scope TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
@@ -928,6 +950,30 @@ CREATE TABLE IF NOT EXISTS activity_events (
   payload TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS op_log (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  op_id TEXT NOT NULL UNIQUE,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  entity_kind TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  op TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  idempotency_key TEXT,
+  payload TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+-- SQLite has supported partial indexes since 3.8.0, so the same
+-- "unique only when a key is present" rule as Postgres works unchanged.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_op_log_idempotency
+  ON op_log(workspace_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_op_log_workspace_seq
+  ON op_log(workspace_id, seq);
+CREATE INDEX IF NOT EXISTS idx_op_log_entity
+  ON op_log(entity_kind, entity_id, seq);
 
 CREATE TABLE IF NOT EXISTS degradation_state (
   scope TEXT NOT NULL,

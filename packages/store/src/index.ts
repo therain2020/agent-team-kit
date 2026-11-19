@@ -7,6 +7,7 @@ export * from "./cost-service";
 export * from "./db";
 export * from "./locks";
 export * from "./migrate";
+export * from "./op-log";
 export * from "./repositories";
 export * from "./s3";
 export * from "./schema";
