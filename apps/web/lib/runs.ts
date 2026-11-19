@@ -11,6 +11,8 @@ export type ArtifactKind =
   | "approval"
   | "manager"
   | "tool"
+  | "instructions"
+  | "transcript"
   | "artifact";
 
 export interface ArtifactView {
@@ -53,6 +55,17 @@ export interface ApprovalView {
   gateRefs: Array<{ artifactId: string; version: number }>;
 }
 
+/**
+ * Per-stage glass-box evidence (30 §3.3). Artifact ids are null and counts are
+ * zero when a stage ran before dossiers existed or the best-effort write failed.
+ */
+export interface StageDossier {
+  instructionsArtifactId: string | null;
+  transcriptArtifactId: string | null;
+  gateScore: number | null;
+  toolCalls: number;
+}
+
 export interface RunDetail {
   run: Run;
   stages: Stage[];
@@ -63,6 +76,8 @@ export interface RunDetail {
   costCny: number;
   tokens: number;
   report: ArtifactView | null;
+  /** Keyed by `Stage.stageId`; every stage has an entry. */
+  stageDossiers: Record<string, StageDossier>;
 }
 
 export interface RunSummary {
@@ -77,6 +92,12 @@ export function classifyArtifact(manifest: Manifest | null): ArtifactKind {
     return "artifact";
   }
   const stageId = manifest.stageId;
+  if (stageId.endsWith(":instructions") && !stageId.includes(":coder:")) {
+    return "instructions";
+  }
+  if (stageId.endsWith(":transcript") && !stageId.includes(":coder:")) {
+    return "transcript";
+  }
   if (stageId.includes(":approval-request")) {
     return "approval";
   }
@@ -247,9 +268,16 @@ export const loadRunDetail = cache(async function loadRunDetail(
           (view.manifest?.stageId.endsWith(":deliver") ?? false),
       ) ?? null;
 
+  const orderedStages = orderStages(stages);
+  const stageDossiers = await buildStageDossiers(
+    client,
+    orderedStages,
+    ordered,
+  );
+
   return {
     run,
-    stages: orderStages(stages),
+    stages: orderedStages,
     artifacts: ordered,
     gates,
     approval,
@@ -259,8 +287,62 @@ export const loadRunDetail = cache(async function loadRunDetail(
     costCny,
     tokens,
     report,
+    stageDossiers,
   };
 });
+
+async function buildStageDossiers(
+  store: Store,
+  stages: Stage[],
+  artifacts: ArtifactView[],
+): Promise<Record<string, StageDossier>> {
+  const dossiers = new Map<string, StageDossier>();
+  const ensure = (stageId: string): StageDossier => {
+    let dossier = dossiers.get(stageId);
+    if (!dossier) {
+      dossier = {
+        instructionsArtifactId: null,
+        transcriptArtifactId: null,
+        gateScore: null,
+        toolCalls: 0,
+      };
+      dossiers.set(stageId, dossier);
+    }
+    return dossier;
+  };
+
+  for (const stage of stages) {
+    ensure(stage.stageId);
+  }
+
+  for (const view of artifacts) {
+    const manifestStageId = view.manifest?.stageId;
+    if (!manifestStageId || manifestStageId.includes(":coder:")) {
+      continue;
+    }
+    if (manifestStageId.endsWith(":instructions")) {
+      const stageId = manifestStageId.slice(0, -":instructions".length);
+      ensure(stageId).instructionsArtifactId = view.artifact.artifactId;
+      continue;
+    }
+    if (manifestStageId.endsWith(":transcript")) {
+      const stageId = manifestStageId.slice(0, -":transcript".length);
+      const dossier = ensure(stageId);
+      dossier.transcriptArtifactId = view.artifact.artifactId;
+      const parsed = await readJson(store, view);
+      if (parsed) {
+        if (typeof parsed.gateScore === "number") {
+          dossier.gateScore = parsed.gateScore;
+        }
+        if (typeof parsed.toolCalls === "number") {
+          dossier.toolCalls = parsed.toolCalls;
+        }
+      }
+    }
+  }
+
+  return Object.fromEntries(dossiers);
+}
 
 export const loadRunSummaries = cache(async function loadRunSummaries(
   limit = 20,

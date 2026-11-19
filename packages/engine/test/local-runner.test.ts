@@ -84,7 +84,23 @@ describe("local pack runner", () => {
         "succeeded",
       ]);
       const artifacts = await store.artifactStore.listByRun(runId);
-      expect(artifacts).toHaveLength(2);
+      // Every stage writes its output plus the 30 §3.3 dossier
+      // (instructions + transcript): 2 stages × 3 artifacts.
+      expect(artifacts).toHaveLength(6);
+      const manifests = await Promise.all(
+        artifacts.map((artifact) => store.manifests.get(artifact.manifestId)),
+      );
+      const stageIds = manifests
+        .map((manifest) => manifest?.stageId ?? "")
+        .sort();
+      expect(stageIds).toEqual([
+        `${runId}:draft`,
+        `${runId}:draft:instructions`,
+        `${runId}:draft:transcript`,
+        `${runId}:polish`,
+        `${runId}:polish:instructions`,
+        `${runId}:polish:transcript`,
+      ]);
     } finally {
       await store.close();
     }

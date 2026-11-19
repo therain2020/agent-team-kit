@@ -426,7 +426,11 @@ function buildNotificationText(alert: AlertRecord): string {
     .join("\n");
 }
 
-function redactText(value: string): string {
+/**
+ * Redacts common credential shapes from free text before it is persisted.
+ * Shared by alert bodies and the stage dossier (30 §3.4).
+ */
+export function redactText(value: string): string {
   return value
     .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]")
     .replace(

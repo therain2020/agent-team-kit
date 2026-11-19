@@ -24,7 +24,7 @@ export async function appendActivity(
   input: ActivityInput,
 ): Promise<number> {
   const at = input.createdAt ?? new Date().toISOString();
-  const payload = JSON.stringify(redact(input.payload ?? {}));
+  const payload = JSON.stringify(redactPayload(input.payload ?? {}));
   return await store.sql.begin(async (tx) => {
     const rows = await tx<Array<{ event_id: number }>>`
       INSERT INTO activity_events (
@@ -137,7 +137,11 @@ function parsePayload(value: unknown): unknown {
   }
 }
 
-function redact(value: unknown, depth = 0): unknown {
+/**
+ * Recursively redacts secret-looking object keys and bounds payload size.
+ * Shared by activity payloads and the stage transcript (30 §3.4).
+ */
+export function redactPayload(value: unknown, depth = 0): unknown {
   if (depth > 6) {
     return "[truncated]";
   }
@@ -145,7 +149,7 @@ function redact(value: unknown, depth = 0): unknown {
     return value.length > 4000 ? `${value.slice(0, 4000)}…` : value;
   }
   if (Array.isArray(value)) {
-    return value.slice(0, 50).map((item) => redact(item, depth + 1));
+    return value.slice(0, 50).map((item) => redactPayload(item, depth + 1));
   }
   if (value && typeof value === "object") {
     const result: Record<string, unknown> = {};
@@ -156,7 +160,7 @@ function redact(value: unknown, depth = 0): unknown {
           continue;
         }
       }
-      result[key] = redact(item, depth + 1);
+      result[key] = redactPayload(item, depth + 1);
     }
     return result;
   }
