@@ -5,7 +5,7 @@ rubric, golden set, model or workflow changes during the window. The goal is
 a reproducible baseline, not a good-looking number.
 
 - Pack / workflow:
-- Rubric: `evals/rubrics.yaml` (record the file hash)
+- Rubric: `evals/visible/rubrics.yaml` (record the file hash)
 - Golden set: `golden-set.yaml` (record the file hash)
 - Evaluator model:
 - Run mode: `DRY_RUN` (non-LIVE scores never enter a formal quality conclusion)
@@ -21,7 +21,9 @@ a reproducible baseline, not a good-looking number.
    dimension score, and the evidence references. A score without
    `artifact_id + version` is invalid (plan `40` §2).
 4. Compare each dimension against the threshold declared in
-   `evals/rubrics.yaml`. Do not round up or drop a failing dimension.
+   `evals/visible/rubrics.yaml`. Do not round up or drop a failing dimension.
+   Hidden cases (if configured) live outside the repo; record only their
+   aggregate coverage from the cycle record, never the cases themselves.
 5. Record the aggregate pass/fail and attach the eval artifact IDs in
    `CHECKLIST.md` under `CS-2`.
 6. If any enabled dimension is below its threshold, keep the cold start at

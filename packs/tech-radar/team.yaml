@@ -46,4 +46,4 @@ policies:
   - policies/autonomy.yaml
 
 evals:
-  rubrics: evals/rubrics.yaml
+  rubrics: evals/visible/rubrics.yaml

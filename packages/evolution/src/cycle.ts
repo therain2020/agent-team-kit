@@ -93,6 +93,7 @@ export interface CycleOptions {
   repo?: EvolutionRepository;
   cyclesRoot?: string;
   hiddenEvalsDir?: string;
+  workspaceId?: string;
   freezeSnapshot?: boolean;
   allowEvaluatorChange?: boolean;
   evaluatorApprovalRef?: string;
@@ -275,6 +276,7 @@ export async function runEvolutionCycle(
       ...(options.hiddenEvalsDir
         ? { hiddenEvalsDir: options.hiddenEvalsDir }
         : {}),
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.freezeSnapshot === undefined
         ? {}
         : { freeze: options.freezeSnapshot }),

@@ -30,7 +30,7 @@ not evidence.
 | # | Item | Pass condition | Status | Evidence |
 |---|------|----------------|--------|----------|
 | CS-1 | 7-day continuous run | 7 consecutive days with the stack serving; no unresolved critical incident; scheduler/heartbeat gap does not exceed 30 minutes without a recorded, approved exception | [ ] | _pending: run IDs, date range, uptime or audit locator_ |
-| CS-2 | Quality baseline threshold | Baseline evaluation on the golden set reaches every enabled rubric threshold in `evals/rubrics.yaml`; every score carries `artifact_id + version` | [ ] | _pending: eval artifact IDs and versions_ |
+| CS-2 | Quality baseline threshold | Baseline evaluation on the golden set reaches every enabled rubric threshold in `evals/visible/rubrics.yaml`; every score carries `artifact_id + version` | [ ] | _pending: eval artifact IDs and versions_ |
 | CS-3 | Sampling/approval policy active | Cold-start policy in force for the full window: every stage requires approval, class A and C tools require per-item approval, auto-approval disabled, autopilot off; sampling at 100% where the deployment supports it | [ ] | _pending: config snapshot and audit event locator_ |
 | CS-4 | Budget guardrails | `budget.yaml` applied: daily and monthly CNY plus per-run caps; spend and run counts stay within caps for the full window | [ ] | _pending: budget config and spend report locator_ |
 | CS-5 | Recovery drill | Kill-switch and recovery drill run against this deployment; recovery completes within the declared deadline and the audit trail is present | [ ] | _pending: `recovery-drill-<stamp>.json` and audit entries_ |
