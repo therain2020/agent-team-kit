@@ -155,14 +155,13 @@ cases:
     });
 
     const expected = selectHiddenChunk(await loadHiddenSuite(hiddenDir), now);
-    expect(snapshot.manifest.hidden?.available).toBe(true);
-    if (!snapshot.manifest.hidden?.available) {
+    const plan = snapshot.manifest.hidden;
+    expect(plan?.available).toBe(true);
+    if (!plan || !plan.available) {
       throw new Error("hidden plan missing");
     }
-    expect(snapshot.manifest.hidden.selectedCaseIds).toEqual(
-      expected.selectedCaseIds,
-    );
-    expect(snapshot.manifest.hidden.selectedCaseIds).toHaveLength(1);
+    expect(plan.selectedCaseIds).toEqual(expected.selectedCaseIds);
+    expect(plan.selectedCaseIds).toHaveLength(1);
     expect(existsSync(path.join(snapshot.dir, "hidden", "suite.yaml"))).toBe(
       true,
     );
