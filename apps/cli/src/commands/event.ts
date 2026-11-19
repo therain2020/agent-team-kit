@@ -1,6 +1,11 @@
 import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { CliError } from "@kit/core";
+import {
+  type EventRetentionReport,
+  initStore,
+  pruneEventRetention,
+} from "@kit/store";
 import type { Command } from "commander";
 import { emit, emitError, wantsJson } from "../output";
 
@@ -137,6 +142,109 @@ export function registerEvent(program: Command): void {
         }
       },
     );
+
+  event
+    .command("prune")
+    .description(
+      "Delete activity and iteration events older than the retention window (default 90 days)",
+    )
+    .option("--days <n>", "retention window in days", "90")
+    .option("--batch-size <n>", "rows deleted per statement", "1000")
+    .option("--max-rows <n>", "maximum rows deleted per call", "100000")
+    .option("--dry-run", "report eligible rows without deleting", false)
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        days?: string;
+        batchSize?: string;
+        maxRows?: string;
+        dryRun?: boolean;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        const retentionDays = parsePositiveInteger(options.days, 90, "--days");
+        const batchSize = parsePositiveInteger(
+          options.batchSize,
+          1000,
+          "--batch-size",
+        );
+        const maxRowsPerCall = parsePositiveInteger(
+          options.maxRows,
+          100000,
+          "--max-rows",
+        );
+
+        let store: Awaited<ReturnType<typeof initStore>>;
+        try {
+          store = await initStore();
+        } catch (error) {
+          emitError(
+            json,
+            new CliError(
+              "dependency_unavailable",
+              "cannot reach the kit database",
+              {
+                hint: "start the stack with `kit up`, or point KIT_DB_URL at a running Postgres",
+                cause: error,
+              },
+            ),
+          );
+          return;
+        }
+
+        try {
+          const report = await pruneEventRetention(store, {
+            retentionDays,
+            batchSize,
+            maxRowsPerCall,
+            dryRun: options.dryRun === true,
+          });
+          emit(json, report, () => {
+            renderPruneReport(report);
+          });
+        } catch (error) {
+          emitError(json, error);
+        } finally {
+          await store.close();
+        }
+      },
+    );
+}
+
+function renderPruneReport(report: EventRetentionReport): void {
+  const windowLabel = `${report.retentionDays}-day retention`;
+  if (report.dryRun) {
+    console.log(
+      `dry-run: ${report.eligible} event(s) older than ${report.cutoff} would be pruned (${windowLabel})`,
+    );
+  } else {
+    console.log(
+      `pruned ${report.deleted} event(s) older than ${report.cutoff} (${windowLabel})`,
+    );
+  }
+  for (const table of report.tables) {
+    const count = report.dryRun ? table.eligible : table.deleted;
+    const range =
+      table.oldest && table.newest
+        ? `${table.oldest} .. ${table.newest}`
+        : "no rows";
+    console.log(`  ${table.table}  ${count} rows  ${range}`);
+  }
+}
+
+function parsePositiveInteger(
+  value: string | undefined,
+  fallback: number,
+  flag: string,
+): number {
+  if (value === undefined || value.trim() === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new CliError("usage", `${flag} must be a positive integer`);
+  }
+  return parsed;
 }
 
 function statusToCode(status: number) {
