@@ -52,9 +52,10 @@ export const ASSET_ENTRY: Readonly<Record<string, string>> = Object.freeze({
 });
 
 /**
- * Envelope of a `source.yaml` asset. `@kit/source` keeps the adapter-level
- * schema; until the unified market kernel (M1, #115) folds it into the shared
- * core this envelope is enough to reject malformed source entries.
+ * Envelope of a `source.yaml` asset. `@kit/source` owns the full adapter schema
+ * (and grades signatures through the shared `@kit/market` kernel); this
+ * envelope is enough to reject malformed source entries at the asset-library
+ * layer without coupling the library to the fetch adapter.
  */
 export const sourceAssetSchema = z
   .object({

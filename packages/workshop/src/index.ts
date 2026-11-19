@@ -1,14 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import {
-  cp,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type PackTool,
@@ -18,6 +10,20 @@ import {
   toolPackSchema,
   workshopManifestSchema,
 } from "@kit/core";
+import {
+  MAX_FILE_BYTES,
+  MAX_MANIFEST_BYTES,
+  MAX_TOTAL_BYTES,
+  assertRepo,
+  commitStagedDir,
+  createMarketSearchCache,
+  defaultBranch,
+  fetchRawFile,
+  resolveCommit,
+  searchMarket,
+  sha256Hex,
+  writeFileAtomic,
+} from "@kit/market";
 import { loadPack } from "@kit/pack";
 import { parse, stringify } from "yaml";
 import {
@@ -39,13 +45,7 @@ export * from "./components";
 export * from "./security";
 export * from "./trust";
 
-const USER_AGENT = "agent-team-kit/0.9";
 const WORKSHOP_TOPIC = "agent-team-workshop";
-const CACHE_MS = 60_000;
-const MAX_MANIFEST_BYTES = 64 * 1024;
-const MAX_FILE_BYTES = 256 * 1024;
-const MAX_TOTAL_BYTES = 5 * 1024 * 1024;
-const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const WORKSHOP_KINDS = [
   "pack",
   "workflow",
@@ -72,10 +72,7 @@ const CODE_FILE =
 const CODE_ADAPTER =
   /(?:adapter\s*:\s*["']?command\b|["']adapter["']\s*:\s*["']command\b)/i;
 
-const searchCache = new Map<
-  string,
-  { expiresAt: number; candidates: WorkshopCandidate[] }
->();
+const searchCache = createMarketSearchCache<WorkshopManifest>();
 
 export interface WorkshopCandidate {
   repo: string;
@@ -230,70 +227,44 @@ export async function searchWorkshop(
     keys?: WorkshopTrustedKey[];
   } = {},
 ): Promise<WorkshopCandidate[]> {
-  const topic = options.topic ?? WORKSHOP_TOPIC;
-  const limit = Math.min(Math.max(options.limit ?? 12, 1), 30);
-  const query = [`topic:${topic}`, options.query ?? ""]
-    .filter(Boolean)
-    .join(" ");
-  const cacheKey = `${query}:${limit}`;
-  const cached = searchCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.candidates;
-  }
-
   const keys = options.keys ?? (await loadTrustedKeysOrEmpty());
-  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(
-    query,
-  )}&sort=stars&order=desc&per_page=${limit}`;
-  const payload = await githubJson<{
-    items?: Array<{
-      full_name: string;
-      html_url: string;
-      description: string | null;
-      stargazers_count: number;
-      default_branch: string;
-      updated_at: string;
-    }>;
-  }>(url, options.token);
-
-  const candidates = await Promise.all(
-    (payload.items ?? []).map(async (repo) => {
-      const candidate: WorkshopCandidate = {
-        repo: repo.full_name,
-        htmlUrl: repo.html_url,
-        description: repo.description,
-        stars: repo.stargazers_count,
-        updatedAt: repo.updated_at,
-      };
-      try {
-        const raw = await fetchRaw(
-          repo.full_name,
-          repo.default_branch,
-          "workshop.yaml",
-          options.token,
-        );
-        const parsed = workshopManifestSchema.safeParse(parse(raw));
-        if (parsed.success) {
-          candidate.manifest = parsed.data;
-          candidate.trust = verifyWorkshopSignature(parsed.data, keys);
-        } else {
-          candidate.manifestError = parsed.error.issues
-            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-            .join("; ");
-        }
-      } catch (error) {
-        candidate.manifestError =
-          error instanceof Error ? error.message : String(error);
+  const results = await searchMarket<WorkshopManifest>({
+    topic: options.topic ?? WORKSHOP_TOPIC,
+    manifestFile: "workshop.yaml",
+    query: options.query,
+    limit: options.limit,
+    token: options.token,
+    cache: searchCache,
+    parse: (raw) => {
+      const parsed = workshopManifestSchema.safeParse(parse(raw));
+      if (parsed.success) {
+        return { manifest: parsed.data };
       }
-      return candidate;
-    }),
-  );
-
-  searchCache.set(cacheKey, {
-    expiresAt: Date.now() + CACHE_MS,
-    candidates,
+      return {
+        error: parsed.error.issues
+          .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+          .join("; "),
+      };
+    },
   });
-  return candidates;
+
+  return results.map((candidate) => {
+    const mapped: WorkshopCandidate = {
+      repo: candidate.repo,
+      htmlUrl: candidate.htmlUrl,
+      description: candidate.description,
+      stars: candidate.stars,
+      updatedAt: candidate.updatedAt,
+    };
+    if (candidate.manifest) {
+      mapped.manifest = candidate.manifest;
+      mapped.trust = verifyWorkshopSignature(candidate.manifest, keys);
+    }
+    if (candidate.manifestError) {
+      mapped.manifestError = candidate.manifestError;
+    }
+    return mapped;
+  });
 }
 
 export async function previewWorkshop(input: {
@@ -306,8 +277,8 @@ export async function previewWorkshop(input: {
   const keys = input.keys ?? (await loadWorkshopTrustedKeys());
   const commit = await resolveCommit(
     input.repo,
-    input.ref ?? (await defaultBranch(input.repo, input.token)),
-    input.token,
+    input.ref ?? (await defaultBranch(input.repo, { token: input.token })),
+    { token: input.token },
   );
   const { manifest, raw } = await fetchManifest(
     input.repo,
@@ -361,15 +332,15 @@ export async function installWorkshop(input: {
   const keys = input.keys ?? (await loadWorkshopTrustedKeys());
   const commit = await resolveCommit(
     input.repo,
-    input.ref ?? (await defaultBranch(input.repo, input.token)),
-    input.token,
+    input.ref ?? (await defaultBranch(input.repo, { token: input.token })),
+    { token: input.token },
   );
   const { manifest, raw } = await fetchManifest(
     input.repo,
     commit,
     input.token,
   );
-  const manifestSha256 = sha256(JSON.stringify(manifest));
+  const manifestSha256 = sha256Hex(JSON.stringify(manifest));
   const trust = verifyWorkshopSignature(manifest, keys);
   if (trust.level === "community" && input.acceptUnsigned !== true) {
     throw new Error(
@@ -438,7 +409,7 @@ export async function installWorkshop(input: {
       await mkdir(path.dirname(destination), { recursive: true });
       await writeFile(destination, content, "utf8");
       files.push(file);
-      hashes[file] = sha256(content);
+      hashes[file] = sha256Hex(content);
     }
 
     if (manifest.kind === "pack") {
@@ -524,7 +495,11 @@ export async function installWorkshop(input: {
     throw error;
   }
 
-  await commitInstallDirectory(staging, target.dir, manifest.id);
+  await commitStagedDir({
+    staging,
+    target: target.dir,
+    id: manifest.id,
+  });
 
   return {
     repo: input.repo,
@@ -537,35 +512,6 @@ export async function installWorkshop(input: {
     trust,
     permissions,
   };
-}
-
-async function commitInstallDirectory(
-  staging: string,
-  target: string,
-  id: string,
-): Promise<void> {
-  let backup: string | null = null;
-  try {
-    if (existsSync(target)) {
-      backup = path.join(
-        path.dirname(target),
-        `.${id}.replacing-${randomUUID()}`,
-      );
-      await rename(target, backup);
-    }
-    await rename(staging, target);
-  } catch (error) {
-    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    if (backup && !existsSync(target)) {
-      // Restore the previous copy; if even that fails the backup stays on
-      // disk for manual recovery and the original error is surfaced.
-      await rename(backup, target).catch(() => undefined);
-    }
-    throw error;
-  }
-  if (backup) {
-    await rm(backup, { recursive: true, force: true }).catch(() => undefined);
-  }
 }
 
 export async function listInstalledWorkshop(
@@ -693,7 +639,7 @@ export async function importInstalledPack(input: {
     throw error;
   }
 
-  await commitInstallDirectory(staging, target, id);
+  await commitStagedDir({ staging, target, id });
 
   return {
     id,
@@ -779,7 +725,11 @@ export async function publishWorkshop(
       oversize.push(`${file} (${content.length} bytes)`);
     }
     total += content.length;
-    files.push({ path: file, bytes: content.length, sha256: sha256(content) });
+    files.push({
+      path: file,
+      bytes: content.length,
+      sha256: sha256Hex(content),
+    });
   }
 
   if (missing.length === 0) {
@@ -1050,10 +1000,6 @@ function check(
   return { id, status, detail };
 }
 
-function sha256(value: string | Buffer): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
 function isTextContent(content: Buffer): boolean {
   return !content.subarray(0, 8192).includes(0);
 }
@@ -1064,12 +1010,6 @@ function safeJoin(root: string, relative: string): string {
     throw new Error(`unsafe workshop path: ${relative}`);
   }
   return resolved;
-}
-
-async function writeFileAtomic(file: string, content: string): Promise<void> {
-  const temporary = `${file}.${process.pid}.tmp`;
-  await writeFile(temporary, content, "utf8");
-  await rename(temporary, file);
 }
 
 function parseKind(value: unknown): WorkshopManifest["kind"] | "unknown" {
@@ -1101,7 +1041,7 @@ async function fetchManifest(
   ref: string,
   token?: string,
 ): Promise<{ manifest: WorkshopManifest; raw: string }> {
-  const raw = await fetchRaw(repo, ref, "workshop.yaml", token);
+  const raw = await fetchRawFile(repo, ref, "workshop.yaml", { token });
   if (Buffer.byteLength(raw, "utf8") > MAX_MANIFEST_BYTES) {
     throw new Error("workshop.yaml exceeds 64KB");
   }
@@ -1125,7 +1065,7 @@ async function fetchWorkshopFiles(
   const files: WorkshopFileContent[] = [];
   let total = 0;
   for (const file of manifest.files) {
-    const content = await fetchRaw(repo, ref, file, token);
+    const content = await fetchRawFile(repo, ref, file, { token });
     const bytes = Buffer.byteLength(content, "utf8");
     if (bytes > MAX_FILE_BYTES) {
       throw new Error(`file exceeds 256KB: ${file}`);
@@ -1196,12 +1136,6 @@ async function loadTrustedKeysOrEmpty(): Promise<WorkshopTrustedKey[]> {
   }
 }
 
-function assertRepo(repo: string): void {
-  if (!REPO_PATTERN.test(repo)) {
-    throw new Error("repo must be owner/name");
-  }
-}
-
 function assertToolPermissions(
   tools: PackTool[],
   manifest: WorkshopManifest,
@@ -1219,76 +1153,4 @@ function assertToolPermissions(
       );
     }
   }
-}
-
-async function defaultBranch(repo: string, token?: string): Promise<string> {
-  const payload = await githubJson<{ default_branch?: string }>(
-    `https://api.github.com/repos/${repo}`,
-    token,
-  );
-  if (!payload.default_branch) {
-    throw new Error(`cannot resolve default branch for ${repo}`);
-  }
-  return payload.default_branch;
-}
-
-async function resolveCommit(
-  repo: string,
-  ref: string,
-  token?: string,
-): Promise<string> {
-  const payload = await githubJson<{ sha?: string }>(
-    `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}`,
-    token,
-  );
-  if (!payload.sha || !/^[a-f0-9]{40}$/i.test(payload.sha)) {
-    throw new Error(`cannot resolve commit for ${repo}@${ref}`);
-  }
-  return payload.sha;
-}
-
-async function fetchRaw(
-  repo: string,
-  ref: string,
-  file: string,
-  token?: string,
-): Promise<string> {
-  const url = `https://raw.githubusercontent.com/${repo}/${ref}/${file}`;
-  const headers: Record<string, string> = { "user-agent": USER_AGENT };
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
-  }
-  const response = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) {
-    throw new Error(
-      `raw file ${response.status} ${response.statusText}: ${file}`,
-    );
-  }
-  return response.text();
-}
-
-async function githubJson<T>(url: string, token?: string): Promise<T> {
-  const headers: Record<string, string> = {
-    accept: "application/vnd.github+json",
-    "user-agent": USER_AGENT,
-  };
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
-  }
-  const response = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (response.status === 403 || response.status === 429) {
-    throw new Error(
-      "GitHub API rate limit exceeded; set GITHUB_TOKEN to raise the limit",
-    );
-  }
-  if (!response.ok) {
-    throw new Error(`GitHub API ${response.status} ${response.statusText}`);
-  }
-  return (await response.json()) as T;
 }
