@@ -54,6 +54,7 @@ export const runs = pgTable("runs", {
     withTimezone: true,
     mode: "string",
   }).notNull(),
+  version: integer("version").notNull().default(0),
 });
 
 export const stages = pgTable("stages", {
@@ -65,6 +66,7 @@ export const stages = pgTable("stages", {
   finishedAt: timestamp("finished_at", { withTimezone: true, mode: "string" }),
   checkpointId: text("checkpoint_id"),
   error: text("error"),
+  version: integer("version").notNull().default(0),
 });
 
 export const manifests = pgTable("manifests", {
@@ -161,6 +163,8 @@ export const runRequests = pgTable("run_requests", {
     withTimezone: true,
     mode: "string",
   }),
+  /** Fencing token; incremented on every claim. */
+  leaseVersion: integer("lease_version").notNull().default(0),
   error: text("error"),
   createdAt: timestamp("created_at", {
     withTimezone: true,

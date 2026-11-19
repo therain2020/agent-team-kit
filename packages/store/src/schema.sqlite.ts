@@ -37,6 +37,7 @@ export const runs = sqliteTable("runs", {
   status: text("status").notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
+  version: integer("version").notNull().default(0),
 });
 
 export const stages = sqliteTable("stages", {
@@ -48,6 +49,7 @@ export const stages = sqliteTable("stages", {
   finishedAt: text("finished_at"),
   checkpointId: text("checkpoint_id"),
   error: text("error"),
+  version: integer("version").notNull().default(0),
 });
 
 export const manifests = sqliteTable("manifests", {
@@ -128,6 +130,8 @@ export const runRequests = sqliteTable("run_requests", {
   claimedBy: text("claimed_by"),
   claimedAt: text("claimed_at"),
   heartbeatAt: text("heartbeat_at"),
+  /** Fencing token; incremented on every claim. */
+  leaseVersion: integer("lease_version").notNull().default(0),
   error: text("error"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),

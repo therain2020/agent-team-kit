@@ -41,30 +41,33 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
       ? new S3BlobClient(createS3Client(config), config.s3Bucket)
       : new FsBlobClient(config.blobRoot);
 
+  // Fenced/CAS writes are audited to the op log; the sink only needs `sql`.
+  const opLog = { sql: handle.sql };
+
   const repositories =
     handle.driver === "postgres"
       ? {
           events: new PostgresEventStore(handle.db),
-          runs: new PostgresRunStore(handle.db),
-          stages: new PostgresStageStore(handle.db),
+          runs: new PostgresRunStore(handle.db, opLog),
+          stages: new PostgresStageStore(handle.db, opLog),
           manifests: new PostgresManifestStore(handle.db),
           blobs: new PostgresBlobRepository(handle.db),
           artifactStore: new PostgresArtifactStore(handle.db),
           autopilotState: new PostgresAutopilotStateStore(handle.db),
-          runRequests: new PostgresRunRequestStore(handle.db),
+          runRequests: new PostgresRunRequestStore(handle.db, opLog),
           degradation: new PostgresDegradationStore(handle.db),
           managerSessions: new PostgresManagerSessionStore(handle.db),
           killSwitches: new PostgresKillSwitchStore(handle.db),
         }
       : {
           events: new SqliteEventStore(handle.db),
-          runs: new SqliteRunStore(handle.db),
-          stages: new SqliteStageStore(handle.db),
+          runs: new SqliteRunStore(handle.db, opLog),
+          stages: new SqliteStageStore(handle.db, opLog),
           manifests: new SqliteManifestStore(handle.db),
           blobs: new SqliteBlobRepository(handle.db),
           artifactStore: new SqliteArtifactStore(handle.db),
           autopilotState: new SqliteAutopilotStateStore(handle.db),
-          runRequests: new SqliteRunRequestStore(handle.db),
+          runRequests: new SqliteRunRequestStore(handle.db, opLog),
           degradation: new SqliteDegradationStore(handle.db),
           managerSessions: new SqliteManagerSessionStore(handle.db),
           killSwitches: new SqliteKillSwitchStore(handle.db),

@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS runs (
   run_mode TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL
+  updated_at TIMESTAMPTZ NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS stages (
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS stages (
   started_at TIMESTAMPTZ,
   finished_at TIMESTAMPTZ,
   checkpoint_id TEXT,
-  error TEXT
+  error TEXT,
+  version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS manifests (
@@ -115,6 +117,7 @@ CREATE TABLE IF NOT EXISTS run_requests (
   claimed_by TEXT,
   claimed_at TIMESTAMPTZ,
   heartbeat_at TIMESTAMPTZ,
+  lease_version INTEGER NOT NULL DEFAULT 0,
   error TEXT,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
@@ -122,6 +125,11 @@ CREATE TABLE IF NOT EXISTS run_requests (
 
 ALTER TABLE run_requests
   ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'pack_run';
+
+ALTER TABLE run_requests
+  ADD COLUMN IF NOT EXISTS lease_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE stages ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE autopilot_state
   ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0;
@@ -635,7 +643,8 @@ CREATE TABLE IF NOT EXISTS runs (
   run_mode TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS stages (
@@ -646,7 +655,8 @@ CREATE TABLE IF NOT EXISTS stages (
   started_at TEXT,
   finished_at TEXT,
   checkpoint_id TEXT,
-  error TEXT
+  error TEXT,
+  version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS manifests (
@@ -731,6 +741,7 @@ CREATE TABLE IF NOT EXISTS run_requests (
   claimed_by TEXT,
   claimed_at TEXT,
   heartbeat_at TEXT,
+  lease_version INTEGER NOT NULL DEFAULT 0,
   error TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -1114,6 +1125,10 @@ CREATE TABLE IF NOT EXISTS manager_sessions (
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE run_requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'pack_run';
+
+ALTER TABLE run_requests ADD COLUMN lease_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE stages ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE iteration_runs ADD COLUMN repo_root TEXT;
 

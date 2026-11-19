@@ -36,6 +36,7 @@ import type {
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { heartbeat } from "./heartbeat";
 import { assertKillSwitchClear } from "./kill-switch";
+import { writeLeaseOptions } from "./write-lease";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -148,6 +149,7 @@ async function pauseForBudget(
     input.runId,
     "paused",
     new Date().toISOString(),
+    writeLeaseOptions(),
   );
   await safeOp(store, {
     workspaceId: input.workspaceId,
@@ -410,9 +412,14 @@ async function executePackStageInner(
 
   if (existing) {
     const text = await readArtifactText(store, existing);
-    await store.stages.updateStatus(input.stageId, "succeeded", {
-      finishedAt: new Date().toISOString(),
-    });
+    await store.stages.updateStatus(
+      input.stageId,
+      "succeeded",
+      {
+        finishedAt: new Date().toISOString(),
+      },
+      writeLeaseOptions(),
+    );
     await safeOp(store, {
       workspaceId: input.workspaceId,
       entityKind: "stage",
@@ -439,9 +446,14 @@ async function executePackStageInner(
     return { artifactId: existing.artifactId, text, reused: true };
   }
 
-  await store.stages.updateStatus(input.stageId, "running", {
-    startedAt: new Date().toISOString(),
-  });
+  await store.stages.updateStatus(
+    input.stageId,
+    "running",
+    {
+      startedAt: new Date().toISOString(),
+    },
+    writeLeaseOptions(),
+  );
   await safeOp(store, {
     workspaceId: input.workspaceId,
     entityKind: "stage",
@@ -641,9 +653,14 @@ async function executePackStageInner(
   });
 
   if (coderFailure) {
-    await store.stages.updateStatus(input.stageId, "failed", {
-      finishedAt: new Date().toISOString(),
-    });
+    await store.stages.updateStatus(
+      input.stageId,
+      "failed",
+      {
+        finishedAt: new Date().toISOString(),
+      },
+      writeLeaseOptions(),
+    );
     await safeOp(store, {
       workspaceId: input.workspaceId,
       entityKind: "stage",
@@ -665,9 +682,14 @@ async function executePackStageInner(
     throw new Error(`coder stage failed: ${coderFailure}`);
   }
 
-  await store.stages.updateStatus(input.stageId, "succeeded", {
-    finishedAt: new Date().toISOString(),
-  });
+  await store.stages.updateStatus(
+    input.stageId,
+    "succeeded",
+    {
+      finishedAt: new Date().toISOString(),
+    },
+    writeLeaseOptions(),
+  );
   await safeOp(store, {
     workspaceId: input.workspaceId,
     entityKind: "stage",
@@ -714,6 +736,7 @@ export async function finishPackRun(input: {
     input.runId,
     "succeeded",
     new Date().toISOString(),
+    writeLeaseOptions(),
   );
   const run = await store.runs.get(input.runId);
   await safeOp(store, {
@@ -736,6 +759,7 @@ export async function failPackRun(input: {
     input.runId,
     "failed",
     new Date().toISOString(),
+    writeLeaseOptions(),
   );
   const run = await store.runs.get(input.runId);
   await safeOp(store, {
@@ -1917,6 +1941,7 @@ export async function setPackRunStatus(input: {
     input.runId,
     input.status,
     new Date().toISOString(),
+    writeLeaseOptions(),
   );
   const run = await store.runs.get(input.runId);
   await safeOp(store, {
