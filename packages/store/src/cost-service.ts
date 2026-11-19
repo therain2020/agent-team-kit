@@ -81,7 +81,7 @@ async function postgresSeries(
       SELECT
         to_char(
           to_timestamp(
-            (trunc(extract(epoch FROM created_at) / ${bucketSeconds}) * ${bucketSeconds})::double precision
+            trunc(extract(epoch FROM created_at) / ${bucketSeconds}::double precision) * ${bucketSeconds}::double precision
           ) AT TIME ZONE 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SS"Z"'
         ) AS bucket,
