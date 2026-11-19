@@ -60,7 +60,7 @@ export function formatDuration(
   return `${hours}h ${minutes % 60}m`;
 }
 
-export function timeAgo(iso?: string, locale = "en"): string {
+export function timeAgo(iso?: string, locale = "en", now = Date.now()): string {
   if (!iso) {
     return locale === "zh" ? "未知" : "unknown";
   }
@@ -68,7 +68,7 @@ export function timeAgo(iso?: string, locale = "en"): string {
   if (!Number.isFinite(timestamp)) {
     return locale === "zh" ? "未知" : "unknown";
   }
-  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  const seconds = Math.max(0, Math.round((now - timestamp) / 1000));
   const formatter = new Intl.RelativeTimeFormat(
     locale === "zh" ? "zh-CN" : "en",
     { numeric: "auto" },
@@ -87,7 +87,11 @@ export function timeAgo(iso?: string, locale = "en"): string {
   return formatter.format(-Math.floor(hours / 24), "day");
 }
 
-export function timeUntil(iso?: string, locale = "en"): string {
+export function timeUntil(
+  iso?: string,
+  locale = "en",
+  now = Date.now(),
+): string {
   if (!iso) {
     return locale === "zh" ? "未知" : "unknown";
   }
@@ -95,7 +99,7 @@ export function timeUntil(iso?: string, locale = "en"): string {
   if (!Number.isFinite(timestamp)) {
     return locale === "zh" ? "未知" : "unknown";
   }
-  const remaining = timestamp - Date.now();
+  const remaining = timestamp - now;
   if (remaining <= 0) {
     return locale === "zh" ? "已过期" : "expired";
   }

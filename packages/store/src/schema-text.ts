@@ -613,6 +613,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_by TEXT,
   decision_at TIMESTAMPTZ,
   decision_reason TEXT,
+  assignee TEXT,
+  assigned_at TIMESTAMPTZ,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL
 );
@@ -620,6 +622,9 @@ CREATE INDEX IF NOT EXISTS idx_approvals_inbox
   ON approvals(workspace_id, status, sla_due_at);
 CREATE INDEX IF NOT EXISTS idx_approvals_run
   ON approvals(run_id, created_at DESC);
+
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -1231,6 +1236,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_by TEXT,
   decision_at TEXT,
   decision_reason TEXT,
+  assignee TEXT,
+  assigned_at TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
@@ -1238,4 +1245,7 @@ CREATE INDEX IF NOT EXISTS idx_approvals_inbox
   ON approvals(workspace_id, status, sla_due_at);
 CREATE INDEX IF NOT EXISTS idx_approvals_run
   ON approvals(run_id, created_at DESC);
+
+ALTER TABLE approvals ADD COLUMN assignee TEXT;
+ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
 `;

@@ -56,7 +56,7 @@ export function ApprovalActions({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!actionable || event.metaKey || event.ctrlKey || event.altKey) {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
       const target = event.target as HTMLElement | null;
@@ -68,18 +68,35 @@ export function ApprovalActions({
       ) {
         return;
       }
+      if (event.key === "Escape") {
+        // Esc closes the confirm dialog first; only a second Esc leaves detail.
+        if (decision !== null) {
+          return;
+        }
+        event.preventDefault();
+        router.push("/inbox");
+        return;
+      }
+      if (!actionable) {
+        return;
+      }
       if (event.key === "a" || event.key === "A") {
         event.preventDefault();
         setDecision("approve");
       }
-      if (event.key === "x" || event.key === "X") {
+      if (
+        event.key === "r" ||
+        event.key === "R" ||
+        event.key === "x" ||
+        event.key === "X"
+      ) {
         event.preventDefault();
         setDecision("abort");
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [actionable]);
+  }, [actionable, decision, router]);
 
   async function submit() {
     if (!decision) {

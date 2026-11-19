@@ -197,6 +197,85 @@ describe("approval service (sqlite)", () => {
     expect(missing).toEqual({ ok: false, code: "not_found", current: null });
   });
 
+  it("assigns an owner with CAS and blocks stale decisions", async () => {
+    const { store } = await localStore();
+    await store.runs.create(run("run_take"));
+    const queued = await store.approvals.enqueue({
+      approvalId: "apr_take",
+      workspaceId: "default",
+      runId: "run_take",
+      kind: "gate_failure",
+      expiresAt: "2026-11-20T00:00:00.000Z",
+    });
+    expect(queued.assignee).toBeNull();
+
+    const taken = await store.approvals.assign({
+      approvalId: "apr_take",
+      expectedVersion: 1,
+      assignee: "operator:web",
+      at: "2026-11-15T01:00:00.000Z",
+    });
+    expect(taken.ok).toBe(true);
+    if (!taken.ok) {
+      throw new Error("assign failed");
+    }
+    expect(taken.record).toMatchObject({
+      assignee: "operator:web",
+      assignedAt: "2026-11-15T01:00:00.000Z",
+      version: 2,
+    });
+
+    const repeated = await store.approvals.assign({
+      approvalId: "apr_take",
+      expectedVersion: 2,
+      assignee: "operator:web",
+    });
+    expect(repeated.ok).toBe(true);
+    if (repeated.ok) {
+      expect(repeated.record.version).toBe(2);
+    }
+
+    const stale = await store.approvals.assign({
+      approvalId: "apr_take",
+      expectedVersion: 1,
+      assignee: "operator:other",
+    });
+    expect(stale).toMatchObject({
+      ok: false,
+      code: "version_conflict",
+      current: { assignee: "operator:web", version: 2 },
+    });
+
+    // The old version can no longer decide: takeover invalidates stale reads.
+    const decision = await store.approvals.decide({
+      approvalId: "apr_take",
+      expectedVersion: 1,
+      status: "approved",
+      decisionBy: "operator:web",
+      decisionReason: "after takeover",
+    });
+    expect(decision).toMatchObject({ ok: false, code: "version_conflict" });
+
+    const decided = await store.approvals.decide({
+      approvalId: "apr_take",
+      expectedVersion: 2,
+      status: "approved",
+      decisionBy: "operator:web",
+      decisionReason: "after takeover",
+    });
+    expect(decided.ok).toBe(true);
+    if (decided.ok) {
+      expect(decided.record.assignee).toBe("operator:web");
+    }
+
+    const missing = await store.approvals.assign({
+      approvalId: "apr_take",
+      expectedVersion: 3,
+      assignee: "operator:web",
+    });
+    expect(missing).toMatchObject({ ok: false, code: "not_pending" });
+  });
+
   it("expires due approvals once and records an audit event", async () => {
     const { store } = await localStore();
     await store.runs.create(run("run_exp"));

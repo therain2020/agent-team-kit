@@ -1,4 +1,6 @@
 import { ApprovalActions } from "@/components/inbox/approval-actions";
+import { TakeoverButton } from "@/components/inbox/takeover-button";
+import { WhyCard } from "@/components/inbox/why-card";
 import { EmptyState } from "@/components/kit/empty-state";
 import { GateCard } from "@/components/kit/gate-card";
 import { Markdown } from "@/components/kit/markdown";
@@ -8,6 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadApprovalDetail } from "@/lib/approvals";
+import { loadApprovalWhy } from "@/lib/inbox";
+import { currentOperatorId } from "@/lib/operator";
 import { loadArtifactContent } from "@/lib/runs";
 import { formatCny, timeAgo, timeUntil } from "@/lib/utils";
 import {
@@ -55,6 +59,12 @@ export default async function ApprovalPage({
   }
 
   const { run, detail, draft, draftContent, draftUnavailable } = approval;
+  const [why, operator] = await Promise.all([
+    loadApprovalWhy(requestId).catch(() => null),
+    Promise.resolve(currentOperatorId()),
+  ]);
+  const ownedByMe = approval.assignee === operator;
+  const takenByOther = approval.assignee !== null && !ownedByMe;
   const decisions = await Promise.all(
     detail.decisions.map(async (view) => {
       const content = await loadArtifactContent(view.artifact);
@@ -142,6 +152,8 @@ export default async function ApprovalPage({
               </CardContent>
             </Card>
           ) : null}
+
+          <WhyCard why={why} />
         </div>
 
         <div className="space-y-4">
@@ -167,6 +179,26 @@ export default async function ApprovalPage({
                       })
                     : t("noExpiry")}
                 </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 rounded border border-border/70 px-2 py-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+                  {t("owner")}
+                </span>
+                <span className="truncate text-[11px] text-zinc-300">
+                  {ownedByMe
+                    ? t("ownerYou")
+                    : (approval.assignee ?? t("ownerNone"))}
+                </span>
+                {!ownedByMe ? (
+                  <span className="ml-auto">
+                    <TakeoverButton
+                      requestId={approval.approval.requestId}
+                      version={approval.approvalVersion}
+                      takenByOther={takenByOther}
+                    />
+                  </span>
+                ) : null}
               </div>
               <p className="text-xs leading-5 text-zinc-400">
                 {approval.approval.summary || t("summaryFallback")}
