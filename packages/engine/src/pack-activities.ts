@@ -39,6 +39,7 @@ import type {
   RequestApprovalResult,
 } from "@kit/workflow";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { callWithCircuitBreaker, circuitDimensions } from "./circuit-breaker";
 import { heartbeat } from "./heartbeat";
 import { assertKillSwitchClear } from "./kill-switch";
 import {
@@ -604,11 +605,20 @@ async function executePackStageInner(
           4096,
         ),
         () =>
-          gateway.complete({
-            model: modelAlias,
-            instructions,
-            input: modelInput,
-          }),
+          callWithCircuitBreaker(
+            store,
+            circuitDimensions({
+              workspaceId: input.workspaceId,
+              agentId: input.agentId,
+              modelAlias,
+            }),
+            () =>
+              gateway.complete({
+                model: modelAlias,
+                instructions,
+                input: modelInput,
+              }),
+          ),
         (value) => ({
           cny: value.usage.costCny ?? 0,
           tokens: value.usage.inputTokens + value.usage.outputTokens,
@@ -1337,13 +1347,22 @@ async function runAgentWithTools(input: {
         4096,
       ),
       () =>
-        gateway.completeWithTools({
-          model: input.modelAlias,
-          messages,
-          tools: input.tools,
-          temperature: 0,
-          maxTokens: 4096,
-        }),
+        callWithCircuitBreaker(
+          input.store,
+          circuitDimensions({
+            workspaceId: input.input.workspaceId,
+            agentId: input.input.agentId,
+            modelAlias: input.modelAlias,
+          }),
+          () =>
+            gateway.completeWithTools({
+              model: input.modelAlias,
+              messages,
+              tools: input.tools,
+              temperature: 0,
+              maxTokens: 4096,
+            }),
+        ),
       (value) => ({
         cny: value.usage.costCny ?? 0,
         tokens: value.usage.inputTokens + value.usage.outputTokens,
@@ -1519,13 +1538,22 @@ async function runAgentWithTools(input: {
       4096,
     ),
     () =>
-      gateway.completeWithTools({
-        model: input.modelAlias,
-        messages,
-        tools: input.tools,
-        temperature: 0,
-        maxTokens: 4096,
-      }),
+      callWithCircuitBreaker(
+        input.store,
+        circuitDimensions({
+          workspaceId: input.input.workspaceId,
+          agentId: input.input.agentId,
+          modelAlias: input.modelAlias,
+        }),
+        () =>
+          gateway.completeWithTools({
+            model: input.modelAlias,
+            messages,
+            tools: input.tools,
+            temperature: 0,
+            maxTokens: 4096,
+          }),
+      ),
     (value) => ({
       cny: value.usage.costCny ?? 0,
       tokens: value.usage.inputTokens + value.usage.outputTokens,
@@ -2237,11 +2265,20 @@ async function evaluateGate(
         4096,
       ),
       () =>
-        gateway.complete({
-          model: judgeModel,
-          instructions,
-          input: judgeInput,
-        }),
+        callWithCircuitBreaker(
+          store,
+          circuitDimensions({
+            workspaceId: input.workspaceId,
+            agentId: input.agentId,
+            modelAlias: judgeModel,
+          }),
+          () =>
+            gateway.complete({
+              model: judgeModel,
+              instructions,
+              input: judgeInput,
+            }),
+        ),
       (value) => ({
         cny: value.usage.costCny ?? 0,
         tokens: value.usage.inputTokens + value.usage.outputTokens,
@@ -2368,11 +2405,20 @@ async function reviseDraft(
       4096,
     ),
     () =>
-      gateway.complete({
-        model: modelAlias,
-        instructions,
-        input: revisionInput,
-      }),
+      callWithCircuitBreaker(
+        store,
+        circuitDimensions({
+          workspaceId: input.workspaceId,
+          agentId: input.agentId,
+          modelAlias,
+        }),
+        () =>
+          gateway.complete({
+            model: modelAlias,
+            instructions,
+            input: revisionInput,
+          }),
+      ),
     (value) => ({
       cny: value.usage.costCny ?? 0,
       tokens: value.usage.inputTokens + value.usage.outputTokens,

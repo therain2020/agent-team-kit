@@ -2,6 +2,7 @@ export * from "./artifact";
 export * from "./assets";
 export * from "./autopilot";
 export * from "./budget";
+export * from "./circuit-breaker";
 export * from "./cli-contract";
 export * from "./degradation";
 export * from "./event";
