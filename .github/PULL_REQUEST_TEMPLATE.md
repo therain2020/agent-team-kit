@@ -12,6 +12,15 @@ Closes #
 
 <!-- One paragraph. What changed, and which user moment it improves. -->
 
+## Input surface (D-64)
+
+<!-- Every form, dialog or prompt follows D-64: intent → AI draft → edit → approve. Delete this section if the PR touches no user input surface. -->
+
+- [ ] This PR adds or changes no user input surface (otherwise complete the items below).
+- [ ] The surface uses a compose kind and posts through `POST /api/compose`.
+- [ ] It has a deterministic fallback (`model: heuristic`) when the model is unavailable.
+- [ ] The flow is intent → draft → edit → approve, and nothing is written before approval.
+
 ## Type
 
 - [ ] Bug fix
