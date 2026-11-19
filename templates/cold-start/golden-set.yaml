@@ -1,0 +1,25 @@
+# Golden set skeleton (plan 40 §3.6).
+#
+# Structure only: add 50-200 human-approved cases before the cold start.
+# Never invent cases or scores. Each expected reference points at a versioned
+# artifact (artifact_id + version) so the baseline can be replayed later.
+#
+# Contract fields (plan 40 §2):
+#   case_id, tenant_id, input_refs, expected_refs, approved_by
+version: 1
+tenant: default
+cases: []
+
+# Example shape (copy, then replace the placeholders with real values):
+#
+# cases:
+#   - case_id: gs-0001
+#     tenant_id: default
+#     input_refs:
+#       - {artifact_id: art_example_input, version: 1}
+#     expected_refs:
+#       - {artifact_id: art_example_expected, version: 1}
+#     approved_by: operator:name
+#
+# Add one case per block. Do not add scores or pass/fail verdicts here; those
+# belong to an eval run and must carry versioned evidence references.

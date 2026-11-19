@@ -1,7 +1,39 @@
-import type { CoderId, RunBudgetSpec } from "@kit/core";
+import type { CoderId, RunBudgetSpec, RunOriginKind } from "@kit/core";
 
 export type JobKind = "packRun" | "iteration";
-export type JobOrigin = "cli" | "web" | "api" | "autopilot" | "event";
+/** Origins a caller may request; `unknown` is reserved for historical rows. */
+export type JobOriginKind = Exclude<RunOriginKind, "unknown">;
+/** @deprecated Use `JobOriginKind`; kept for existing string call sites. */
+export type JobOrigin = JobOriginKind;
+
+export interface JobOriginRecord {
+  kind: JobOriginKind;
+  triggerId?: string;
+  triggerRunId?: string;
+  actor: string;
+}
+
+/** `origin` accepts a bare kind (legacy call sites) or a structured record. */
+export type StartJobOrigin = JobOriginKind | JobOriginRecord;
+
+export function normalizeJobOrigin(origin?: StartJobOrigin): JobOriginRecord {
+  if (origin === undefined) {
+    return { kind: "api", actor: "operator:api" };
+  }
+  if (typeof origin === "string") {
+    return {
+      kind: origin,
+      actor: origin === "autopilot" ? "policy:autopilot" : `operator:${origin}`,
+    };
+  }
+  return {
+    kind: origin.kind,
+    ...(origin.triggerId ? { triggerId: origin.triggerId } : {}),
+    ...(origin.triggerRunId ? { triggerRunId: origin.triggerRunId } : {}),
+    actor: origin.actor,
+  };
+}
+
 export type JobRunMode = "DRY_RUN" | "LIVE";
 export type JobApplyMode = "none" | "low" | "low-medium";
 
@@ -33,7 +65,7 @@ export interface StartJobInput {
   budgetCny?: number;
   budget?: RunBudgetSpec;
   dedupeKey?: string;
-  origin?: JobOrigin;
+  origin?: StartJobOrigin;
   evidenceText?: string;
   evidenceArtifactId?: string;
   mission?: MissionInput;
@@ -61,6 +93,10 @@ export interface JobSummary {
   phase: string | null;
   runMode: string;
   workflowId: string | null;
+  /** `unknown` for jobs created before origin was persisted. */
+  originKind: RunOriginKind;
+  triggerId: string | null;
+  triggerRunId: string | null;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;

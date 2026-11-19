@@ -2,26 +2,15 @@ import { createHash } from "node:crypto";
 import { commandOnPath, runProcess } from "@kit/coder";
 import {
   type ApplyPatchResult,
+  type IterationApplyMode,
+  type IterationRisk,
   applyPatchToRepo,
   writeApplyPatch,
 } from "@kit/core";
 import type { Store } from "./progress";
 
-export type IterationRisk = "low" | "medium" | "high";
-export type IterationApplyMode = "none" | "low" | "low-medium";
-
-export function allowedByApplyMode(
-  risk: IterationRisk,
-  mode: IterationApplyMode,
-): boolean {
-  if (mode === "none" || risk === "high") {
-    return false;
-  }
-  if (risk === "low") {
-    return true;
-  }
-  return mode === "low-medium";
-}
+export type { IterationApplyMode, IterationRisk };
+export { allowedByApplyMode } from "@kit/core";
 
 export interface PublishIterationArtifactInput {
   iterationId: string;

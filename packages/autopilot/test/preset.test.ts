@@ -1,4 +1,8 @@
-import type { AutopilotConfig } from "@kit/core";
+import {
+  type AutopilotConfig,
+  evaluateIterationApply,
+  resolveIterationApplyMode,
+} from "@kit/core";
 import type { AutonomyPresetRecord } from "@kit/ops";
 import { describe, expect, it } from "vitest";
 import { applyAutonomyPreset } from "../src/preset";
@@ -87,5 +91,46 @@ describe("applyAutonomyPreset", () => {
 
     expect(effective.approval).toEqual(CONFIG.approval);
     expect(effective.schedules).toEqual(CONFIG.schedules);
+  });
+
+  it("cannot auto-apply agent instructions even when the preset forces low-medium", () => {
+    const effective = applyAutonomyPreset(CONFIG, preset());
+    const iteration = effective.iterations[0];
+    if (!iteration) {
+      throw new Error("planned iteration missing");
+    }
+    const applyMode = resolveIterationApplyMode(
+      iteration.mode,
+      iteration.applyMode,
+    );
+
+    expect(applyMode).toBe("low-medium");
+    const decision = evaluateIterationApply({
+      runMode: iteration.mode,
+      applyMode,
+      risk: "medium",
+      changedFiles: ["packs/self-improve/agents/patcher.md"],
+    });
+    expect(decision.action).toBe("block");
+  });
+
+  it("keeps low-risk autopilot iterations auto-appliable", () => {
+    const effective = applyAutonomyPreset(CONFIG, preset());
+    const iteration = effective.iterations[0];
+    if (!iteration) {
+      throw new Error("planned iteration missing");
+    }
+    const applyMode = resolveIterationApplyMode(
+      iteration.mode,
+      iteration.applyMode,
+    );
+
+    const decision = evaluateIterationApply({
+      runMode: iteration.mode,
+      applyMode,
+      risk: "low",
+      changedFiles: ["docs/readme.md"],
+    });
+    expect(decision.action).toBe("apply");
   });
 });

@@ -8,6 +8,7 @@ export * from "./fs-lock";
 export * from "./git-apply";
 export * from "./ids";
 export * from "./iteration";
+export * from "./iteration-policy";
 export * from "./kill-switch";
 export * from "./lkg";
 export * from "./pack";

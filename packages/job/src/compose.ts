@@ -2,10 +2,17 @@ import path from "node:path";
 import {
   type AgentRole,
   type AutopilotConfig,
+  agentRoleSchema,
   isCronExpression,
 } from "@kit/core";
 import { createModelGateway, loadModelConfig } from "@kit/model";
-import { loadPack, rolePlanForAgents, validateRolePlan } from "@kit/pack";
+import {
+  inferAgentRole,
+  loadPack,
+  packCatalog,
+  rolePlanForAgents,
+  validateRolePlan,
+} from "@kit/pack";
 import { JobError } from "./types";
 
 export type ComposeKind =
@@ -13,7 +20,8 @@ export type ComposeKind =
   | "packRun"
   | "approvalPolicy"
   | "autopilot"
-  | "evolutionCycle";
+  | "evolutionCycle"
+  | "agent";
 
 export interface ComposeInput {
   kind: ComposeKind;
@@ -21,6 +29,10 @@ export interface ComposeInput {
   packDir: string;
   repoRoot: string;
   env?: Record<string, string | undefined>;
+  /** Agent being edited; empty when drafting a brand-new member. */
+  agentId?: string;
+  /** Current form values so drafts preserve unsaved edits. */
+  current?: Partial<AgentDraftValues>;
 }
 
 export interface MissionValues {
@@ -69,6 +81,15 @@ export interface EvolutionCycleValues {
   force: boolean;
 }
 
+export interface AgentDraftValues {
+  description: string;
+  model: string;
+  role: AgentRole;
+  instructions: string;
+  tools: string[];
+  skills: string[];
+}
+
 export interface ComposeResult {
   kind: ComposeKind;
   values:
@@ -76,7 +97,8 @@ export interface ComposeResult {
     | PackRunValues
     | ApprovalPolicyValues
     | AutopilotValues
-    | EvolutionCycleValues;
+    | EvolutionCycleValues
+    | AgentDraftValues;
   rationale: string;
   warnings: string[];
   model: "live" | "heuristic";
@@ -144,6 +166,44 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
         })),
       },
       input.env ?? process.env,
+    );
+  }
+  if (input.kind === "agent") {
+    const env = input.env ?? process.env;
+    const agentId = input.agentId?.trim() || null;
+    const current = sanitizeAgentCurrent(input.current);
+    const catalog = await packCatalog(loaded.dir);
+    const packAgents = [...loaded.agents.entries()].map(([id, agent]) => ({
+      id,
+      role: agent.role,
+      model: agent.spec.model,
+      tools: agent.spec.tools,
+      skills: agent.spec.skills,
+    }));
+    const isManager =
+      agentId === "manager" ||
+      current?.role === "manager" ||
+      (agentId !== null && loaded.agents.get(agentId)?.role === "manager");
+    return composeAgent(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        workflows: loaded.workflows.map((workflow) => ({
+          id: workflow.id,
+          stages: workflow.stages.map((stage) => stage.id),
+        })),
+        agents: packAgents,
+        tools: catalog.tools.map((tool) => tool.name),
+        skills: catalog.skills,
+        models: agentModelWhitelist(
+          env,
+          packAgents.map((agent) => agent.model),
+        ),
+        agentId,
+        current,
+        isManager,
+      },
+      env,
     );
   }
   if (input.kind === "packRun") {
@@ -590,6 +650,330 @@ Rules:
     rationale,
     warnings: [...new Set(warnings)],
     model,
+  };
+}
+
+export interface AgentDraftFacts {
+  pack: string;
+  workflows: Array<{ id: string; stages: string[] }>;
+  agents: Array<{
+    id: string;
+    role: AgentRole;
+    model: string;
+    tools: string[];
+    skills: string[];
+  }>;
+  tools: string[];
+  skills: string[];
+  models: string[];
+  agentId: string | null;
+  current: Partial<AgentDraftValues> | null;
+  isManager: boolean;
+}
+
+async function composeAgent(
+  intent: string,
+  facts: AgentDraftFacts,
+  env: Record<string, string | undefined>,
+): Promise<ComposeResult> {
+  const warnings: string[] = [];
+  const fallback = defaultAgentDraft(intent, facts, warnings);
+  let values = fallback;
+  let rationale = facts.current
+    ? "在现有成员字段的基础上补全草稿。"
+    : "按成员 id 与意图推断职责，生成可编辑的成员草稿。";
+  let model: ComposeResult["model"] = "heuristic";
+
+  try {
+    const gateway = createModelGateway(loadModelConfig(env));
+    const response = await gateway.complete({
+      model: "deepseek-flash",
+      instructions: `You draft ONE teammate for a private agent team.
+Return JSON only:
+{"description":"<one sentence>","model":"<model id>","role":"builder|seller|specialist|manager","instructions":"<role prompt in Markdown>","tools":["<tool name>"],"skills":["<skill name>"],"rationale":"<one sentence>","warnings":["<optional>"]}
+Rules:
+- role must be one of the allowed roles; only the manager may use "manager".
+- model must be one of the allowed models.
+- tools and skills must come from the provided catalogs; never invent them.
+- preserve the existing values unless the intent asks to change them.
+- keep the description under 200 characters; do not invent facts.`,
+      input: JSON.stringify({
+        intent,
+        pack: facts.pack,
+        agentId: facts.agentId,
+        isManager: facts.isManager,
+        current: facts.current,
+        roles: [
+          "builder",
+          "seller",
+          "specialist",
+          ...(facts.isManager ? ["manager"] : []),
+        ],
+        models: facts.models,
+        tools: facts.tools,
+        skills: facts.skills,
+        agents: facts.agents,
+        workflows: facts.workflows,
+      }),
+    });
+    const parsed = parseJson(response.text);
+    if (parsed) {
+      const validated = validateAgentDraft(parsed, fallback, facts);
+      if (validated.accepted) {
+        values = validated.values;
+        rationale = validated.rationale ?? rationale;
+        warnings.push(...validated.warnings);
+        if (Array.isArray(parsed.warnings)) {
+          warnings.push(
+            ...parsed.warnings
+              .filter((item): item is string => typeof item === "string")
+              .map((item) => item.slice(0, 300))
+              .slice(0, 5),
+          );
+        }
+        model = "live";
+      } else {
+        warnings.push("AI 草稿未通过校验，已使用启发式草稿。");
+      }
+    } else {
+      warnings.push("AI 草稿无法解析，已使用启发式草稿。");
+    }
+  } catch {
+    warnings.push("AI 草稿不可用，已使用启发式草稿。");
+  }
+
+  return {
+    kind: "agent",
+    values,
+    rationale,
+    warnings: [...new Set(warnings)],
+    model,
+  };
+}
+
+function agentModelWhitelist(
+  env: Record<string, string | undefined>,
+  packModels: string[],
+): string[] {
+  const config = loadModelConfig(env);
+  return [
+    ...new Set([
+      ...Object.keys(config.aliases),
+      ...Object.values(config.aliases),
+      ...packModels.filter((model) => model.trim().length > 0),
+    ]),
+  ].sort();
+}
+
+function sanitizeAgentCurrent(
+  value: Partial<AgentDraftValues> | undefined,
+): Partial<AgentDraftValues> | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const current: Partial<AgentDraftValues> = {};
+  if (typeof record.description === "string") {
+    current.description = record.description;
+  }
+  if (typeof record.model === "string") {
+    current.model = record.model;
+  }
+  if (typeof record.role === "string") {
+    current.role = record.role as AgentRole;
+  }
+  if (typeof record.instructions === "string") {
+    current.instructions = record.instructions;
+  }
+  if (Array.isArray(record.tools)) {
+    current.tools = record.tools.filter(
+      (item): item is string => typeof item === "string",
+    );
+  }
+  if (Array.isArray(record.skills)) {
+    current.skills = record.skills.filter(
+      (item): item is string => typeof item === "string",
+    );
+  }
+  return Object.keys(current).length > 0 ? current : null;
+}
+
+function defaultAgentDraft(
+  intent: string,
+  facts: AgentDraftFacts,
+  warnings: string[],
+): AgentDraftValues {
+  const current = facts.current ?? {};
+  const id = (facts.agentId ?? "").trim();
+  const description =
+    current.description?.trim() ||
+    `${id || "Teammate"}: ${intent}`.slice(0, 300);
+
+  let role: AgentRole = facts.isManager
+    ? "manager"
+    : inferAgentRole(id, description, false);
+  if (current.role) {
+    const parsed = agentRoleSchema.safeParse(current.role);
+    if (facts.isManager) {
+      if (parsed.success && parsed.data !== "manager") {
+        warnings.push("经理职责保持 manager。");
+      }
+    } else if (!parsed.success) {
+      warnings.push(`未知职责 ${String(current.role)}，已按 id 推断。`);
+    } else if (parsed.data === "manager") {
+      warnings.push("非经理成员不能使用 manager 职责，已按 id 推断。");
+    } else {
+      role = parsed.data;
+    }
+  }
+
+  let model = defaultAgentModel(facts.models);
+  const currentModel = current.model?.trim();
+  if (currentModel) {
+    if (facts.models.includes(currentModel)) {
+      model = currentModel;
+    } else {
+      warnings.push(`现有模型 ${currentModel} 不在白名单内，已改用 ${model}。`);
+    }
+  }
+
+  const instructions = (
+    current.instructions?.trim() ||
+    `You are ${id || "a team member"}. ${intent.trim()} Complete the assigned stage and return a concise, verifiable result.`
+  ).slice(0, 8000);
+
+  return {
+    description,
+    model,
+    role,
+    instructions,
+    tools: filterCatalog(current.tools, facts.tools, "工具", warnings),
+    skills: filterCatalog(current.skills, facts.skills, "技能", warnings),
+  };
+}
+
+function defaultAgentModel(models: string[]): string {
+  return models.includes("deepseek-flash")
+    ? "deepseek-flash"
+    : (models[0] ?? "deepseek-flash");
+}
+
+function filterCatalog(
+  values: string[] | undefined,
+  catalog: string[],
+  label: string,
+  warnings: string[],
+): string[] {
+  if (!values) {
+    return [];
+  }
+  const allowed = new Set(catalog);
+  const requested = [
+    ...new Set(values.map((item) => item.trim()).filter(Boolean)),
+  ];
+  const dropped = requested.filter((item) => !allowed.has(item));
+  if (dropped.length > 0) {
+    warnings.push(
+      `${label}不存在于 Pack 目录，已剔除：${dropped.slice(0, 5).join(", ")}`,
+    );
+  }
+  return requested.filter((item) => allowed.has(item));
+}
+
+export function validateAgentDraft(
+  parsed: Record<string, unknown>,
+  fallback: AgentDraftValues,
+  facts: AgentDraftFacts,
+): {
+  values: AgentDraftValues;
+  rationale?: string;
+  warnings: string[];
+  accepted: boolean;
+} {
+  const warnings: string[] = [];
+  let accepted = false;
+  const values: AgentDraftValues = {
+    ...fallback,
+    tools: [...fallback.tools],
+    skills: [...fallback.skills],
+  };
+  const models = new Set(facts.models);
+  const tools = new Set(facts.tools);
+  const skills = new Set(facts.skills);
+
+  if (typeof parsed.description === "string" && parsed.description.trim()) {
+    values.description = parsed.description.trim().slice(0, 300);
+    accepted = true;
+  }
+  if (typeof parsed.instructions === "string" && parsed.instructions.trim()) {
+    values.instructions = parsed.instructions.trim().slice(0, 8000);
+    accepted = true;
+  }
+  if (typeof parsed.model === "string" && parsed.model.trim()) {
+    const candidate = parsed.model.trim();
+    if (models.has(candidate)) {
+      values.model = candidate;
+      accepted = true;
+    } else {
+      warnings.push(`模型 ${candidate} 不在白名单内，已保留默认模型。`);
+    }
+  }
+  if (typeof parsed.role === "string") {
+    const parsedRole = agentRoleSchema.safeParse(parsed.role);
+    if (!parsedRole.success) {
+      warnings.push(`未知职责 ${parsed.role}，已保留默认角色。`);
+    } else if (facts.isManager && parsedRole.data !== "manager") {
+      warnings.push("经理职责不能被改为其他角色，已保留 manager。");
+    } else if (!facts.isManager && parsedRole.data === "manager") {
+      warnings.push("非经理成员不能使用 manager 职责，已保留默认角色。");
+    } else {
+      values.role = parsedRole.data;
+      accepted = true;
+    }
+  }
+  const parseList = (
+    raw: unknown,
+    catalog: Set<string>,
+    label: string,
+  ): string[] | null => {
+    if (!Array.isArray(raw)) {
+      return null;
+    }
+    const requested = [
+      ...new Set(
+        raw
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    ];
+    const dropped = requested.filter((item) => !catalog.has(item));
+    if (dropped.length > 0) {
+      warnings.push(
+        `${label}不存在于 Pack 目录，已剔除：${dropped.slice(0, 5).join(", ")}`,
+      );
+    }
+    return requested.filter((item) => catalog.has(item));
+  };
+  const parsedTools = parseList(parsed.tools, tools, "工具");
+  if (parsedTools) {
+    values.tools = parsedTools;
+    accepted = true;
+  }
+  const parsedSkills = parseList(parsed.skills, skills, "技能");
+  if (parsedSkills) {
+    values.skills = parsedSkills;
+    accepted = true;
+  }
+
+  return {
+    values,
+    rationale:
+      typeof parsed.rationale === "string" && parsed.rationale.trim()
+        ? parsed.rationale.trim().slice(0, 500)
+        : undefined,
+    warnings,
+    accepted,
   };
 }
 

@@ -1,0 +1,18 @@
+# Cold-start budget guardrails.
+#
+# Values are CNY and deliberately conservative. Keep daily and monthly caps at
+# or below these defaults for the whole 7-day window. `dailyRuns` and
+# `dailyCostCny` use the autopilot budget field names; `runCaps` uses the
+# manager budget field names (`costCny`, `tokens`, `wallClockSeconds`).
+version: 1
+currency: CNY
+
+dailyRuns: 2
+dailyCostCny: 2
+monthlyRuns: 40
+monthlyCostCny: 40
+
+runCaps:
+  costCny: 0.5
+  tokens: 16000
+  wallClockSeconds: 900

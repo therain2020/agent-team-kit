@@ -14,6 +14,7 @@ import type {
   QualityFloor,
   Run,
   RunMode,
+  RunOriginKind,
   RunStatus,
   Sensitivity,
   Stage,
@@ -381,6 +382,9 @@ export function toRunRow(run: Run) {
     workflowVersion: run.workflowVersion,
     runMode: run.runMode,
     status: run.status,
+    originKind: run.originKind ?? null,
+    triggerId: run.triggerId ?? null,
+    triggerRunId: run.triggerRunId ?? null,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
@@ -395,6 +399,11 @@ export function fromRunRow(row: typeof runs.$inferSelect): Run {
     workflowVersion: row.workflowVersion,
     runMode: row.runMode as RunMode,
     status: row.status as RunStatus,
+    // Pre-upgrade rows have no origin; surface them as `unknown` instead of
+    // pretending they were operator-initiated.
+    originKind: (row.originKind as RunOriginKind | null) ?? "unknown",
+    ...(row.triggerId ? { triggerId: row.triggerId } : {}),
+    ...(row.triggerRunId ? { triggerRunId: row.triggerRunId } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

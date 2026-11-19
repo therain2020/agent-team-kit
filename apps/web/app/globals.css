@@ -511,11 +511,54 @@
   animation: factory-belt 1.6s linear infinite;
 }
 
+@keyframes atlas-dash {
+  to {
+    stroke-dashoffset: -27;
+  }
+}
+
+.atlas-flow {
+  animation: atlas-dash 1.5s linear infinite;
+}
+
+@keyframes atlas-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.atlas-node-pulse {
+  animation: atlas-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes atlas-bar-in {
+  from {
+    transform: translateY(-50%) scaleX(0);
+    opacity: 0.2;
+  }
+  to {
+    transform: translateY(-50%) scaleX(1);
+    opacity: 1;
+  }
+}
+
+.atlas-bar {
+  transform-origin: left center;
+  animation: atlas-bar-in 0.75s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pixel-bob-idle,
   .office-blink,
   .office-screen,
-  .factory-belt {
+  .factory-belt,
+  .atlas-flow,
+  .atlas-node-pulse,
+  .atlas-bar {
     animation: none !important;
   }
 }

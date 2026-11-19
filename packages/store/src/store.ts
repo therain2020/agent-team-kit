@@ -4,6 +4,7 @@ import { type BlobClient, FsBlobClient, S3BlobClient } from "./blob";
 import { BudgetService } from "./budget-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
 import { createDb } from "./db";
+import { SqlEventSpoolStore } from "./event-spool";
 import { LastKnownGoodService } from "./lkg-service";
 import { ensureSchema } from "./migrate";
 import {
@@ -88,6 +89,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     close: handle.close,
     ping: handle.ping,
     ...repositories,
+    spool: new SqlEventSpoolStore(handle.sql),
     blobClient,
     artifactService: new ArtifactService(blobs, artifactStore, blobClient, {
       sql: handle.sql,

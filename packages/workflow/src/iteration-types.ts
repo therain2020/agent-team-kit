@@ -2,6 +2,7 @@ import type {
   CoderId,
   IterationTask,
   RunBudgetSpec,
+  RunOrigin,
   TaskPlan,
 } from "@kit/core";
 
@@ -25,6 +26,7 @@ export interface IterationInput {
   budgetCny?: number;
   budget?: RunBudgetSpec;
   dedupeKey?: string;
+  origin?: RunOrigin;
 }
 
 export interface PlannedIteration {
@@ -103,6 +105,9 @@ export interface IterationRiskResult {
   risk: "low" | "medium" | "high";
   reasons: string[];
   forbidden: boolean;
+  /** Protected substrate files force explicit approval (or a proposal). */
+  requiresApproval?: boolean;
+  protectedPaths?: string[];
 }
 
 export interface ApplyTaskActivityInput {
@@ -116,6 +121,7 @@ export interface ApplyTaskActivityInput {
   applyMode: "none" | "low" | "low-medium";
   runMode: "DRY_RUN" | "LIVE";
   diffArtifactId: string;
+  verificationArtifactId?: string;
   baselineSha: string;
   changedFiles: string[];
 }

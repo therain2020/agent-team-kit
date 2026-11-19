@@ -186,6 +186,9 @@ async function executeIteration(
           applyMode: input.applyMode,
           runMode: input.runMode,
           diffArtifactId: coderResult.diffArtifactId,
+          ...(verification?.artifactId
+            ? { verificationArtifactId: verification.artifactId }
+            : {}),
           baselineSha: coderResult.baselineSha,
           changedFiles: coderResult.changedFiles,
         });

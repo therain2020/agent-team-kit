@@ -48,6 +48,9 @@ export const runs = pgTable("runs", {
   workflowVersion: text("workflow_version").notNull(),
   runMode: text("run_mode").notNull(),
   status: text("status").notNull(),
+  originKind: text("origin_kind"),
+  triggerId: text("trigger_id"),
+  triggerRunId: text("trigger_run_id"),
   createdAt: timestamp("created_at", {
     withTimezone: true,
     mode: "string",
