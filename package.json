@@ -38,6 +38,7 @@
     "autopilot": "tsx apps/runtime/src/autopilot.ts",
     "smoke:recovery": "tsx apps/runtime/src/temporal/recovery-smoke.ts",
     "drill:kill-switch": "tsx scripts/kill-switch-drill.ts",
+    "drill:event-spool": "tsx scripts/event-spool-drill.ts",
     "web:dev": "bun run --cwd apps/web dev",
     "web:build": "bun run --cwd apps/web build",
     "web:start": "bun run --cwd apps/web start",

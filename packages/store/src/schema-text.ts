@@ -455,6 +455,20 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
 
+CREATE TABLE IF NOT EXISTS event_spool (
+  spool_id BIGSERIAL PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  subject TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'P2',
+  payload TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  enqueued_at TIMESTAMPTZ NOT NULL,
+  delivered_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_spool_pending
+  ON event_spool(delivered_at, spool_id);
+
 CREATE TABLE IF NOT EXISTS ops_settings (
   workspace_id TEXT PRIMARY KEY,
   policy JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -1061,6 +1075,20 @@ CREATE TABLE IF NOT EXISTS degradation_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_degradation_audit_occurred ON degradation_audit(occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS event_spool (
+  spool_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE,
+  subject TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'P2',
+  payload TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  enqueued_at TEXT NOT NULL,
+  delivered_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_spool_pending
+  ON event_spool(delivered_at, spool_id);
 
 CREATE TABLE IF NOT EXISTS ops_settings (
   workspace_id TEXT PRIMARY KEY,

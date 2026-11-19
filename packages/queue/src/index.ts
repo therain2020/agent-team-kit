@@ -6,6 +6,8 @@ import {
   connect,
 } from "nats";
 
+export * from "./spool";
+
 export interface QueueMessage {
   subject: string;
   data: Uint8Array;
