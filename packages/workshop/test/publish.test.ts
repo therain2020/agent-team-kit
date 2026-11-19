@@ -78,7 +78,7 @@ const PIPELINE = `apiVersion: agentteam/v1
 kind: Pipeline
 id: demo-pipeline
 name: Demo Pipeline
-version: 1.0
+version: "1.0"
 description: A demo pipeline
 graph:
   nodes:
@@ -343,6 +343,23 @@ describe("workshop publish by kind", () => {
     ) as { kind: string; entry: string };
     expect(written.kind).toBe("pipeline");
     expect(written.entry).toBe("pipeline.yaml");
+  });
+
+  it("validates a generated manifest on the next run", async () => {
+    const dir = await makeDir({
+      "pipeline.yaml": PIPELINE,
+      "README.md": README,
+    });
+    const first = await publishWorkshop({ dir, write: true });
+    expect(first.written).toBe(true);
+
+    const second = await publishWorkshop({ dir });
+    expect(second.ok).toBe(true);
+    expect(second.generated).toBe(false);
+    expect(second.kind).toBe("pipeline");
+    expect(second.checks.find((entry) => entry.id === "pipeline")?.status).toBe(
+      "pass",
+    );
   });
 
   it("returns a readable failure when there is no entry", async () => {
