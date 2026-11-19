@@ -485,7 +485,10 @@ export async function assembleComponents(
   warnings.push(...roleErrors.warnings);
 
   if (issues.length > 0) {
-    throw new AssemblyError("assembly rejected", issues, warnings);
+    const summary = issues
+      .map((issue) => `${issue.code} ${issue.path}: ${issue.message}`)
+      .join("; ");
+    throw new AssemblyError(`assembly rejected: ${summary}`, issues, warnings);
   }
 
   // ---- Plan the writes. ----

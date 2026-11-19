@@ -305,7 +305,7 @@ describe("component assembler", () => {
     expect(loaded.agents.has("analyst")).toBe(true);
     expect(loaded.pack.workflows).toContain("workflows/review.yaml");
 
-    const built = await buildPackRun(loaded);
+    const built = await buildPackRun(loaded, { workflow: "review" });
     const reviewStages = built.input.stages;
     expect(reviewStages.some((stage) => stage.agentId === "analyst")).toBe(
       true,
