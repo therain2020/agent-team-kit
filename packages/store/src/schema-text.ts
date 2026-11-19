@@ -527,6 +527,29 @@ CREATE INDEX IF NOT EXISTS idx_activity_agent ON activity_events(agent_id, creat
 CREATE INDEX IF NOT EXISTS idx_activity_kind ON activity_events(kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ops_alerts_workspace ON ops_alerts(workspace_id, status, last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ops_alerts_dedupe ON ops_alerts(workspace_id, dedupe_key, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS approvals (
+  approval_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requester TEXT NOT NULL,
+  required_role TEXT,
+  payload_ref TEXT,
+  sla_due_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  decision_by TEXT,
+  decision_at TIMESTAMPTZ,
+  decision_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_inbox
+  ON approvals(workspace_id, status, sla_due_at);
+CREATE INDEX IF NOT EXISTS idx_approvals_run
+  ON approvals(run_id, created_at DESC);
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -1051,4 +1074,27 @@ CREATE INDEX IF NOT EXISTS idx_activity_agent ON activity_events(agent_id, creat
 CREATE INDEX IF NOT EXISTS idx_activity_kind ON activity_events(kind, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ops_alerts_workspace ON ops_alerts(workspace_id, status, last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ops_alerts_dedupe ON ops_alerts(workspace_id, dedupe_key, last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS approvals (
+  approval_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requester TEXT NOT NULL,
+  required_role TEXT,
+  payload_ref TEXT,
+  sla_due_at TEXT,
+  expires_at TEXT,
+  decision_by TEXT,
+  decision_at TEXT,
+  decision_reason TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_inbox
+  ON approvals(workspace_id, status, sla_due_at);
+CREATE INDEX IF NOT EXISTS idx_approvals_run
+  ON approvals(run_id, created_at DESC);
 `;
