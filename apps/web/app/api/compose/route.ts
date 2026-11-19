@@ -1,9 +1,13 @@
 import { sameOriginError } from "@/lib/http";
 import { jobErrorResponse } from "@/lib/job-api";
 import { getRepoRoot } from "@/lib/paths";
+import { toSourceCandidateInputs } from "@/lib/source-draft";
+import { searchSourceMarketForIntent } from "@/lib/sources";
 import {
   type AgentDraftValues,
   type ComposeKind,
+  JobError,
+  type SourceCandidateInput,
   composeJob,
   parseWorkflowDraftStages,
 } from "@kit/job";
@@ -38,23 +42,30 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, or workflow",
+          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, workflow, or source",
       },
       { status: 400 },
     );
   }
-  // A `pack` draft scaffolds a brand-new pack, so it has no existing directory.
+  // `pack` and `source` drafts scaffold something brand new, so they have no
+  // existing pack directory to resolve against.
+  const intent = typeof body.intent === "string" ? body.intent : "";
   const packDir = typeof body.packDir === "string" ? body.packDir : "";
-  if (kind !== "pack" && !packDir.trim()) {
+  if (kind !== "pack" && kind !== "source" && !packDir.trim()) {
     return NextResponse.json({ error: "packDir is required" }, { status: 400 });
+  }
+  if (kind === "source" && !intent.trim()) {
+    return NextResponse.json({ error: "intent is required" }, { status: 400 });
   }
 
   const current = parseAgentCurrent(body.current);
   const currentStages = parseWorkflowDraftStages(body.currentStages);
   try {
+    const sourceCandidates =
+      kind === "source" ? await loadSourceCandidates(intent) : undefined;
     const result = await composeJob({
       kind,
-      intent: typeof body.intent === "string" ? body.intent : "",
+      intent,
       packDir,
       repoRoot: getRepoRoot(),
       ...(typeof body.agentId === "string" ? { agentId: body.agentId } : {}),
@@ -63,10 +74,25 @@ export async function POST(request: Request) {
         : {}),
       ...(current ? { current } : {}),
       ...(currentStages ? { currentStages } : {}),
+      ...(sourceCandidates ? { sourceCandidates } : {}),
     });
     return NextResponse.json(result);
   } catch (error) {
     return jobErrorResponse(error);
+  }
+}
+
+async function loadSourceCandidates(
+  intent: string,
+): Promise<SourceCandidateInput[]> {
+  try {
+    return toSourceCandidateInputs(await searchSourceMarketForIntent(intent));
+  } catch (error) {
+    throw new JobError(
+      "source_search_failed",
+      error instanceof Error ? error.message : "source market search failed",
+      502,
+    );
   }
 }
 
@@ -78,7 +104,8 @@ function parseKind(value: unknown): ComposeKind | undefined {
     value === "evolutionCycle" ||
     value === "agent" ||
     value === "pack" ||
-    value === "workflow"
+    value === "workflow" ||
+    value === "source"
     ? value
     : undefined;
 }

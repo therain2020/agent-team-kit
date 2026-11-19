@@ -72,6 +72,8 @@ export interface EnqueueApprovalInput {
 export interface ApprovalQuery {
   workspaceId?: string;
   status?: ApprovalStatus;
+  /** Narrow to one job/run; the job hub lists every approval of a job. */
+  runId?: string;
   /** Filter on the joined run status, e.g. `paused` for the legacy inbox. */
   runStatus?: string;
   sort?: "due" | "created";
@@ -223,6 +225,9 @@ export class ApprovalService {
     const statusFilter = query.status
       ? this.store.sql`AND a.status = ${query.status}`
       : this.store.sql``;
+    const runIdFilter = query.runId
+      ? this.store.sql`AND a.run_id = ${query.runId}`
+      : this.store.sql``;
     const runFilter = query.runStatus
       ? this.store.sql`AND r.status = ${query.runStatus}`
       : this.store.sql``;
@@ -242,6 +247,7 @@ export class ApprovalService {
         WHERE 1 = 1
           ${workspaceFilter}
           ${statusFilter}
+          ${runIdFilter}
           ${runFilter}
           ${cursorFilter}
         ORDER BY COALESCE(a.sla_due_at, a.expires_at, a.created_at) ASC,
@@ -262,6 +268,7 @@ export class ApprovalService {
         WHERE 1 = 1
           ${workspaceFilter}
           ${statusFilter}
+          ${runIdFilter}
           ${runFilter}
           ${cursorFilter}
         ORDER BY a.created_at DESC, a.approval_id DESC

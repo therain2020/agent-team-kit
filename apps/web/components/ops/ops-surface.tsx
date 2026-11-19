@@ -2,6 +2,7 @@
 
 import { AutopilotConsole } from "@/components/autopilot/autopilot-console";
 import { BudgetConsole } from "@/components/budgets/budget-console";
+import { CostAttribution } from "@/components/costs/cost-attribution";
 import type { DependencyView } from "@/components/degradation/degradation-controls";
 import { KillSwitchConsole } from "@/components/kill-switch/kill-switch-console";
 import { AutonomyCard } from "@/components/ops/autonomy-card";
@@ -14,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import type { AutopilotOverview } from "@/lib/autopilot";
 import type { BudgetOverview } from "@/lib/budgets";
 import type { CapacityOverview } from "@/lib/capacity-math";
+import type { CostOverview } from "@/lib/costs";
 import type { KillSwitchState } from "@/lib/kill-switch";
 import type { LkgView } from "@/lib/lkg";
 import type { OpsConsoleData } from "@/lib/ops";
@@ -45,6 +47,7 @@ export interface OpsSurfaceData {
   audit: DegradationAuditRecord[];
   dependencies: DependencyView[];
   budgets: BudgetOverview;
+  costs: CostOverview;
   killSwitch: KillSwitchState;
   autopilot: AutopilotOverview;
   lkg: LkgView[];
@@ -296,6 +299,7 @@ export function OpsSurface({
         }}
       >
         <BudgetConsole overview={initial.budgets} />
+        <CostAttribution overview={initial.costs} />
       </OpsSectionBlock>
 
       <OpsSectionBlock

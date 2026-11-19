@@ -10,6 +10,7 @@ const STALE_MS = 3 * 60 * 1000;
 export interface RunRow {
   iteration_id: string;
   workflow_id: string | null;
+  repo_root: string | null;
   goal: string;
   acceptance: string | null;
   run_mode: string;
@@ -91,6 +92,7 @@ export function mapRun(row: RunRow, tokens: number): IterationRunView {
   return {
     iterationId: row.iteration_id,
     workflowId: row.workflow_id,
+    repoRoot: row.repo_root ?? null,
     goal: row.goal,
     acceptance: row.acceptance,
     runMode: row.run_mode,

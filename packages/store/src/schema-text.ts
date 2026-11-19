@@ -739,6 +739,117 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
 
+CREATE TABLE IF NOT EXISTS cost_records (
+  record_id TEXT PRIMARY KEY,
+  call_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT,
+  agent_id TEXT,
+  source TEXT NOT NULL,
+  artifact_id TEXT,
+  model_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  tokens_in BIGINT NOT NULL DEFAULT 0,
+  tokens_out BIGINT NOT NULL DEFAULT 0,
+  unit_price_in_micro BIGINT NOT NULL DEFAULT 0,
+  unit_price_out_micro BIGINT NOT NULL DEFAULT 0,
+  price_version TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  cost_cny_micro BIGINT NOT NULL DEFAULT 0,
+  tracked BOOLEAN NOT NULL DEFAULT true,
+  untracked_reason TEXT,
+  day_key TEXT NOT NULL,
+  ts TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (workspace_id, call_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cost_records_day
+  ON cost_records(workspace_id, day_key);
+CREATE INDEX IF NOT EXISTS idx_cost_records_run
+  ON cost_records(workspace_id, run_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_cost_records_artifact
+  ON cost_records(workspace_id, artifact_id);
+
+CREATE TABLE IF NOT EXISTS price_tables (
+  version TEXT PRIMARY KEY,
+  effective_at TIMESTAMPTZ NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  entries JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS provider_bills (
+  bill_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  amount_cny_micro BIGINT NOT NULL,
+  source TEXT NOT NULL,
+  imported_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (workspace_id, provider, period_start, period_end, source)
+);
+CREATE INDEX IF NOT EXISTS idx_provider_bills_period
+  ON provider_bills(workspace_id, provider, period_start, period_end);
+CREATE TABLE IF NOT EXISTS information_raw_captures (
+  capture_key TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL,
+  content_ref TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  content TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_information_captures_source
+  ON information_raw_captures(workspace_id, source_id, fetched_at DESC);
+
+CREATE TABLE IF NOT EXISTS information_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL DEFAULT 'passive',
+  capture_key TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  item_ref TEXT NOT NULL,
+  url TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  occurred_at TIMESTAMPTZ NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL,
+  sensitivity TEXT NOT NULL DEFAULT 'internal',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (workspace_id, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS idx_information_events_source
+  ON information_events(workspace_id, source_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_information_events_created
+  ON information_events(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS source_health (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  runs INTEGER NOT NULL DEFAULT 0,
+  successes INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  items_collected INTEGER NOT NULL DEFAULT 0,
+  events_created INTEGER NOT NULL DEFAULT 0,
+  latency_ms_total BIGINT NOT NULL DEFAULT 0,
+  last_latency_ms INTEGER,
+  total_cost_cny_micro BIGINT NOT NULL DEFAULT 0,
+  last_success_at TIMESTAMPTZ,
+  last_failure_at TIMESTAMPTZ,
+  last_error TEXT,
+  degraded BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, source_id)
+);
+
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -1545,6 +1656,117 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN assignee TEXT;
 ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
+
+CREATE TABLE IF NOT EXISTS cost_records (
+  record_id TEXT PRIMARY KEY,
+  call_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  stage_id TEXT,
+  agent_id TEXT,
+  source TEXT NOT NULL,
+  artifact_id TEXT,
+  model_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  tokens_in INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  unit_price_in_micro INTEGER NOT NULL DEFAULT 0,
+  unit_price_out_micro INTEGER NOT NULL DEFAULT 0,
+  price_version TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  cost_cny_micro INTEGER NOT NULL DEFAULT 0,
+  tracked INTEGER NOT NULL DEFAULT 1,
+  untracked_reason TEXT,
+  day_key TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (workspace_id, call_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cost_records_day
+  ON cost_records(workspace_id, day_key);
+CREATE INDEX IF NOT EXISTS idx_cost_records_run
+  ON cost_records(workspace_id, run_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_cost_records_artifact
+  ON cost_records(workspace_id, artifact_id);
+
+CREATE TABLE IF NOT EXISTS price_tables (
+  version TEXT PRIMARY KEY,
+  effective_at TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  entries TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS provider_bills (
+  bill_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'CNY',
+  amount_cny_micro INTEGER NOT NULL,
+  source TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  UNIQUE (workspace_id, provider, period_start, period_end, source)
+);
+CREATE INDEX IF NOT EXISTS idx_provider_bills_period
+  ON provider_bills(workspace_id, provider, period_start, period_end);
+CREATE TABLE IF NOT EXISTS information_raw_captures (
+  capture_key TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  content_ref TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  content TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_information_captures_source
+  ON information_raw_captures(workspace_id, source_id, fetched_at DESC);
+
+CREATE TABLE IF NOT EXISTS information_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL DEFAULT 'passive',
+  capture_key TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  item_ref TEXT NOT NULL,
+  url TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  occurred_at TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  sensitivity TEXT NOT NULL DEFAULT 'internal',
+  payload TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE (workspace_id, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS idx_information_events_source
+  ON information_events(workspace_id, source_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_information_events_created
+  ON information_events(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS source_health (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  runs INTEGER NOT NULL DEFAULT 0,
+  successes INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  items_collected INTEGER NOT NULL DEFAULT 0,
+  events_created INTEGER NOT NULL DEFAULT 0,
+  latency_ms_total INTEGER NOT NULL DEFAULT 0,
+  last_latency_ms INTEGER,
+  total_cost_cny_micro INTEGER NOT NULL DEFAULT 0,
+  last_success_at TEXT,
+  last_failure_at TEXT,
+  last_error TEXT,
+  degraded INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, source_id)
+);
 
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,

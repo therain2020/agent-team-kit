@@ -11,7 +11,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import type {
+  SourceCandidateSummary,
+  SourceDraftValues,
+  SourceRiskSummary,
+} from "@kit/job";
 import type { SourceCandidate } from "@kit/source";
 import {
   Download,
@@ -20,6 +26,7 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  Sparkles,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -39,6 +46,30 @@ export interface InstalledSourceView {
   trust: string;
 }
 
+interface SourceDraftResult {
+  values: SourceDraftValues;
+  rationale: string;
+  warnings: string[];
+  model: "live" | "heuristic";
+}
+
+const RISK_VARIANT: Record<
+  SourceRiskSummary["level"],
+  "success" | "warning" | "danger"
+> = {
+  low: "success",
+  medium: "warning",
+  high: "danger",
+};
+
+function riskLabelKeys(level: SourceRiskSummary["level"]): string {
+  return level === "high"
+    ? "riskHigh"
+    : level === "medium"
+      ? "riskMedium"
+      : "riskLow";
+}
+
 export function SourcesMarket({
   installed,
 }: {
@@ -53,6 +84,15 @@ export function SourcesMarket({
   const [selected, setSelected] = useState<SourceCandidate | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [installing, setInstalling] = useState(false);
+
+  const [intent, setIntent] = useState("");
+  const [draft, setDraft] = useState<SourceDraftResult | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  const [draftRepo, setDraftRepo] = useState<string | null>(null);
+  const [draftConfirmed, setDraftConfirmed] = useState(false);
+
+  const draftSelected: SourceCandidateSummary | null =
+    draft?.values.candidates.find((item) => item.repo === draftRepo) ?? null;
 
   async function search() {
     setSearching(true);
@@ -81,19 +121,49 @@ export function SourcesMarket({
     }
   }
 
-  async function install() {
-    if (!selected?.manifest || !confirmed) {
+  async function composeDraft() {
+    if (!intent.trim()) {
+      toast.error(t("intentPlaceholder"));
       return;
     }
+    setDrafting(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/compose", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "source", intent: intent.trim() }),
+      });
+      const payload = (await response.json()) as SourceDraftResult & {
+        error?: string;
+      };
+      if (!response.ok || !payload.values) {
+        throw new Error(payload.error ?? t("draftFailed"));
+      }
+      setDraft({
+        values: payload.values,
+        rationale: payload.rationale ?? "",
+        warnings: payload.warnings ?? [],
+        model: payload.model === "live" ? "live" : "heuristic",
+      });
+      setDraftRepo(payload.values.repo || null);
+      setDraftConfirmed(false);
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setDrafting(false);
+    }
+  }
+
+  async function installRepo(repo: string): Promise<boolean> {
     setInstalling(true);
     try {
       const response = await fetch("/api/sources", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          repo: selected.repo,
-          confirm: true,
-        }),
+        body: JSON.stringify({ repo, confirm: true }),
       });
       const payload = (await response.json()) as {
         error?: string;
@@ -102,16 +172,35 @@ export function SourcesMarket({
       if (!response.ok) {
         throw new Error(payload.error ?? t("installFailed"));
       }
-      toast.success(t("installed", { name: payload.name ?? selected.repo }));
-      setSelected(null);
-      setConfirmed(false);
+      toast.success(t("installed", { name: payload.name ?? repo }));
       router.refresh();
+      return true;
     } catch (problem) {
       toast.error(
         problem instanceof Error ? problem.message : t("installFailed"),
       );
+      return false;
     } finally {
       setInstalling(false);
+    }
+  }
+
+  async function install() {
+    if (!selected?.manifest || !confirmed) {
+      return;
+    }
+    if (await installRepo(selected.repo)) {
+      setSelected(null);
+      setConfirmed(false);
+    }
+  }
+
+  async function installDraft() {
+    if (!draftSelected || !draftConfirmed) {
+      return;
+    }
+    if (await installRepo(draftSelected.repo)) {
+      setDraftConfirmed(false);
     }
   }
 
@@ -160,6 +249,153 @@ export function SourcesMarket({
         <ShieldAlert className="mt-0.5 size-4 shrink-0" />
         <p>{t("securityNotice")}</p>
       </div>
+
+      <section className="rounded-xl border border-border bg-card p-4">
+        <h2 className="mb-2 flex items-center gap-2 text-sm font-medium text-zinc-200">
+          <Sparkles className="size-4 text-violet-400" />
+          {t("intentTitle")}
+        </h2>
+        <p className="mb-2 text-[10px] text-zinc-500">{t("intentHint")}</p>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Textarea
+            value={intent}
+            onChange={(event) => setIntent(event.target.value)}
+            placeholder={t("intentPlaceholder")}
+            rows={2}
+            className="text-[11px] leading-relaxed"
+          />
+          <Button
+            className="sm:w-40"
+            onClick={composeDraft}
+            disabled={drafting || !intent.trim()}
+          >
+            <Sparkles className={cn("size-3.5", drafting && "animate-pulse")} />
+            {drafting ? t("drafting") : t("draft")}
+          </Button>
+        </div>
+
+        {draft ? (
+          <div className="mt-4 space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={draft.model === "live" ? "info" : "outline"}>
+                {draft.model === "live" ? t("draftLive") : t("draftHeuristic")}
+              </Badge>
+              {draft.values.risk ? (
+                <Badge variant={RISK_VARIANT[draft.values.risk.level]}>
+                  {t(riskLabelKeys(draft.values.risk.level))}
+                </Badge>
+              ) : null}
+              <span className="text-[10px] text-zinc-500">
+                {t("draftSelectHint")}
+              </span>
+            </div>
+
+            {draft.values.repo === "" ? (
+              <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-[11px] text-zinc-500">
+                {t("draftEmpty")}
+              </p>
+            ) : (
+              <>
+                <div>
+                  <p className="mb-1 text-[10px] uppercase tracking-wider text-zinc-500">
+                    {t("draftCandidates", {
+                      count: draft.values.candidates.length,
+                    })}
+                  </p>
+                  <ul className="space-y-1.5">
+                    {draft.values.candidates.map((candidate) => {
+                      const installable = Boolean(candidate.manifest);
+                      const active = candidate.repo === draftRepo;
+                      return (
+                        <li key={candidate.repo}>
+                          <button
+                            type="button"
+                            disabled={!installable}
+                            onClick={() => {
+                              setDraftRepo(candidate.repo);
+                              setDraftConfirmed(false);
+                            }}
+                            className={cn(
+                              "flex w-full flex-wrap items-center gap-1.5 rounded-lg border px-3 py-2 text-left transition-colors",
+                              active
+                                ? "border-violet-500/50 bg-violet-500/[0.06]"
+                                : "border-border bg-zinc-950/30 hover:border-zinc-600",
+                              !installable && "cursor-not-allowed opacity-50",
+                            )}
+                          >
+                            <span className="font-mono text-xs text-zinc-200">
+                              {candidate.repo}
+                            </span>
+                            {candidate.manifest ? (
+                              <Badge variant="success">
+                                {candidate.manifest.name}@
+                                {candidate.manifest.version}
+                              </Badge>
+                            ) : (
+                              <Badge variant="danger">
+                                {t("notInstallable")}
+                              </Badge>
+                            )}
+                            <span className="text-[10px] text-amber-300/80">
+                              ★ {candidate.stars}
+                            </span>
+                            <Badge variant={RISK_VARIANT[candidate.risk.level]}>
+                              {t(riskLabelKeys(candidate.risk.level))}
+                            </Badge>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+
+                {draftSelected?.risk ? (
+                  <RiskPanel
+                    candidate={draftSelected}
+                    reason={
+                      draftSelected.repo === draft.values.repo
+                        ? draft.values.reason
+                        : ""
+                    }
+                    rationale={draft.rationale}
+                    warnings={draft.warnings}
+                  />
+                ) : null}
+
+                {draftSelected ? (
+                  <div className="space-y-2">
+                    <label className="flex items-start gap-2 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-[10px] text-amber-200/90">
+                      <input
+                        type="checkbox"
+                        checked={draftConfirmed}
+                        onChange={(event) =>
+                          setDraftConfirmed(event.target.checked)
+                        }
+                        className="mt-0.5 size-3.5 accent-amber-500"
+                      />
+                      <span>{t("confirmCheckbox")}</span>
+                    </label>
+                    <Button
+                      size="sm"
+                      onClick={installDraft}
+                      disabled={!draftConfirmed || installing}
+                    >
+                      <Download className="size-3.5" />
+                      {installing ? t("installing") : t("installSelected")}
+                    </Button>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        ) : null}
+      </section>
+
+      {error ? (
+        <p className="whitespace-pre-wrap rounded-lg border border-red-500/25 bg-red-500/5 px-4 py-2 text-[10px] text-red-300">
+          {error}
+        </p>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="rounded-xl border border-border bg-card p-4">
@@ -230,17 +466,13 @@ export function SourcesMarket({
           )}
         </section>
 
-        <section className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-200">
-              <Search className="size-4 text-sky-400" />
-              {t("marketTitle")}
-            </h2>
-            <span className="font-mono text-[10px] text-zinc-600">
-              topic:agent-team-source
-            </span>
-          </div>
-          <div className="flex gap-2">
+        <details className="rounded-xl border border-border bg-card p-4">
+          <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium text-zinc-200">
+            <Search className="size-4 text-sky-400" />
+            {t("manualTitle")}
+          </summary>
+          <p className="mt-1 text-[10px] text-zinc-500">{t("manualHint")}</p>
+          <div className="mt-3 flex gap-2">
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -259,12 +491,6 @@ export function SourcesMarket({
               {t("search")}
             </Button>
           </div>
-          {error ? (
-            <p className="mt-2 whitespace-pre-wrap text-[10px] text-red-300">
-              {error}
-            </p>
-          ) : null}
-
           <ul className="mt-3 space-y-2">
             {results.map((candidate) => {
               const installedAlready = installed.some(
@@ -331,7 +557,7 @@ export function SourcesMarket({
               {t("searchHint")}
             </p>
           ) : null}
-        </section>
+        </details>
       </div>
 
       <Dialog
@@ -387,6 +613,95 @@ export function SourcesMarket({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function RiskPanel({
+  candidate,
+  reason,
+  rationale,
+  warnings,
+}: {
+  candidate: SourceCandidateSummary;
+  reason: string;
+  rationale: string;
+  warnings: string[];
+}) {
+  const t = useTranslations("sources");
+  const risk = candidate.risk;
+  const rows: Array<{ key: string; label: string; value: string }> = [
+    { key: "network", label: t("riskNetwork"), value: risk.network },
+    {
+      key: "endpoint",
+      label: t("riskEndpoint"),
+      value: risk.endpoint || "—",
+    },
+    { key: "trust", label: t("riskTrust"), value: risk.trust },
+    { key: "auth", label: t("riskAuth"), value: risk.auth },
+    { key: "rate", label: t("riskRateLimits"), value: risk.rateLimits },
+    { key: "tos", label: t("riskTos"), value: risk.tos },
+    {
+      key: "credibility",
+      label: t("riskCredibility"),
+      value: risk.credibility,
+    },
+    { key: "secret", label: t("riskSecret"), value: risk.secret },
+  ];
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-zinc-950/40 p-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+          {t("riskTitle")}
+        </span>
+        <Badge variant={RISK_VARIANT[risk.level]}>
+          {t(riskLabelKeys(risk.level))}
+        </Badge>
+        <span className="font-mono text-[10px] text-zinc-500">
+          {candidate.repo}
+        </span>
+      </div>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[10px]">
+        {rows.map((row) => (
+          <div key={row.key} className="contents">
+            <dt className="text-zinc-500">{row.label}</dt>
+            <dd
+              className={cn(
+                "break-all",
+                row.key === "secret" && risk.level === "high" && "text-red-300",
+              )}
+            >
+              {row.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {risk.notes.length > 0 ? (
+        <ul className="space-y-0.5 text-[10px] text-amber-200/80">
+          {risk.notes.map((note) => (
+            <li key={note}>• {note}</li>
+          ))}
+        </ul>
+      ) : null}
+      {reason ? (
+        <p className="text-[10px] text-zinc-300">
+          <span className="text-zinc-500">{t("draftReason")}: </span>
+          {reason}
+        </p>
+      ) : null}
+      {rationale ? (
+        <p className="text-[10px] text-zinc-400">
+          <span className="text-zinc-500">{t("draftRationale")}: </span>
+          {rationale}
+        </p>
+      ) : null}
+      {warnings.length > 0 ? (
+        <ul className="space-y-0.5 text-[10px] text-amber-300/80">
+          {warnings.map((warning) => (
+            <li key={warning}>• {warning}</li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

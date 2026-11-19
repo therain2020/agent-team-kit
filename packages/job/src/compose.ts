@@ -16,6 +16,11 @@ import {
   validateStageGraph,
 } from "@kit/pack";
 import { type PackDraftValues, composePackDraft } from "./compose-pack";
+import {
+  type SourceCandidateInput,
+  type SourceDraftValues,
+  composeSource,
+} from "./source-draft";
 import { JobError } from "./types";
 
 export type ComposeKind =
@@ -26,7 +31,8 @@ export type ComposeKind =
   | "evolutionCycle"
   | "agent"
   | "pack"
-  | "workflow";
+  | "workflow"
+  | "source";
 
 export interface ComposeInput {
   kind: ComposeKind;
@@ -42,6 +48,8 @@ export interface ComposeInput {
   templateId?: string;
   /** Current (possibly unsaved) stage graph when editing a workflow. */
   currentStages?: DraftStage[];
+  /** Market candidates for the `source` kind; never fetched inside this pack. */
+  sourceCandidates?: SourceCandidateInput[];
 }
 
 export interface MissionValues {
@@ -113,7 +121,8 @@ export interface ComposeResult {
     | EvolutionCycleValues
     | AgentDraftValues
     | PackDraftValues
-    | WorkflowDraftValues;
+    | WorkflowDraftValues
+    | SourceDraftValues;
   rationale: string;
   warnings: string[];
   model: "live" | "heuristic";
@@ -135,6 +144,14 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
       env: input.env ?? process.env,
     });
     return { kind: "pack", ...draft };
+  }
+  // Source drafts never touch a pack; candidates come from the market reader.
+  if (input.kind === "source") {
+    return composeSource(
+      intent,
+      input.sourceCandidates ?? [],
+      input.env ?? process.env,
+    );
   }
   const packDir = resolvePackDir(input.repoRoot, input.packDir);
   const loaded = await loadPack(packDir);

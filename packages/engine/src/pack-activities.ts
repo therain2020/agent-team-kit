@@ -41,6 +41,12 @@ import type {
 } from "@kit/workflow";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import { callWithCircuitBreaker, circuitDimensions } from "./circuit-breaker";
+import {
+  attachStageArtifact,
+  recordCoderCost,
+  recordToolCall,
+  trackedGateway,
+} from "./cost-attribution";
 import { heartbeat } from "./heartbeat";
 import { assertKillSwitchClear } from "./kill-switch";
 import { createSideEffectGateway } from "./side-effect-gateway";
@@ -632,9 +638,16 @@ async function executePackStageInner(
         },
         "model",
       );
-      const gateway = input.stub
-        ? new StubModelGateway()
-        : createModelGateway();
+      const gateway = trackedGateway(
+        store,
+        {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          stageId: input.stageId,
+          agentId: input.agentId,
+        },
+        input.stub ? new StubModelGateway() : createModelGateway(),
+      );
       const instructions = input.instructions ?? "";
       const response = await withBudget(
         store,
@@ -718,6 +731,16 @@ async function executePackStageInner(
     } finally {
       clearInterval(heartbeatTimer);
     }
+    await recordCoderCost(
+      store,
+      {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        stageId: input.stageId,
+        agentId: input.agentId,
+      },
+      { coder: input.coder ?? "dsh", tokens },
+    );
   }
 
   heartbeat();
@@ -747,6 +770,12 @@ async function executePackStageInner(
     cost: { currency: "CNY", amount: costAmount, tokens },
     sensitivity: "internal",
     retentionClass: "artifact_365d",
+  });
+  await attachStageArtifact(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: input.stageId,
+    artifactId: published.artifact.artifactId,
   });
 
   const transcriptArtifactId = await publishStageTranscript(store, input, {
@@ -877,14 +906,60 @@ export async function finishPackRun(input: {
     writeLeaseOptions(),
   );
   const run = await store.runs.get(input.runId);
+  const workspaceId = run?.workspaceId ?? "default";
   await safeOp(store, {
-    workspaceId: run?.workspaceId ?? "default",
+    workspaceId,
     entityKind: "run",
     entityId: input.runId,
     op: "run.status",
     actor: "engine",
     origin: "system",
     payload: { status: "succeeded" },
+  });
+  await alertCostAnomaly(store, workspaceId, input.runId);
+}
+
+/**
+ * Emit one daily cost-anomaly alert when today's spend is a z-score outlier
+ * against the trailing baseline (60 §3.3); deduplicated per workspace-day.
+ */
+async function alertCostAnomaly(
+  store: Store,
+  workspaceId: string,
+  runId: string,
+): Promise<void> {
+  let anomaly:
+    | { dayKey: string; costCnyMicro: number; zScore: number }
+    | undefined;
+  try {
+    const now = new Date();
+    const dayKey = now.toISOString().slice(0, 10);
+    anomaly = (
+      await store.costLedger.anomalies({ workspaceId, until: now })
+    ).find((item) => item.dayKey === dayKey);
+  } catch (error) {
+    console.error(
+      `[cost] anomaly check failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+  if (!anomaly) {
+    return;
+  }
+  await safeAlert(store, {
+    workspaceId,
+    tier: "P2",
+    kind: "cost.anomaly",
+    title: `Daily cost anomaly (${anomaly.dayKey})`,
+    body: `Daily spend ¥${(anomaly.costCnyMicro / 1_000_000).toFixed(4)} is z=${anomaly.zScore} above the trailing baseline.`,
+    dedupeKey: `cost.anomaly:${workspaceId}:${anomaly.dayKey}`,
+    runId,
+    source: "engine",
+    meta: {
+      dayKey: anomaly.dayKey,
+      costCnyMicro: anomaly.costCnyMicro,
+      zScore: anomaly.zScore,
+    },
   });
 }
 
@@ -1356,7 +1431,16 @@ async function runAgentWithTools(input: {
   tokens: number;
   turns: TranscriptTurn[];
 }> {
-  const gateway = createModelGateway();
+  const gateway = trackedGateway(
+    input.store,
+    {
+      workspaceId: input.input.workspaceId,
+      runId: input.input.runId,
+      stageId: input.input.stageId,
+      agentId: input.input.agentId,
+    },
+    createModelGateway(),
+  );
   const repoRoot = resolveRepoRoot();
   const sandboxRoot = path.join(
     repoRoot,
@@ -1545,11 +1629,13 @@ async function runAgentWithTools(input: {
         summary: call.name,
         payload: { index: toolIndex, arguments: call.arguments },
       });
+      let executedTool = false;
       try {
         const tool = getTool(call.name, input.extraTools);
         if (!tool) {
           throw new Error(`unknown tool: ${call.name}`);
         }
+        executedTool = true;
         const result = await executeTool(
           call.name,
           call.arguments,
@@ -1561,6 +1647,18 @@ async function runAgentWithTools(input: {
       } catch (error) {
         content = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
         isError = true;
+      }
+      if (executedTool) {
+        await recordToolCall(
+          input.store,
+          {
+            workspaceId: input.input.workspaceId,
+            runId: input.input.runId,
+            stageId: input.input.stageId,
+            agentId: input.input.agentId,
+          },
+          call.name,
+        );
       }
       const durationMs = Date.now() - started;
       turn.toolCalls.push({
@@ -2358,7 +2456,17 @@ async function evaluateGate(
       "model",
     );
     judgeModel = "deepseek-pro";
-    const gateway = createModelGateway();
+    const gateway = trackedGateway(
+      store,
+      {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        stageId: gateStageId,
+        agentId: "evaluator",
+        source: "judge",
+      },
+      createModelGateway(),
+    );
     const dimensions = Object.entries(input.gate.dimensions)
       .map(([name, config]) => `${name} (weight ${config.weight})`)
       .join(", ");
@@ -2457,6 +2565,12 @@ async function evaluateGate(
     sensitivity: "internal",
     retentionClass: "artifact_365d",
   });
+  await attachStageArtifact(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: gateStageId,
+    artifactId: published.artifact.artifactId,
+  });
 
   heartbeat();
 
@@ -2501,7 +2615,18 @@ async function reviseDraft(
     },
     "model",
   );
-  const gateway = input.stub ? new StubModelGateway() : createModelGateway();
+  const revisionStageId = `${input.stageId}:revision-${revisionIndex}`;
+  const gateway = trackedGateway(
+    store,
+    {
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      stageId: revisionStageId,
+      agentId: input.revision.agentId,
+      source: "revision",
+    },
+    input.stub ? new StubModelGateway() : createModelGateway(),
+  );
   const modelAlias = input.revision.modelAlias;
   const instructions = input.revision.instructions;
   const revisionInput = `Evidence set:\n${input.evidenceText ?? "(none)"}\n\nCurrent draft:\n${draftText}\n\nQuality gate feedback:\n${feedback}\n\nRevise the draft to fix these issues. Keep [S#] citations and the Recommendations section.`;
@@ -2548,7 +2673,7 @@ async function reviseDraft(
       ? [{ artifactId: draftArtifactId, version: 1 }]
       : [],
     runId: input.runId,
-    stageId: `${input.stageId}:revision-${revisionIndex}`,
+    stageId: revisionStageId,
     runMode: input.runMode,
     cost: {
       currency: "CNY",
@@ -2557,6 +2682,12 @@ async function reviseDraft(
     },
     sensitivity: "internal",
     retentionClass: "artifact_365d",
+  });
+  await attachStageArtifact(store, {
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+    stageId: revisionStageId,
+    artifactId: published.artifact.artifactId,
   });
 
   heartbeat();
