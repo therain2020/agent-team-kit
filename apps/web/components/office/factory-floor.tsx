@@ -59,9 +59,9 @@ export interface FloorFlow {
  *
  * Everything on the floor renders from the world stream: crate positions,
  * bubbles, stamps, the belt direction and the flow meter all change only when
- * `useWorld` delivers a delta. Hover reports stage/tool/elapsed, click selects
- * and locks a slight camera pan, right-click or Enter opens the stage drawer,
- * and J/K walk the stations with a visible focus ring.
+ * `useWorld` delivers a delta. Hover reports stage/tool/elapsed; click selects,
+ * locks a slight camera pan and opens the stage drawer; Enter/right-click open
+ * it too, and J/K walk the stations with a visible focus ring.
  */
 export function FactoryFloor({
   packName,
@@ -505,7 +505,10 @@ function Station({
     <button
       ref={registerRef}
       type="button"
-      onClick={() => onSelect(agent.id)}
+      onClick={() => {
+        onSelect(agent.id);
+        onOpen(agent);
+      }}
       onContextMenu={(event) => {
         event.preventDefault();
         onSelect(agent.id);
