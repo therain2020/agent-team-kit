@@ -11,6 +11,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  type MissionPrefill,
+  applyMissionPrefill,
+} from "@/lib/mission-prefill";
 import type { OptimisticMission } from "@/lib/office-live";
 import type { AgentRole } from "@kit/core";
 import { ArrowLeft, Play, RefreshCw, Sparkles } from "lucide-react";
@@ -42,6 +46,7 @@ export function NewMissionDialog({
   agents,
   roleRules,
   initialIntent,
+  prefill,
   onStarted,
 }: {
   open: boolean;
@@ -56,6 +61,12 @@ export function NewMissionDialog({
   };
   /** Prefills the intent field (stage drawer "re-run"); still AI-drafted (D-64). */
   initialIntent?: string;
+  /**
+   * Seeds the role selection for station quick actions (97 §3.3). It only
+   * affects the initial selection: invalid ids are dropped and every role
+   * rule is still enforced on submit.
+   */
+  prefill?: MissionPrefill;
   /** Emitted after the job starts so the office can show it optimistically. */
   onStarted?: (mission: OptimisticMission) => void;
 }) {
@@ -131,7 +142,15 @@ export function NewMissionDialog({
       if (!response.ok || !payload.values) {
         throw new Error(payload.error ?? t("failed"));
       }
-      setValues(payload.values);
+      setValues({
+        ...payload.values,
+        ...applyMissionPrefill(payload.values, prefill, {
+          managers: managerOptions,
+          sellers: sellerOptions.map((agent) => agent.id),
+          builders: builderOptions.map((agent) => agent.id),
+          specialists: specialistOptions.map((agent) => agent.id),
+        }),
+      });
       setRationale(payload.rationale ?? "");
       setWarnings(payload.warnings ?? []);
       setModel(payload.model === "live" ? "live" : "heuristic");

@@ -1,15 +1,26 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import {
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
+import {
+  MAX_MANIFEST_BYTES,
+  type TrustedKey,
+  assertRepo,
+  createMarketSearchCache,
+  defaultBranch,
+  fetchRawFile,
+  isSafeRelPath,
+  loadTrustedKeys,
+  readJsonFile,
+  resolveCommit,
+  scanSecrets,
+  searchMarket,
+  sha256Hex,
+  verifySignature,
+  writeFileAtomic,
+  writeJsonAtomic,
+} from "@kit/market";
 import { parse } from "yaml";
+import { fetchFromDefinition, validateSourceEndpoint } from "./adapters";
 import {
   type InstalledSource,
   type RawSourceItem,
@@ -17,19 +28,24 @@ import {
   type SourceCandidate,
   type SourceDefinition,
   type SourceMeta,
+  type SourceTrust,
+  type SourceTrustLevel,
   sourceDefinitionSchema,
 } from "./types";
 
-const USER_AGENT = "agent-team-kit/0.1";
-const MAX_MANIFEST_BYTES = 64 * 1024;
-const CACHE_MS = 60_000;
-const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const BUILTIN_NAMES = new Set(["hn", "arxiv", "github"]);
+/**
+ * Source market adapter (plan 88 §3.4/§6.1 M1, D-69).
+ *
+ * Search, commit pinning, raw reads, trust grading, secret scanning and record
+ * writing all come from the shared `@kit/market` kernel. This module only adds
+ * what is source-specific: the `source.yaml` schema, the `sources/` destination
+ * and the RSS/JSON/github fetch adapter.
+ */
 
-const searchCache = new Map<
-  string,
-  { expiresAt: number; candidates: SourceCandidate[] }
->();
+const BUILTIN_NAMES = new Set(["hn", "arxiv", "github"]);
+const SOURCE_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+const searchCache = createMarketSearchCache<SourceDefinition>();
 
 export function getSourcesRoot(root?: string): string {
   return path.resolve(
@@ -44,73 +60,38 @@ export async function searchSources(
     limit?: number;
     token?: string;
     root?: string;
+    keys?: TrustedKey[];
   } = {},
 ): Promise<SourceCandidate[]> {
-  const topic = options.topic ?? SOURCE_TOPIC;
-  const limit = Math.min(Math.max(options.limit ?? 12, 1), 30);
-  const query = [topic ? `topic:${topic}` : "", options.query ?? ""]
-    .filter(Boolean)
-    .join(" ");
-  const cacheKey = `${query}:${limit}`;
-  const cached = searchCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.candidates;
-  }
-
-  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(
-    query || "agent-team-source",
-  )}&sort=stars&order=desc&per_page=${limit}`;
-  const payload = await githubJson<{
-    items?: Array<{
-      full_name: string;
-      html_url: string;
-      description: string | null;
-      stargazers_count: number;
-      default_branch: string;
-      updated_at: string;
-      topics?: string[];
-    }>;
-  }>(url, options.token);
-
-  const repos = payload.items ?? [];
-  const candidates = await Promise.all(
-    repos.map(async (repo) => {
-      const candidate: SourceCandidate = {
-        repo: repo.full_name,
-        htmlUrl: repo.html_url,
-        description: repo.description,
-        stars: repo.stargazers_count,
-        topics: repo.topics ?? [],
-        updatedAt: repo.updated_at,
-      };
-      try {
-        const raw = await fetchRawFile(
-          repo.full_name,
-          repo.default_branch,
-          "source.yaml",
-          options.token,
-        );
-        const parsed = sourceDefinitionSchema.safeParse(parse(raw));
-        if (parsed.success) {
-          candidate.manifest = parsed.data;
-        } else {
-          candidate.manifestError = parsed.error.issues
-            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-            .join("; ");
-        }
-      } catch (error) {
-        candidate.manifestError =
-          error instanceof Error ? error.message : String(error);
-      }
-      return candidate;
-    }),
-  );
-
-  searchCache.set(cacheKey, {
-    expiresAt: Date.now() + CACHE_MS,
-    candidates,
+  const keys = options.keys ?? (await loadKeysOrEmpty());
+  const results = await searchMarket<SourceDefinition>({
+    topic: options.topic ?? SOURCE_TOPIC,
+    manifestFile: "source.yaml",
+    query: options.query,
+    limit: options.limit,
+    token: options.token,
+    cache: searchCache,
+    parse: (raw) => parseSourceManifest(raw),
   });
-  return candidates;
+
+  return results.map((candidate) => {
+    const mapped: SourceCandidate = {
+      repo: candidate.repo,
+      htmlUrl: candidate.htmlUrl,
+      description: candidate.description,
+      stars: candidate.stars,
+      topics: candidate.topics,
+      updatedAt: candidate.updatedAt,
+    };
+    if (candidate.manifest) {
+      mapped.manifest = candidate.manifest;
+      mapped.trust = verifySignature(candidate.manifest, keys);
+    }
+    if (candidate.manifestError) {
+      mapped.manifestError = candidate.manifestError;
+    }
+    return mapped;
+  });
 }
 
 export async function installSource(input: {
@@ -120,59 +101,95 @@ export async function installSource(input: {
   token?: string;
   root?: string;
   acceptThirdParty: boolean;
+  /** Trusted signing keys; defaults to the shared market keyring. */
+  keys?: TrustedKey[];
+  /** Override the endpoint validator (tests pass a no-op). */
+  validateEndpoint?: (url: string) => Promise<void>;
 }): Promise<InstalledSource> {
   if (!input.acceptThirdParty) {
     throw new Error("third-party sources require explicit confirmation");
   }
-  if (!REPO_PATTERN.test(input.repo)) {
-    throw new Error("repo must be owner/name");
-  }
+  assertRepo(input.repo);
   const file = input.file ?? "source.yaml";
-  if (file.includes("..") || file.startsWith("/")) {
+  if (!isSafeRelPath(file)) {
     throw new Error("invalid manifest path");
   }
 
-  const ref = input.ref || (await defaultBranch(input.repo, input.token));
-  const commit = await resolveCommit(input.repo, ref, input.token);
-  const raw = await fetchRawFile(input.repo, commit, file, input.token);
+  const ref =
+    input.ref || (await defaultBranch(input.repo, { token: input.token }));
+  const commit = await resolveCommit(input.repo, ref, { token: input.token });
+  const raw = await fetchRawFile(input.repo, commit, file, {
+    token: input.token,
+  });
   if (Buffer.byteLength(raw, "utf8") > MAX_MANIFEST_BYTES) {
     throw new Error("source.yaml exceeds 64KB");
   }
 
-  const parsed = sourceDefinitionSchema.safeParse(parse(raw));
-  if (!parsed.success) {
-    throw new Error(
-      parsed.error.issues
-        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-        .join("\n"),
-    );
+  const parsed = parseSourceManifest(raw);
+  if ("error" in parsed) {
+    throw new Error(parsed.error);
   }
-  const definition = parsed.data;
+  const definition = parsed.manifest;
   if (BUILTIN_NAMES.has(definition.metadata.name)) {
     throw new Error(
       `source name is reserved by a builtin: ${definition.metadata.name}`,
     );
   }
-  const { validateSourceEndpoint } = await import("./adapters");
-  await validateSourceEndpoint(definition.spec.request.url);
+
+  const validateEndpoint = input.validateEndpoint ?? validateSourceEndpoint;
+  await validateEndpoint(definition.spec.request.url);
+
+  // Same secret scan packs run; source.yaml is the only installed file.
+  const secretFindings = scanSecrets([{ file, content: raw }]);
+  if (secretFindings.length > 0) {
+    throw new Error(
+      `source manifest contains secret-like content: ${secretFindings
+        .map((finding) => `${finding.file}:${finding.line} (${finding.label})`)
+        .join("; ")}`,
+    );
+  }
+
+  const keys = input.keys ?? (await loadKeysOrEmpty());
+  const trust = verifySignature(definition, keys);
+  const manifestSha256 = sha256Hex(raw);
 
   const root = getSourcesRoot(input.root);
   await mkdir(root, { recursive: true });
   const target = path.join(root, `${definition.metadata.name}.yaml`);
   const metaPath = path.join(root, `${definition.metadata.name}.meta.json`);
   const meta: SourceMeta = {
+    kind: "source",
+    id: definition.metadata.name,
     name: definition.metadata.name,
+    version: definition.metadata.version,
+    entry: file,
+    license: definition.metadata.license,
     repo: input.repo,
     commit,
-    manifestSha256: createHash("sha256").update(raw).digest("hex"),
+    manifestSha256,
     installedAt: new Date().toISOString(),
-    trust: "third-party",
+    trust: trust.level,
+    trustDetail: trust,
+    permissions: { network: true, filesystem: "readonly", code: false },
+    files: { [file]: manifestSha256 },
+    manifest: {
+      id: definition.metadata.name,
+      name: definition.metadata.name,
+      version: definition.metadata.version,
+      kind: "source",
+      description: definition.metadata.description ?? "",
+    },
     homepage: definition.metadata.homepage,
-    license: definition.metadata.license,
+    secretScan: "passed",
   };
 
-  await atomicWrite(target, raw);
-  await atomicWrite(metaPath, JSON.stringify(meta, null, 2));
+  await writeFileAtomic(target, raw);
+  try {
+    await writeJsonAtomic(metaPath, meta);
+  } catch (error) {
+    await rm(target, { force: true }).catch(() => undefined);
+    throw error;
+  }
   return { definition, meta, file: target };
 }
 
@@ -208,7 +225,7 @@ export async function loadInstalledSource(
   name: string,
   root?: string,
 ): Promise<InstalledSource | null> {
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) {
+  if (!SOURCE_NAME_PATTERN.test(name)) {
     return null;
   }
   const dir = getSourcesRoot(root);
@@ -224,21 +241,12 @@ export async function loadInstalledSource(
     );
   }
   const metaPath = path.join(dir, `${name}.meta.json`);
-  const meta = existsSync(metaPath)
-    ? (JSON.parse(await readFile(metaPath, "utf8")) as SourceMeta)
-    : {
-        name,
-        repo: "local",
-        commit: "working-tree",
-        manifestSha256: createHash("sha256").update(raw).digest("hex"),
-        installedAt: new Date(0).toISOString(),
-        trust: "third-party" as const,
-      };
+  const meta = normalizeMeta(name, await readJsonFile(metaPath), raw);
   return { definition: parsed.data, meta, file: manifestPath };
 }
 
 export async function removeSource(name: string, root?: string): Promise<void> {
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || BUILTIN_NAMES.has(name)) {
+  if (!SOURCE_NAME_PATTERN.test(name) || BUILTIN_NAMES.has(name)) {
     throw new Error("invalid or builtin source");
   }
   const dir = getSourcesRoot(root);
@@ -254,7 +262,6 @@ export async function testSource(
   if (!installed) {
     throw new Error(`source not installed: ${name}`);
   }
-  const { fetchFromDefinition } = await import("./adapters");
   const items = await fetchFromDefinition(
     installed.definition,
     options.limit ?? 3,
@@ -262,80 +269,116 @@ export async function testSource(
   return { items };
 }
 
-async function defaultBranch(repo: string, token?: string): Promise<string> {
-  const payload = await githubJson<{ default_branch?: string }>(
-    `https://api.github.com/repos/${repo}`,
-    token,
-  );
-  if (!payload.default_branch) {
-    throw new Error(`cannot resolve default branch for ${repo}`);
+function parseSourceManifest(
+  raw: string,
+): { manifest: SourceDefinition } | { error: string } {
+  const parsed = sourceDefinitionSchema.safeParse(parse(raw));
+  if (parsed.success) {
+    return { manifest: parsed.data };
   }
-  return payload.default_branch;
-}
-
-async function resolveCommit(
-  repo: string,
-  ref: string,
-  token?: string,
-): Promise<string> {
-  const payload = await githubJson<{ sha?: string }>(
-    `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(ref)}`,
-    token,
-  );
-  if (!payload.sha || !/^[a-f0-9]{40}$/i.test(payload.sha)) {
-    throw new Error(`cannot resolve commit for ${repo}@${ref}`);
-  }
-  return payload.sha;
-}
-
-async function fetchRawFile(
-  repo: string,
-  ref: string,
-  file: string,
-  token?: string,
-): Promise<string> {
-  const url = `https://raw.githubusercontent.com/${repo}/${ref}/${file}`;
-  const headers: Record<string, string> = {
-    "user-agent": USER_AGENT,
+  return {
+    error: parsed.error.issues
+      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+      .join("\n"),
   };
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
-  }
-  const response = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) {
-    throw new Error(`manifest ${response.status} ${response.statusText}`);
-  }
-  return response.text();
 }
 
-async function githubJson<T>(url: string, token?: string): Promise<T> {
-  const headers: Record<string, string> = {
-    accept: "application/vnd.github+json",
-    "user-agent": USER_AGENT,
+function normalizeMeta(
+  name: string,
+  raw: unknown,
+  manifestRaw: string,
+): SourceMeta {
+  const fallback: SourceMeta = {
+    kind: "source",
+    id: name,
+    name,
+    entry: `${name}.yaml`,
+    repo: "local",
+    commit: "working-tree",
+    manifestSha256: sha256Hex(manifestRaw),
+    installedAt: new Date(0).toISOString(),
+    trust: "community",
+    trustDetail: { level: "community", signature: "missing" },
+    secretScan: "passed",
   };
-  if (token) {
-    headers.authorization = `Bearer ${token}`;
+  if (!raw || typeof raw !== "object") {
+    return fallback;
   }
-  const response = await fetch(url, {
-    headers,
-    signal: AbortSignal.timeout(20000),
-  });
-  if (response.status === 403 || response.status === 429) {
-    throw new Error(
-      "GitHub API rate limit exceeded; set GITHUB_TOKEN to raise the limit",
-    );
-  }
-  if (!response.ok) {
-    throw new Error(`GitHub API ${response.status} ${response.statusText}`);
-  }
-  return (await response.json()) as T;
+  const record = raw as Record<string, unknown>;
+  const trustDetail =
+    normalizeTrustDetail(record.trustDetail) ??
+    normalizeTrustDetail(record.trust) ??
+    fallback.trustDetail;
+  const trust =
+    normalizeTrustLevel(record.trust) ?? trustDetail?.level ?? fallback.trust;
+  return {
+    ...fallback,
+    kind: record.kind === "source" ? "source" : fallback.kind,
+    id: asString(record.id) ?? fallback.id,
+    name: asString(record.name) ?? name,
+    version: asString(record.version) ?? fallback.version,
+    entry: asString(record.entry) ?? fallback.entry,
+    license: asString(record.license) ?? fallback.license,
+    repo: asString(record.repo) ?? fallback.repo,
+    commit: asString(record.commit) ?? fallback.commit,
+    manifestSha256: asString(record.manifestSha256) ?? fallback.manifestSha256,
+    installedAt: asString(record.installedAt) ?? fallback.installedAt,
+    trust,
+    ...(trustDetail ? { trustDetail } : {}),
+    homepage: asString(record.homepage) ?? fallback.homepage,
+    ...(record.secretScan === "passed"
+      ? { secretScan: "passed" as const }
+      : {}),
+  };
 }
 
-async function atomicWrite(file: string, content: string): Promise<void> {
-  const temporary = `${file}.tmp-${Date.now()}`;
-  await writeFile(temporary, content, "utf8");
-  await rename(temporary, file);
+function normalizeTrustLevel(
+  value: unknown,
+): SourceTrustLevel | "third-party" | undefined {
+  if (
+    value === "builtin" ||
+    value === "verified" ||
+    value === "community" ||
+    value === "third-party"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeTrustDetail(value: unknown): SourceTrust | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const level = normalizeTrustLevel(record.level);
+  if (level === undefined || level === "third-party") {
+    return undefined;
+  }
+  const signature = record.signature;
+  if (
+    signature !== "valid" &&
+    signature !== "invalid" &&
+    signature !== "unknown-key" &&
+    signature !== "missing"
+  ) {
+    return undefined;
+  }
+  return {
+    level,
+    signature,
+    ...(typeof record.keyId === "string" ? { keyId: record.keyId } : {}),
+  };
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+async function loadKeysOrEmpty(): Promise<TrustedKey[]> {
+  try {
+    return await loadTrustedKeys();
+  } catch {
+    return [];
+  }
 }

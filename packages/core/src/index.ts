@@ -15,6 +15,7 @@ export * from "./kill-switch";
 export * from "./lkg";
 export * from "./pack";
 export * from "./policy";
+export * from "./quota";
 export * from "./rubric";
 export * from "./run";
 export * from "./run-mode";

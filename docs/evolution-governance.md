@@ -37,12 +37,19 @@ expected to replace these files later.
 
 ```
 <cycles-root>/<cycleId>/eval/
-  evals/            # copied from the pack
+  evals/            # copied from the pack (visible material only)
   fixtures/         # copied when the pack has one
-  hidden/           # optional hidden eval set (outside the pack)
+  hidden/           # frozen copy of the hidden suite (outside the pack)
   manifest.json     # relative path, sha256 and size for every file
   manifest.sha256   # hash of manifest.json
+<cycles-root>/hidden-audit.jsonl   # hidden-set access audit (outside the repo)
 ```
+
+Pack-local eval material lives under `evals/visible/` and may ship inside
+packs and variants. Packs written before this layout keep the rubric at
+`evals/rubrics.yaml`; both resolve identically at score time. Anything that
+must not be visible to the candidate (hidden cases, adversarial probes) lives
+outside the repository.
 
 The default root is `%USERPROFILE%\.agent-team-kit\cycles`
 (`~/.agent-team-kit/cycles`). Override it with `KIT_EVOLUTION_CYCLES_ROOT` or
@@ -78,6 +85,88 @@ The command recomputes every file hash and the manifest hash and exits non-zero
 on mismatch. Cycle records persist `evalSnapshotPath`, `evalSnapshotHash`,
 `evaluatorHash` and, when approved, `evaluatorApprovalRef`.
 
+## Hidden eval sets
+
+Hidden cases are the Goodhart defence from 70 §3.4 and 40 §3.3: they are
+physical neighbours of neither packs nor variants.
+
+### Directory convention
+
+```
+<hidden-root>/<workspace>/suite.yaml
+```
+
+`<hidden-root>` defaults to `~/.agent-team-kit/hidden-evals` and can be
+overridden with `KIT_HIDDEN_EVALS_ROOT`. `<workspace>` is the sanitized
+workspace id. `evolve cycle` picks this directory up automatically when it
+exists; `--hidden-evals <dir>` overrides it for one run. The directory must
+live outside the pack, outside the snapshot destination and outside the
+repository, otherwise the cycle refuses to freeze.
+
+Tests and drills must inject a temporary root; they must never read or write
+the real home directory.
+
+### Suite format
+
+```yaml
+version: 1
+rotation:
+  periodDays: 7        # rotation window (default 7)
+  size: 2              # cases per chunk; defaults to the whole suite
+  seed: optional-stable-seed
+cases:
+  - id: hidden-0001
+    kind: standard      # or "adversarial" (default: standard)
+    evidence: |
+      Evidence handed to the agent under test.
+    expect:
+      contains: ["[S1]"]        # all must appear in the draft
+      excludes: ["as an AI"]    # none may appear
+```
+
+Case ids must be unique, evidence non-empty, and `kind` either `standard` or
+`adversarial`.
+
+### Rotation
+
+The suite is ordered by `sha256(seed-or-suite-hash + ":" + case-id)` and split
+into disjoint chunks of `rotation.size`. The rotation epoch is
+`floor(now / periodDays)`, and each epoch uses exactly one chunk
+(`chunkIndex = epoch % chunkCount`). Subsets therefore never overlap across
+consecutive epochs: a case judged last week is not judged this week, so a
+candidate cannot tune to the cases it saw. The selection is recorded on the
+snapshot manifest under `hidden` (suite hash, epoch, period, chunk index and
+count, selected case ids, `rotatedAt`); scoring re-reads the suite, checks the
+hash and judges only `selectedCaseIds`.
+
+The hidden set does not feed `evaluatorHash`, because it rotates independently
+of the evaluator and must not require an evaluator approval every window.
+
+### Scoring and blocking
+
+`scoreVariant` always applies the visible rubric. When the snapshot carries a
+hidden suite it also runs the rotated subset against the agent and adds
+aggregate dimensions only: `scores.hidden` (pass ratio) and
+`scores.hiddenAdversarial` (1 when no adversarial case failed). Any failed
+`adversarial` case flips `pass` to false, which rejects the cycle before the
+canary stage and blocks promotion. Only counts appear in `rationale`; case
+texts and ids never reach packs, variants, cycle records, logs or the console.
+
+### Audit
+
+Every hidden access appends one JSON line to
+`<cycles-root>/hidden-audit.jsonl`: timestamp, action (`select` at freeze,
+`score` at evaluation), cycle id, workspace, suite hash, rotation epoch and the
+selected case ids. The sink is outside the repository and outside the frozen
+snapshot. If the audit cannot be written, the access fails closed.
+
+### Degradation
+
+Without a hidden suite the cycle runs on the visible rubric only and marks the
+gap: `manifest.hidden = { available: false }`, no `scores.hidden`, and
+`rationale` ends with `hidden coverage unavailable`. This keeps the cycle
+usable while making missing coverage visible in the records.
+
 ## Canary
 
 `startCanary` stores `evalSnapshotPath` on the canary state and
@@ -108,6 +197,5 @@ CI runs it before the full suite, so an invariant failure blocks the PR.
 
 ## Follow-ups
 
-- Hidden-set isolation and rotation: E2 (#27).
 - Goodhart divergence and drift re-evaluation: E3 (#28).
 - Incident freeze and convergence: E4 (#29).

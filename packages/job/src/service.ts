@@ -389,6 +389,9 @@ async function startPackRunJob(
     if (input.eventId) {
       built.input.eventId = input.eventId;
     }
+    if (input.priority) {
+      built.input.priority = input.priority;
+    }
   } catch (error) {
     throw new JobError(
       "build_failed",

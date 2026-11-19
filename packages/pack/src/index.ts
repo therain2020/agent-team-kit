@@ -1,3 +1,4 @@
+export * from "./assemble";
 export * from "./load-pack";
 export * from "./pack-run";
 export * from "./pack-studio";

@@ -35,7 +35,7 @@ stages:
     outputs: [gate_result]
     timeout: 10m
     includeInitialInput: true
-    gate: evals/rubrics.yaml#radar
+    gate: evals/visible/rubrics.yaml#radar
   - id: deliver
     type: workflow
     inputs: [gate_result]

@@ -1,4 +1,9 @@
-import type { CoderId, RunBudgetSpec, RunOriginKind } from "@kit/core";
+import type {
+  CoderId,
+  PriorityClass,
+  RunBudgetSpec,
+  RunOriginKind,
+} from "@kit/core";
 import type { PackRunVariant } from "@kit/workflow";
 
 export type JobKind = "packRun" | "iteration";
@@ -83,6 +88,8 @@ export interface StartJobInput {
   variant?: PackRunVariant;
   /** Workspace scope; defaults to `default`. */
   workspaceId?: string;
+  /** Queue priority (60 §2); derived from the triggering event when absent. */
+  priority?: PriorityClass;
   mission?: MissionInput;
 }
 

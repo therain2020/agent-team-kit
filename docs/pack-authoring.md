@@ -37,9 +37,14 @@ my-team/
 ├── skills/<name>/SKILL.md
 ├── workflows/*.yaml     # stage graph
 ├── policies/*.yaml      # autonomy levels
-├── evals/rubrics.yaml
+├── evals/visible/*      # visible rubrics (may ship inside the pack)
 └── README.md
 ```
+
+Only **visible** eval material belongs in a pack. Hidden eval cases live
+outside the repository (`~/.agent-team-kit/hidden-evals/<workspace>/`) and are
+never copied into packs or variants; see
+[evolution-governance.md](evolution-governance.md#hidden-eval-sets).
 
 ## Roles and tools
 
@@ -104,8 +109,9 @@ placeholders; token counts are fixed per agent stage.
   previous stage output (needed for citation-producing writers).
 - `inputFrom: <stage>` — take an earlier stage's artifact instead of the
   previous output (e.g. deliver the draft, not the review).
-- `gate: evals/rubrics.yaml#<rubric>` — evaluate the incoming draft before the
-  stage runs.
+- `gate: evals/visible/rubrics.yaml#<rubric>` — evaluate the incoming draft
+  before the stage runs. Legacy packs that keep the rubric at
+  `evals/rubrics.yaml` still load.
 - `revisionAgent: <agent>` — optional dedicated reviser; defaults to the agent
   that produced the draft.
 

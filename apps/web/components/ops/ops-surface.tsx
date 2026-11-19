@@ -5,6 +5,7 @@ import { BudgetConsole } from "@/components/budgets/budget-console";
 import type { DependencyView } from "@/components/degradation/degradation-controls";
 import { KillSwitchConsole } from "@/components/kill-switch/kill-switch-console";
 import { AutonomyCard } from "@/components/ops/autonomy-card";
+import { CapacitySection } from "@/components/ops/capacity-section";
 import { DegradationSection } from "@/components/ops/degradation-section";
 import { ImpactChainCard, suggestionKey } from "@/components/ops/impact-chain";
 import { OpsAlertsPanel } from "@/components/ops/ops-alerts-panel";
@@ -12,6 +13,7 @@ import { OpsPolicyForm } from "@/components/ops/ops-policy-form";
 import { Badge } from "@/components/ui/badge";
 import type { AutopilotOverview } from "@/lib/autopilot";
 import type { BudgetOverview } from "@/lib/budgets";
+import type { CapacityOverview } from "@/lib/capacity-math";
 import type { KillSwitchState } from "@/lib/kill-switch";
 import type { LkgView } from "@/lib/lkg";
 import type { OpsConsoleData } from "@/lib/ops";
@@ -27,6 +29,7 @@ import type { DegradedMode } from "@kit/core";
 import type { DegradationAuditRecord } from "@kit/store";
 import {
   ChevronRight,
+  Gauge,
   type LucideIcon,
   ShieldAlert,
   Siren,
@@ -45,6 +48,7 @@ export interface OpsSurfaceData {
   killSwitch: KillSwitchState;
   autopilot: AutopilotOverview;
   lkg: LkgView[];
+  capacity: CapacityOverview;
 }
 
 const SECTION_META: Record<
@@ -73,6 +77,12 @@ const SECTION_META: Record<
     titleKey: "sectionBudget",
     descKey: "sectionBudgetDesc",
     shortcut: "b",
+  },
+  capacity: {
+    icon: Gauge,
+    titleKey: "sectionCapacity",
+    descKey: "sectionCapacityDesc",
+    shortcut: "c",
   },
   control: {
     icon: Wrench,
@@ -286,6 +296,15 @@ export function OpsSurface({
         }}
       >
         <BudgetConsole overview={initial.budgets} />
+      </OpsSectionBlock>
+
+      <OpsSectionBlock
+        section="capacity"
+        register={(element) => {
+          refs.current.capacity = element;
+        }}
+      >
+        <CapacitySection overview={initial.capacity} />
       </OpsSectionBlock>
 
       <OpsSectionBlock

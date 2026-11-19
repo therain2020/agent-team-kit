@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { WorkshopPublishResult } from "@kit/workshop";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -13,27 +14,10 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { toast } from "sonner";
 
-interface PublishCheck {
-  id: string;
-  status: "pass" | "warn" | "fail";
-  detail: string;
-}
-
-interface PublishResult {
-  ok: boolean;
-  manifestPath: string;
-  generated: boolean;
-  written: boolean;
-  files: Array<{ path: string; bytes: number; sha256: string }>;
-  permissions: Record<string, boolean | undefined>;
-  risk: { level: "low" | "medium" | "high"; reasons: string[] };
-  checks: PublishCheck[];
-}
-
 export function PackPublish({ dirName }: { dirName: string }) {
   const t = useTranslations("studio");
   const [busy, setBusy] = useState<"check" | "write" | null>(null);
-  const [result, setResult] = useState<PublishResult | null>(null);
+  const [result, setResult] = useState<WorkshopPublishResult | null>(null);
 
   async function run(write: boolean) {
     setBusy(write ? "write" : "check");
@@ -43,7 +27,7 @@ export function PackPublish({ dirName }: { dirName: string }) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ dir: dirName, write }),
       });
-      const payload = (await response.json()) as PublishResult & {
+      const payload = (await response.json()) as WorkshopPublishResult & {
         error?: string;
       };
       if (payload.error) {
@@ -104,6 +88,11 @@ export function PackPublish({ dirName }: { dirName: string }) {
               {result.written
                 ? t("publish.writtenState")
                 : t("publish.notWritten")}
+            </span>
+            <span className="font-mono">
+              {result.publisher
+                ? `${result.publisher} · ${result.kind}`
+                : (result.kind ?? "—")}
             </span>
             <span className="font-mono">
               {t("publish.fileCount", { count: result.files.length })}

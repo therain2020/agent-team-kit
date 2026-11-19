@@ -1,3 +1,4 @@
+import { workshopSignatureSchema } from "@kit/core";
 import { z } from "zod";
 
 export const SOURCE_TOPIC = "agent-team-source";
@@ -48,19 +49,65 @@ export const sourceDefinitionSchema = z.object({
       dataOnly: z.literal(true).optional(),
     })
     .optional(),
+  // Optional Ed25519 signature, graded by the shared market kernel exactly like
+  // a pack manifest (plan 88 §3.5, D-69).
+  signature: workshopSignatureSchema.optional(),
 });
 
 export type SourceDefinition = z.infer<typeof sourceDefinitionSchema>;
 
+export type SourceTrustLevel = "builtin" | "verified" | "community";
+
+export type SourceSignatureStatus =
+  | "valid"
+  | "invalid"
+  | "unknown-key"
+  | "missing";
+
+/** Signature grading, aligned with the workshop `trust` record shape. */
+export interface SourceTrust {
+  level: SourceTrustLevel;
+  signature: SourceSignatureStatus;
+  keyId?: string;
+}
+
+/**
+ * Install record written next to `<name>.yaml` as `<name>.meta.json`.
+ *
+ * The record is aligned with the workshop `.workshop.json` fields (kind/id/
+ * entry/files/permissions/manifest/secretScan) so both asset types carry the
+ * same provenance. `trust` stays a flat level string for the existing
+ * `/sources` read models; `trustDetail` carries the full signature grading.
+ */
 export interface SourceMeta {
+  kind?: "source";
+  id?: string;
   name: string;
+  version?: string;
+  entry?: string;
+  license?: string;
   repo: string;
   commit: string;
   manifestSha256: string;
   installedAt: string;
-  trust: "builtin" | "third-party";
+  /** Trust level; legacy records store `"third-party"`. */
+  trust: SourceTrustLevel | "third-party";
+  trustDetail?: SourceTrust;
+  permissions?: {
+    network: boolean;
+    filesystem: "none" | "readonly" | "workspace";
+    code: boolean;
+  };
+  files?: Record<string, string>;
+  manifest?: {
+    id: string;
+    name: string;
+    version: string;
+    kind: "source";
+    description: string;
+  };
   homepage?: string;
-  license?: string;
+  secretScan?: "passed";
 }
 
 export interface InstalledSource {
@@ -105,4 +152,6 @@ export interface SourceCandidate {
   updatedAt: string;
   manifest?: SourceDefinition;
   manifestError?: string;
+  /** Signature grading when a manifest was read (plan 88 §3.5). */
+  trust?: SourceTrust;
 }

@@ -509,6 +509,7 @@ function Station({
       onFocus={() => onHover(agent.id)}
       onBlur={() => onHover(null)}
       aria-pressed={selected}
+      aria-keyshortcuts="Enter"
       aria-label={`${agent.id} · ${t(STATUS_I18N[agent.status])} · ${t("clickToInspect")}`}
       className={cn(
         "group relative flex flex-col items-center rounded-none border-2 px-2 pb-2 pt-1 outline-none transition-colors",
