@@ -1120,7 +1120,7 @@
     "securityNotice": "Workshop items are third-party. Repositories are pinned to a commit and the manifest SHA-256 is recorded. Signatures are checked against configured Ed25519 trusted keys, secret-like files block installation, and items that declare executable code require an extra confirmation and are never run during installation.",
     "publishTitle": "Publish your own team",
     "publishDescription": "Generate a checked workshop.yaml locally, then publish the repository yourself. The Console never pushes or executes third-party code.",
-    "publishStepManifest": "Run kit workshop publish <dir> to generate a manifest with file hashes, permissions, and a checklist.",
+    "publishStepManifest": "Run kit workshop publish \"dir\" to generate a manifest with file hashes, permissions, and a checklist.",
     "publishStepTopic": "Add the GitHub topic agent-team-workshop to the repository.",
     "publishStepPush": "Commit workshop.yaml, tag a version, and push from your own terminal.",
     "installedTitle": "Installed",
