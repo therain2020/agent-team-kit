@@ -81,7 +81,9 @@ export function applyWorldSnapshot(
 ): WorldClientState {
   return {
     world: result.snapshot,
-    seq: Math.max(state.seq, result.seq),
+    // The snapshot cursor is authoritative: the stream resumes there and
+    // replays anything newer, so rows are never skipped.
+    seq: result.seq,
     status: state.status === "live" ? "live" : "reconnecting",
     lastUpdatedAt: now,
     error: null,
