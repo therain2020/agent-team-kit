@@ -1,6 +1,10 @@
 import { newId } from "@kit/core";
 import { findDecisionForRequest } from "@kit/manager";
-import type { initStore } from "@kit/store";
+import {
+  VersionConflictError,
+  type WriteLease,
+  type initStore,
+} from "@kit/store";
 import type {
   IterationInput,
   IterationResult,
@@ -18,6 +22,7 @@ import { assertKillSwitchClear } from "./kill-switch";
 import * as packActivities from "./pack-activities";
 import { type ApprovalOutcome, runPackPipeline } from "./pack-pipeline";
 import { reconcileLocalIterationRuns } from "./reconciler";
+import { withWriteLease } from "./write-lease";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -210,7 +215,11 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
           staleMs,
         );
         if (request) {
-          await execute(request.payload, request.requestId, request.kind);
+          await execute(request.payload, request.requestId, request.kind, {
+            requestId: request.requestId,
+            owner,
+            leaseVersion: request.leaseVersion,
+          });
         }
       } catch (error) {
         onError(error);
@@ -229,33 +238,54 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
     payload: string,
     requestId: string,
     kind: "pack_run" | "iteration",
+    lease: WriteLease,
   ): Promise<void> {
     const heartbeatTimer = setInterval(() => {
       void options.store.runRequests
-        .heartbeat(requestId, owner, new Date())
+        .heartbeat(requestId, owner, new Date(), lease.leaseVersion)
+        .then((record) => {
+          if (record) {
+            lease.leaseVersion = record.leaseVersion;
+          }
+        })
         .catch(() => undefined);
     }, heartbeatMs);
     try {
-      if (kind === "iteration") {
-        await executeIteration(
-          JSON.parse(payload) as IterationInput,
-          requestId,
-        );
-      } else {
-        const input = JSON.parse(payload) as PackRunInput;
-        await runPackWorkflowLocal(input, { store: options.store });
-        await options.store.runRequests.finish(requestId, "done");
-      }
+      await withWriteLease(lease, async () => {
+        if (kind === "iteration") {
+          await executeIteration(
+            JSON.parse(payload) as IterationInput,
+            requestId,
+            lease,
+          );
+        } else {
+          const input = JSON.parse(payload) as PackRunInput;
+          await runPackWorkflowLocal(input, { store: options.store });
+          await options.store.runRequests.finish(
+            requestId,
+            "done",
+            undefined,
+            lease,
+          );
+        }
+      });
     } catch (error) {
+      if (error instanceof VersionConflictError) {
+        // The claim was superseded while this worker was running; the new
+        // owner drives the request from here. The store already audited the
+        // rejection to the op log.
+        onError(error);
+        return;
+      }
       if (error instanceof IterationCancelledError) {
         await options.store.runRequests
-          .finish(requestId, "cancelled", error.message)
+          .finish(requestId, "cancelled", error.message, lease)
           .catch(() => undefined);
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
       await options.store.runRequests
-        .finish(requestId, "failed", message)
+        .finish(requestId, "failed", message, lease)
         .catch(() => undefined);
       onError(error);
     } finally {
@@ -266,6 +296,7 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
   async function executeIteration(
     input: IterationInput,
     requestId: string,
+    lease: WriteLease,
   ): Promise<void> {
     // A stale claim may belong to a run that already reached a terminal state;
     // finishing the request is enough, re-running would duplicate side effects.
@@ -274,6 +305,8 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
       await options.store.runRequests.finish(
         requestId,
         status === "cancelled" ? "cancelled" : "done",
+        undefined,
+        lease,
       );
       return;
     }
@@ -283,7 +316,7 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
         ? { iterationActivities: options.iterationActivities }
         : {}),
     });
-    await options.store.runRequests.finish(requestId, "done");
+    await options.store.runRequests.finish(requestId, "done", undefined, lease);
   }
 
   void tick();
