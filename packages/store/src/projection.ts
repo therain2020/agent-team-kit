@@ -601,6 +601,7 @@ export async function backfillRunProjections(
         last_event_id = EXCLUDED.last_event_id,
         version = run_projection.version + 1,
         updated_at = EXCLUDED.updated_at
+      WHERE EXCLUDED.last_event_id >= run_projection.last_event_id
     `;
     processed += 1;
   }
