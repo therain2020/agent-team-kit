@@ -7,11 +7,13 @@ import {
 } from "@kit/core";
 import { createModelGateway, loadModelConfig } from "@kit/model";
 import {
+  type DraftStage,
   inferAgentRole,
   loadPack,
   packCatalog,
   rolePlanForAgents,
   validateRolePlan,
+  validateStageGraph,
 } from "@kit/pack";
 import { JobError } from "./types";
 
@@ -21,7 +23,8 @@ export type ComposeKind =
   | "approvalPolicy"
   | "autopilot"
   | "evolutionCycle"
-  | "agent";
+  | "agent"
+  | "workflow";
 
 export interface ComposeInput {
   kind: ComposeKind;
@@ -33,6 +36,8 @@ export interface ComposeInput {
   agentId?: string;
   /** Current form values so drafts preserve unsaved edits. */
   current?: Partial<AgentDraftValues>;
+  /** Current (possibly unsaved) stage graph when editing a workflow. */
+  currentStages?: DraftStage[];
 }
 
 export interface MissionValues {
@@ -90,6 +95,10 @@ export interface AgentDraftValues {
   skills: string[];
 }
 
+export interface WorkflowDraftValues {
+  stages: DraftStage[];
+}
+
 export interface ComposeResult {
   kind: ComposeKind;
   values:
@@ -98,7 +107,8 @@ export interface ComposeResult {
     | ApprovalPolicyValues
     | AutopilotValues
     | EvolutionCycleValues
-    | AgentDraftValues;
+    | AgentDraftValues
+    | WorkflowDraftValues;
   rationale: string;
   warnings: string[];
   model: "live" | "heuristic";
@@ -202,6 +212,33 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
         agentId,
         current,
         isManager,
+      },
+      env,
+    );
+  }
+  if (input.kind === "workflow") {
+    const env = input.env ?? process.env;
+    const catalog = await packCatalog(loaded.dir);
+    const packAgents = [...loaded.agents.entries()].map(([id, agent]) => ({
+      id,
+      role: agent.role,
+      model: agent.spec.model,
+      tools: agent.spec.tools,
+      skills: agent.spec.skills,
+    }));
+    return composeWorkflow(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        workflows: loaded.workflows.map((workflow) => ({
+          id: workflow.id,
+          stages: workflow.stages.map((stage) => stage.id),
+        })),
+        agents: packAgents,
+        tools: catalog.tools.map((tool) => tool.name),
+        skills: catalog.skills,
+        gates: loaded.pack.evals?.rubrics ? [loaded.pack.evals.rubrics] : [],
+        current: parseWorkflowDraftStages(input.currentStages),
       },
       env,
     );
@@ -975,6 +1012,368 @@ export function validateAgentDraft(
     warnings,
     accepted,
   };
+}
+
+export interface WorkflowDraftFacts {
+  pack: string;
+  workflows: Array<{ id: string; stages: string[] }>;
+  agents: Array<{
+    id: string;
+    role: AgentRole;
+    model: string;
+    tools: string[];
+    skills: string[];
+  }>;
+  tools: string[];
+  skills: string[];
+  /** Eval files the pack already defines; drafts may only gate on these. */
+  gates: string[];
+  current: DraftStage[] | null;
+}
+
+async function composeWorkflow(
+  intent: string,
+  facts: WorkflowDraftFacts,
+  env: Record<string, string | undefined>,
+): Promise<ComposeResult> {
+  const warnings: string[] = [];
+  const fallback = defaultWorkflowDraft(intent, facts, warnings);
+  let values: WorkflowDraftValues = { stages: fallback };
+  let rationale = facts.current
+    ? "在现有阶段图的基础上补全依赖、gate 与审批。"
+    : "按 Pack 的首个成员生成线性单阶段草稿。";
+  let model: ComposeResult["model"] = "heuristic";
+
+  try {
+    const gateway = createModelGateway(loadModelConfig(env));
+    const response = await gateway.complete({
+      model: "deepseek-flash",
+      instructions: `You draft a multi-stage workflow graph for a private agent team.
+Return JSON only:
+{"stages":[{"id":"<slug>","type":"agent|coder|workflow","agent":"<agent id>","goal":"<one sentence>","acceptance":"<checkable criterion>","inputs":["<artifact>"],"outputs":["<artifact>"],"timeout":"15m","depends":["<earlier stage id>"],"gate":"<optional eval file>","approval":{"mode":"required|auto|never","position":"before|after","riskClass":"low|medium|high","ttl":"72h"}}],"rationale":"<one sentence>","warnings":["<optional>"]}
+Rules:
+- stage ids are slugs matching ^[a-z][a-z0-9-]*$ and must be unique.
+- exactly one entry stage has an empty depends list.
+- every depends entry must be an earlier stage id in the same array; the graph must stay acyclic with upstream stages first.
+- agent stages must bind a provided agent id; coder stages must use dsh, codex, opencode or command.
+- keep 2 to 5 stages; inputs and outputs name the artifacts passed between stages.
+- human approval (mode required) only on delivery/publication stages; never auto-approve high risk.
+- gate must reference a provided eval file (optionally with #rubric); omit it when none fits.
+- do not invent agents, gates, tools or facts.`,
+      input: JSON.stringify({
+        intent,
+        pack: facts.pack,
+        workflows: facts.workflows,
+        agents: facts.agents,
+        tools: facts.tools,
+        skills: facts.skills,
+        gates: facts.gates,
+        current: facts.current,
+      }),
+    });
+    const parsed = parseJson(response.text);
+    if (parsed) {
+      const validated = validateWorkflowDraft(parsed, fallback, facts);
+      if (validated.accepted) {
+        values = validated.values;
+        rationale = validated.rationale ?? rationale;
+        warnings.push(...validated.warnings);
+        model = "live";
+      } else {
+        warnings.push(...validated.warnings);
+        warnings.push("AI 阶段图未通过校验，已使用默认阶段图。");
+      }
+    } else {
+      warnings.push("AI 草稿无法解析，已使用默认阶段图。");
+    }
+  } catch {
+    warnings.push("AI 草稿不可用，已使用默认阶段图。");
+  }
+
+  return {
+    kind: "workflow",
+    values,
+    rationale,
+    warnings: [...new Set(warnings)],
+    model,
+  };
+}
+
+function defaultWorkflowDraft(
+  intent: string,
+  facts: WorkflowDraftFacts,
+  warnings: string[],
+): DraftStage[] {
+  if (facts.current && facts.current.length > 0) {
+    const validation = validateStageGraph(
+      facts.current,
+      facts.agents.map((agent) => agent.id),
+    );
+    if (validation.ok) {
+      return facts.current.map((stage) => ({
+        ...stage,
+        inputs: [...stage.inputs],
+        outputs: [...stage.outputs],
+        depends: [...stage.depends],
+      }));
+    }
+    warnings.push("现有阶段图无法直接沿用，已改用线性草稿。");
+  }
+
+  const first =
+    facts.agents.find((agent) => agent.role !== "manager") ?? facts.agents[0];
+  if (!first) {
+    throw new JobError(
+      "invalid_pack",
+      "pack has no agents to draft a stage",
+      400,
+    );
+  }
+  const id = slug(first.id);
+  return [
+    {
+      id,
+      type: "agent",
+      agent: first.id,
+      goal: intent.trim().slice(0, 300),
+      inputs: ["task"],
+      outputs: [`${id}_output`],
+      timeout: "15m",
+      retry: { max: 1, backoff: "fixed" },
+      depends: [],
+    },
+  ];
+}
+
+export function validateWorkflowDraft(
+  parsed: Record<string, unknown>,
+  fallback: DraftStage[],
+  facts: WorkflowDraftFacts,
+): {
+  values: WorkflowDraftValues;
+  rationale?: string;
+  warnings: string[];
+  accepted: boolean;
+} {
+  const stages = parseWorkflowDraftStages(parsed.stages);
+  if (!stages) {
+    return {
+      values: { stages: fallback },
+      warnings: ["AI 阶段图缺少有效的 stages 数组。"],
+      accepted: false,
+    };
+  }
+  const validation = validateStageGraph(
+    stages,
+    facts.agents.map((agent) => agent.id),
+  );
+  if (!validation.ok) {
+    return {
+      values: { stages: fallback },
+      warnings: validation.errors.slice(0, 5),
+      accepted: false,
+    };
+  }
+
+  const warnings: string[] = [];
+  for (const stage of stages) {
+    const gate = stage.gate;
+    if (
+      gate &&
+      !facts.gates.some(
+        (allowed) => gate === allowed || gate.startsWith(`${allowed}#`),
+      )
+    ) {
+      Reflect.deleteProperty(stage, "gate");
+      warnings.push(`阶段 ${stage.id} 的 gate 不在 Pack 评测中，已移除。`);
+    }
+  }
+
+  return {
+    values: { stages },
+    rationale:
+      typeof parsed.rationale === "string" && parsed.rationale.trim()
+        ? parsed.rationale.trim().slice(0, 500)
+        : undefined,
+    warnings: [
+      ...warnings,
+      ...(Array.isArray(parsed.warnings)
+        ? parsed.warnings
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.slice(0, 300))
+            .slice(0, 5)
+        : []),
+    ],
+    accepted: true,
+  };
+}
+
+export function parseWorkflowDraftStages(value: unknown): DraftStage[] | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  const stages: DraftStage[] = [];
+  for (const item of value) {
+    const stage = parseDraftStage(item);
+    if (!stage) {
+      return null;
+    }
+    stages.push(stage);
+  }
+  return stages;
+}
+
+function parseDraftStage(value: unknown): DraftStage | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id.trim() : "";
+  if (!id) {
+    return null;
+  }
+
+  let type: DraftStage["type"];
+  if (record.type === "workflow" || record.type === "coder") {
+    type = record.type;
+  } else if (record.type === "agent" || record.type === undefined) {
+    type = "coder" in record && record.coder ? "coder" : "agent";
+  } else {
+    return null;
+  }
+
+  const agent =
+    typeof record.agent === "string" && record.agent.trim()
+      ? record.agent.trim()
+      : undefined;
+  let coder: DraftStage["coder"];
+  const rawCoder = record.coder;
+  if (rawCoder !== undefined) {
+    if (
+      rawCoder === "dsh" ||
+      rawCoder === "codex" ||
+      rawCoder === "opencode" ||
+      rawCoder === "command"
+    ) {
+      coder = rawCoder;
+    } else {
+      return null;
+    }
+  }
+
+  const depends = stringArray(
+    record.depends ??
+      record.inputsFrom ??
+      (typeof record.inputFrom === "string" ? [record.inputFrom] : []),
+  );
+
+  const stage: DraftStage = {
+    id,
+    type,
+    inputs: stringArray(record.inputs),
+    outputs: stringArray(record.outputs),
+    depends,
+  };
+  if (agent) {
+    stage.agent = agent;
+  }
+  if (coder) {
+    stage.coder = coder;
+  }
+  const goal = text(record.goal, 300);
+  if (goal) {
+    stage.goal = goal;
+  }
+  const acceptance = text(record.acceptance, 500);
+  if (acceptance) {
+    stage.acceptance = acceptance;
+  }
+  const timeout = text(record.timeout, 40);
+  if (timeout) {
+    stage.timeout = timeout;
+  }
+  const gate = text(record.gate, 200);
+  if (gate) {
+    stage.gate = gate;
+  }
+  const revisionAgent = text(record.revisionAgent, 64);
+  if (revisionAgent) {
+    stage.revisionAgent = revisionAgent;
+  }
+  if (typeof record.includeInitialInput === "boolean") {
+    stage.includeInitialInput = record.includeInitialInput;
+  }
+  const retry = parseDraftRetry(record.retry);
+  if (retry) {
+    stage.retry = retry;
+  }
+  const approval = parseDraftApproval(record.approval);
+  if (approval !== undefined) {
+    stage.approval = approval;
+  }
+  return stage;
+}
+
+function parseDraftRetry(
+  value: unknown,
+): { max: number; backoff: "fixed" | "exp" } | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const max = typeof record.max === "number" ? record.max : Number(record.max);
+  if (!Number.isInteger(max) || max <= 0) {
+    return undefined;
+  }
+  return { max, backoff: record.backoff === "exp" ? "exp" : "fixed" };
+}
+
+function parseDraftApproval(
+  value: unknown,
+): DraftStage["approval"] | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const mode =
+    record.mode === "auto" || record.mode === "never"
+      ? record.mode
+      : "required";
+  const position = record.position === "before" ? "before" : "after";
+  const riskClass =
+    record.riskClass === "low" || record.riskClass === "high"
+      ? record.riskClass
+      : "medium";
+  const ttl = text(record.ttl, 20);
+  return {
+    mode,
+    position,
+    riskClass,
+    ttl: ttl && /^\d+(h|m|d)$/.test(ttl) ? ttl : "72h",
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function text(value: unknown, max: number): string | undefined {
+  return typeof value === "string" && value.trim()
+    ? value.trim().slice(0, max)
+    : undefined;
 }
 
 function clampNumber(
