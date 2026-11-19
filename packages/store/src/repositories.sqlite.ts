@@ -9,8 +9,19 @@ import type {
   RunStatus,
   Stage,
 } from "@kit/core";
-import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import {
+  type SQL,
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
+import type { OpLogStore } from "./op-log";
 import {
   ARTIFACT_KIND,
   applyManagerSessionRejection,
@@ -81,6 +92,15 @@ import {
   runs,
   stages,
 } from "./schema.sqlite";
+import {
+  VersionConflictError,
+  type WriteConflictDetail,
+  type WriteLease,
+  type WriteOptions,
+  conflictDetail,
+  leaseClaimExists,
+  recordWriteConflict,
+} from "./write-fencing";
 
 export type SqliteDatabase = BetterSQLite3Database<typeof sqliteSchema>;
 
@@ -107,7 +127,10 @@ export class SqliteEventStore implements EventStore {
 }
 
 export class SqliteRunStore implements RunStore {
-  constructor(private readonly db: SqliteDatabase) {}
+  constructor(
+    private readonly db: SqliteDatabase,
+    private readonly opLog?: OpLogStore,
+  ) {}
 
   async create(run: Run): Promise<void> {
     await this.db.insert(runs).values(toRunRow(run)).onConflictDoNothing();
@@ -117,11 +140,25 @@ export class SqliteRunStore implements RunStore {
     runId: string,
     status: Run["status"],
     updatedAt: string,
+    options: WriteOptions = {},
   ): Promise<void> {
-    await this.db
+    const guarded =
+      Boolean(options.lease) || options.expectedVersion !== undefined;
+    const conditions: SQL[] = [eq(runs.runId, runId)];
+    if (options.lease) {
+      conditions.push(leaseClaimExists(runs.runId, options.lease));
+    }
+    if (options.expectedVersion !== undefined) {
+      conditions.push(eq(runs.version, options.expectedVersion));
+    }
+    const rows = await this.db
       .update(runs)
-      .set({ status, updatedAt })
-      .where(eq(runs.runId, runId));
+      .set({ status, updatedAt, version: sql`${runs.version} + 1` })
+      .where(and(...conditions))
+      .returning({ runId: runs.runId });
+    if (rows.length === 0 && guarded) {
+      await this.rejectWrite(runId, options);
+    }
   }
 
   async get(runId: string) {
@@ -131,6 +168,39 @@ export class SqliteRunStore implements RunStore {
       .where(eq(runs.runId, runId))
       .limit(1);
     return row ? fromRunRow(row) : null;
+  }
+
+  async getVersion(runId: string): Promise<number | null> {
+    const [row] = await this.db
+      .select({ version: runs.version })
+      .from(runs)
+      .where(eq(runs.runId, runId))
+      .limit(1);
+    return row ? Number(row.version) : null;
+  }
+
+  private async rejectWrite(
+    runId: string,
+    options: WriteOptions,
+  ): Promise<never> {
+    const currentVersion = await this.getVersion(runId).catch(() => null);
+    const detail = conflictDetail("run", runId, options, currentVersion);
+    let workspaceId: string | null = null;
+    try {
+      const [row] = await this.db
+        .select({ workspaceId: runs.workspaceId })
+        .from(runs)
+        .where(eq(runs.runId, runId))
+        .limit(1);
+      workspaceId = row?.workspaceId ?? null;
+    } catch {
+      workspaceId = null;
+    }
+    await recordWriteConflict(this.opLog, detail, {
+      workspaceId,
+      actor: options.lease?.owner ?? "engine",
+    });
+    throw new VersionConflictError(detail);
   }
 
   async listRecent(limit = 20) {
@@ -154,7 +224,10 @@ export class SqliteRunStore implements RunStore {
 }
 
 export class SqliteStageStore implements StageStore {
-  constructor(private readonly db: SqliteDatabase) {}
+  constructor(
+    private readonly db: SqliteDatabase,
+    private readonly opLog?: OpLogStore,
+  ) {}
 
   async create(stage: Stage): Promise<void> {
     await this.db
@@ -163,26 +236,66 @@ export class SqliteStageStore implements StageStore {
       .onConflictDoNothing();
   }
 
-  async update(stage: Stage): Promise<void> {
-    await this.db
+  async update(stage: Stage, options: WriteOptions = {}): Promise<void> {
+    const guarded =
+      Boolean(options.lease) || options.expectedVersion !== undefined;
+    const conditions: SQL[] = [eq(stages.stageId, stage.stageId)];
+    if (options.lease) {
+      conditions.push(leaseClaimExists(stages.runId, options.lease));
+    }
+    if (options.expectedVersion !== undefined) {
+      conditions.push(eq(stages.version, options.expectedVersion));
+    }
+    const rows = await this.db
       .update(stages)
-      .set(toStageRow(stage))
-      .where(eq(stages.stageId, stage.stageId));
+      .set({
+        ...toStageRow(stage),
+        version: sql`${stages.version} + 1`,
+      })
+      .where(and(...conditions))
+      .returning({ stageId: stages.stageId });
+    if (rows.length === 0 && guarded) {
+      await this.rejectWrite(stage.stageId, stage.runId, options);
+    }
   }
 
   async updateStatus(
     stageId: string,
     status: Stage["status"],
     timestamps: { startedAt?: string; finishedAt?: string } = {},
+    options: WriteOptions = {},
   ): Promise<void> {
-    await this.db
+    const guarded =
+      Boolean(options.lease) || options.expectedVersion !== undefined;
+    const conditions: SQL[] = [eq(stages.stageId, stageId)];
+    if (options.lease) {
+      conditions.push(leaseClaimExists(stages.runId, options.lease));
+    }
+    if (options.expectedVersion !== undefined) {
+      conditions.push(eq(stages.version, options.expectedVersion));
+    }
+    const rows = await this.db
       .update(stages)
       .set({
         status,
         ...(timestamps.startedAt ? { startedAt: timestamps.startedAt } : {}),
         ...(timestamps.finishedAt ? { finishedAt: timestamps.finishedAt } : {}),
+        version: sql`${stages.version} + 1`,
       })
-      .where(eq(stages.stageId, stageId));
+      .where(and(...conditions))
+      .returning({ stageId: stages.stageId });
+    if (rows.length === 0 && guarded) {
+      await this.rejectWrite(stageId, null, options);
+    }
+  }
+
+  async getVersion(stageId: string): Promise<number | null> {
+    const [row] = await this.db
+      .select({ version: stages.version })
+      .from(stages)
+      .where(eq(stages.stageId, stageId))
+      .limit(1);
+    return row ? Number(row.version) : null;
   }
 
   async listByRun(runId: string) {
@@ -191,6 +304,46 @@ export class SqliteStageStore implements StageStore {
       .from(stages)
       .where(eq(stages.runId, runId));
     return rows.map(fromStageRow);
+  }
+
+  private async rejectWrite(
+    stageId: string,
+    stageRunId: string | null,
+    options: WriteOptions,
+  ): Promise<never> {
+    const currentVersion = await this.getVersion(stageId).catch(() => null);
+    const detail = conflictDetail("stage", stageId, options, currentVersion);
+    let runId = stageRunId;
+    if (!runId) {
+      try {
+        const [row] = await this.db
+          .select({ runId: stages.runId })
+          .from(stages)
+          .where(eq(stages.stageId, stageId))
+          .limit(1);
+        runId = row?.runId ?? null;
+      } catch {
+        runId = null;
+      }
+    }
+    let workspaceId: string | null = null;
+    if (runId) {
+      try {
+        const [row] = await this.db
+          .select({ workspaceId: runs.workspaceId })
+          .from(runs)
+          .where(eq(runs.runId, runId))
+          .limit(1);
+        workspaceId = row?.workspaceId ?? null;
+      } catch {
+        workspaceId = null;
+      }
+    }
+    await recordWriteConflict(this.opLog, detail, {
+      workspaceId,
+      actor: options.lease?.owner ?? "engine",
+    });
+    throw new VersionConflictError(detail);
   }
 }
 
@@ -599,7 +752,10 @@ export class SqliteManagerSessionStore implements ManagerSessionStore {
 }
 
 export class SqliteRunRequestStore implements RunRequestStore {
-  constructor(private readonly db: SqliteDatabase) {}
+  constructor(
+    private readonly db: SqliteDatabase,
+    private readonly opLog?: OpLogStore,
+  ) {}
 
   async enqueue(
     record: Parameters<RunRequestStore["enqueue"]>[0],
@@ -617,6 +773,7 @@ export class SqliteRunRequestStore implements RunRequestStore {
         claimedBy: null,
         claimedAt: null,
         heartbeatAt: null,
+        leaseVersion: 0,
         error: null,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
@@ -655,6 +812,7 @@ export class SqliteRunRequestStore implements RunRequestStore {
           claimedBy: owner,
           claimedAt: nowIso,
           heartbeatAt: nowIso,
+          leaseVersion: sql`${runRequests.leaseVersion} + 1`,
           updatedAt: nowIso,
         })
         .where(and(eq(runRequests.requestId, candidate.requestId), claimable()))
@@ -666,32 +824,57 @@ export class SqliteRunRequestStore implements RunRequestStore {
     return null;
   }
 
-  async heartbeat(requestId: string, owner: string, now: Date): Promise<void> {
+  async heartbeat(
+    requestId: string,
+    owner: string,
+    now: Date,
+    expectedLeaseVersion?: number,
+  ): Promise<RunRequestRecord | null> {
     const nowIso = now.toISOString();
-    await this.db
+    const conditions: SQL[] = [
+      eq(runRequests.requestId, requestId),
+      eq(runRequests.claimedBy, owner),
+    ];
+    if (expectedLeaseVersion !== undefined) {
+      conditions.push(eq(runRequests.leaseVersion, expectedLeaseVersion));
+    }
+    const [row] = await this.db
       .update(runRequests)
       .set({ heartbeatAt: nowIso, updatedAt: nowIso })
-      .where(
-        and(
-          eq(runRequests.requestId, requestId),
-          eq(runRequests.claimedBy, owner),
-        ),
-      );
+      .where(and(...conditions))
+      .returning();
+    if (!row) {
+      if (expectedLeaseVersion !== undefined) {
+        await this.rejectLease(requestId, owner, expectedLeaseVersion);
+      }
+      return null;
+    }
+    return fromSqliteRunRequestRow(row);
   }
 
   async finish(
     requestId: string,
     status: "done" | "failed" | "cancelled",
     error?: string,
+    lease?: Pick<WriteLease, "owner" | "leaseVersion">,
   ): Promise<void> {
-    await this.db
+    const conditions: SQL[] = [eq(runRequests.requestId, requestId)];
+    if (lease) {
+      conditions.push(eq(runRequests.claimedBy, lease.owner));
+      conditions.push(eq(runRequests.leaseVersion, lease.leaseVersion));
+    }
+    const rows = await this.db
       .update(runRequests)
       .set({
         status,
         error: error ?? null,
         updatedAt: new Date().toISOString(),
       })
-      .where(eq(runRequests.requestId, requestId));
+      .where(and(...conditions))
+      .returning({ requestId: runRequests.requestId });
+    if (rows.length === 0 && lease) {
+      await this.rejectLease(requestId, lease.owner, lease.leaseVersion);
+    }
   }
 
   async find(runId: string): Promise<RunRequestRecord | null> {
@@ -701,6 +884,43 @@ export class SqliteRunRequestStore implements RunRequestStore {
       .where(eq(runRequests.runId, runId))
       .limit(1);
     return row ? fromSqliteRunRequestRow(row) : null;
+  }
+
+  private async rejectLease(
+    requestId: string,
+    owner: string,
+    leaseVersion: number,
+  ): Promise<never> {
+    let workspaceId: string | null = null;
+    let currentVersion: number | null = null;
+    try {
+      const [row] = await this.db
+        .select({
+          workspaceId: runRequests.workspaceId,
+          leaseVersion: runRequests.leaseVersion,
+        })
+        .from(runRequests)
+        .where(eq(runRequests.requestId, requestId))
+        .limit(1);
+      workspaceId = row?.workspaceId ?? null;
+      currentVersion = row ? Number(row.leaseVersion) : null;
+    } catch {
+      workspaceId = null;
+    }
+    const detail: WriteConflictDetail = {
+      entityKind: "run_request",
+      entityId: requestId,
+      reason: "lease_mismatch",
+      leaseVersion,
+      owner,
+      requestId,
+      currentVersion,
+    };
+    await recordWriteConflict(this.opLog, detail, {
+      workspaceId,
+      actor: owner,
+    });
+    throw new VersionConflictError(detail);
   }
 }
 
@@ -718,6 +938,7 @@ function fromSqliteRunRequestRow(
     claimedBy: row.claimedBy ?? null,
     claimedAt: row.claimedAt ?? null,
     heartbeatAt: row.heartbeatAt ?? null,
+    leaseVersion: Number(row.leaseVersion ?? 0),
     error: row.error ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

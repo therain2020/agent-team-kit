@@ -19,8 +19,19 @@ import type {
   StageStatus,
 } from "@kit/core";
 import { newId } from "@kit/core";
-import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
+import {
+  type SQL,
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { Database } from "./db";
+import type { OpLogStore } from "./op-log";
 import {
   events,
   artifactEdges,
@@ -36,6 +47,15 @@ import {
   runs,
   stages,
 } from "./schema";
+import {
+  VersionConflictError,
+  type WriteConflictDetail,
+  type WriteLease,
+  type WriteOptions,
+  conflictDetail,
+  leaseClaimExists,
+  recordWriteConflict,
+} from "./write-fencing";
 
 export interface EventStore {
   insert(event: EventEnvelope): Promise<{ inserted: boolean }>;
@@ -44,12 +64,20 @@ export interface EventStore {
 
 export interface RunStore {
   create(run: Run): Promise<void>;
+  /**
+   * Updates a run. `version` is bumped on every write. When `options.lease`
+   * or `options.expectedVersion` is supplied the update is conditional and a
+   * stale caller gets a `VersionConflictError` instead of a silent overwrite.
+   */
   updateStatus(
     runId: string,
     status: Run["status"],
     updatedAt: string,
+    options?: WriteOptions,
   ): Promise<void>;
   get(runId: string): Promise<Run | null>;
+  /** Current optimistic-lock version, or null when the run does not exist. */
+  getVersion(runId: string): Promise<number | null>;
   listRecent(limit?: number): Promise<Run[]>;
   list(options?: {
     status?: RunStatus;
@@ -60,12 +88,19 @@ export interface RunStore {
 
 export interface StageStore {
   create(stage: Stage): Promise<void>;
-  update(stage: Stage): Promise<void>;
+  /**
+   * Read-modify-write update. `version` is bumped on every write; pass
+   * `options.expectedVersion` (from `getVersion`) for a CAS update.
+   */
+  update(stage: Stage, options?: WriteOptions): Promise<void>;
   updateStatus(
     stageId: string,
     status: Stage["status"],
     timestamps?: { startedAt?: string; finishedAt?: string },
+    options?: WriteOptions,
   ): Promise<void>;
+  /** Current optimistic-lock version, or null when the stage does not exist. */
+  getVersion(stageId: string): Promise<number | null>;
   listByRun(runId: string): Promise<Stage[]>;
 }
 
@@ -160,6 +195,8 @@ export interface RunRequestRecord {
   claimedBy: string | null;
   claimedAt: string | null;
   heartbeatAt: string | null;
+  /** Fencing token; incremented on every claim. */
+  leaseVersion: number;
   error: string | null;
   createdAt: string;
   updatedAt: string;
@@ -202,11 +239,27 @@ export interface RunRequestStore {
     now: Date,
     staleMs: number,
   ): Promise<RunRequestRecord | null>;
-  heartbeat(requestId: string, owner: string, now: Date): Promise<void>;
+  /**
+   * Renews a claim. With `expectedLeaseVersion` the renewal is fenced: the
+   * heartbeat affects 0 rows and raises a `VersionConflictError` when the
+   * request was re-claimed by another worker. Returns null when no expected
+   * version was supplied and the row is no longer held by `owner`.
+   */
+  heartbeat(
+    requestId: string,
+    owner: string,
+    now: Date,
+    expectedLeaseVersion?: number,
+  ): Promise<RunRequestRecord | null>;
+  /**
+   * Marks a request terminal. Supplying `lease` fences the write so a worker
+   * whose lease was superseded cannot overwrite the new owner's state.
+   */
   finish(
     requestId: string,
     status: "done" | "failed" | "cancelled",
     error?: string,
+    lease?: Pick<WriteLease, "owner" | "leaseVersion">,
   ): Promise<void>;
   find(runId: string): Promise<RunRequestRecord | null>;
 }
@@ -599,7 +652,10 @@ export class PostgresEventStore implements EventStore {
 }
 
 export class PostgresRunStore implements RunStore {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly opLog?: OpLogStore,
+  ) {}
 
   async create(run: Run): Promise<void> {
     await this.db.insert(runs).values(toRunRow(run)).onConflictDoNothing();
@@ -609,11 +665,25 @@ export class PostgresRunStore implements RunStore {
     runId: string,
     status: Run["status"],
     updatedAt: string,
+    options: WriteOptions = {},
   ): Promise<void> {
-    await this.db
+    const guarded =
+      Boolean(options.lease) || options.expectedVersion !== undefined;
+    const conditions: SQL[] = [eq(runs.runId, runId)];
+    if (options.lease) {
+      conditions.push(leaseClaimExists(runs.runId, options.lease));
+    }
+    if (options.expectedVersion !== undefined) {
+      conditions.push(eq(runs.version, options.expectedVersion));
+    }
+    const rows = await this.db
       .update(runs)
-      .set({ status, updatedAt })
-      .where(eq(runs.runId, runId));
+      .set({ status, updatedAt, version: sql`${runs.version} + 1` })
+      .where(and(...conditions))
+      .returning({ runId: runs.runId });
+    if (rows.length === 0 && guarded) {
+      await this.rejectWrite(runId, options);
+    }
   }
 
   async get(runId: string): Promise<Run | null> {
@@ -624,6 +694,39 @@ export class PostgresRunStore implements RunStore {
       .limit(1);
 
     return row ? fromRunRow(row) : null;
+  }
+
+  async getVersion(runId: string): Promise<number | null> {
+    const [row] = await this.db
+      .select({ version: runs.version })
+      .from(runs)
+      .where(eq(runs.runId, runId))
+      .limit(1);
+    return row ? Number(row.version) : null;
+  }
+
+  private async rejectWrite(
+    runId: string,
+    options: WriteOptions,
+  ): Promise<never> {
+    const currentVersion = await this.getVersion(runId).catch(() => null);
+    const detail = conflictDetail("run", runId, options, currentVersion);
+    let workspaceId: string | null = null;
+    try {
+      const [row] = await this.db
+        .select({ workspaceId: runs.workspaceId })
+        .from(runs)
+        .where(eq(runs.runId, runId))
+        .limit(1);
+      workspaceId = row?.workspaceId ?? null;
+    } catch {
+      workspaceId = null;
+    }
+    await recordWriteConflict(this.opLog, detail, {
+      workspaceId,
+      actor: options.lease?.owner ?? "engine",
+    });
+    throw new VersionConflictError(detail);
   }
 
   async listRecent(limit = 20): Promise<Run[]> {
@@ -648,7 +751,10 @@ export class PostgresRunStore implements RunStore {
 }
 
 export class PostgresStageStore implements StageStore {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly opLog?: OpLogStore,
+  ) {}
 
   async create(stage: Stage): Promise<void> {
     await this.db
@@ -657,26 +763,66 @@ export class PostgresStageStore implements StageStore {
       .onConflictDoNothing();
   }
 
-  async update(stage: Stage): Promise<void> {
-    await this.db
+  async update(stage: Stage, options: WriteOptions = {}): Promise<void> {
+    const guarded =
+      Boolean(options.lease) || options.expectedVersion !== undefined;
+    const conditions: SQL[] = [eq(stages.stageId, stage.stageId)];
+    if (options.lease) {
+      conditions.push(leaseClaimExists(stages.runId, options.lease));
+    }
+    if (options.expectedVersion !== undefined) {
+      conditions.push(eq(stages.version, options.expectedVersion));
+    }
+    const rows = await this.db
       .update(stages)
-      .set(toStageRow(stage))
-      .where(eq(stages.stageId, stage.stageId));
+      .set({
+        ...toStageRow(stage),
+        version: sql`${stages.version} + 1`,
+      })
+      .where(and(...conditions))
+      .returning({ stageId: stages.stageId });
+    if (rows.length === 0 && guarded) {
+      await this.rejectWrite(stage.stageId, stage.runId, options);
+    }
   }
 
   async updateStatus(
     stageId: string,
     status: Stage["status"],
     timestamps: { startedAt?: string; finishedAt?: string } = {},
+    options: WriteOptions = {},
   ): Promise<void> {
-    await this.db
+    const guarded =
+      Boolean(options.lease) || options.expectedVersion !== undefined;
+    const conditions: SQL[] = [eq(stages.stageId, stageId)];
+    if (options.lease) {
+      conditions.push(leaseClaimExists(stages.runId, options.lease));
+    }
+    if (options.expectedVersion !== undefined) {
+      conditions.push(eq(stages.version, options.expectedVersion));
+    }
+    const rows = await this.db
       .update(stages)
       .set({
         status,
         ...(timestamps.startedAt ? { startedAt: timestamps.startedAt } : {}),
         ...(timestamps.finishedAt ? { finishedAt: timestamps.finishedAt } : {}),
+        version: sql`${stages.version} + 1`,
       })
-      .where(eq(stages.stageId, stageId));
+      .where(and(...conditions))
+      .returning({ stageId: stages.stageId });
+    if (rows.length === 0 && guarded) {
+      await this.rejectWrite(stageId, null, options);
+    }
+  }
+
+  async getVersion(stageId: string): Promise<number | null> {
+    const [row] = await this.db
+      .select({ version: stages.version })
+      .from(stages)
+      .where(eq(stages.stageId, stageId))
+      .limit(1);
+    return row ? Number(row.version) : null;
   }
 
   async listByRun(runId: string): Promise<Stage[]> {
@@ -686,6 +832,46 @@ export class PostgresStageStore implements StageStore {
       .where(eq(stages.runId, runId));
 
     return rows.map(fromStageRow);
+  }
+
+  private async rejectWrite(
+    stageId: string,
+    stageRunId: string | null,
+    options: WriteOptions,
+  ): Promise<never> {
+    const currentVersion = await this.getVersion(stageId).catch(() => null);
+    const detail = conflictDetail("stage", stageId, options, currentVersion);
+    let runId = stageRunId;
+    if (!runId) {
+      try {
+        const [row] = await this.db
+          .select({ runId: stages.runId })
+          .from(stages)
+          .where(eq(stages.stageId, stageId))
+          .limit(1);
+        runId = row?.runId ?? null;
+      } catch {
+        runId = null;
+      }
+    }
+    let workspaceId: string | null = null;
+    if (runId) {
+      try {
+        const [row] = await this.db
+          .select({ workspaceId: runs.workspaceId })
+          .from(runs)
+          .where(eq(runs.runId, runId))
+          .limit(1);
+        workspaceId = row?.workspaceId ?? null;
+      } catch {
+        workspaceId = null;
+      }
+    }
+    await recordWriteConflict(this.opLog, detail, {
+      workspaceId,
+      actor: options.lease?.owner ?? "engine",
+    });
+    throw new VersionConflictError(detail);
   }
 }
 
@@ -1264,6 +1450,7 @@ export function fromRunRequestRow(
     claimedBy: row.claimedBy ?? null,
     claimedAt: row.claimedAt ?? null,
     heartbeatAt: row.heartbeatAt ?? null,
+    leaseVersion: Number(row.leaseVersion ?? 0),
     error: row.error ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -1271,7 +1458,10 @@ export function fromRunRequestRow(
 }
 
 export class PostgresRunRequestStore implements RunRequestStore {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly opLog?: OpLogStore,
+  ) {}
 
   async enqueue(
     record: Parameters<RunRequestStore["enqueue"]>[0],
@@ -1289,6 +1479,7 @@ export class PostgresRunRequestStore implements RunRequestStore {
         claimedBy: null,
         claimedAt: null,
         heartbeatAt: null,
+        leaseVersion: 0,
         error: null,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
@@ -1327,6 +1518,7 @@ export class PostgresRunRequestStore implements RunRequestStore {
           claimedBy: owner,
           claimedAt: nowIso,
           heartbeatAt: nowIso,
+          leaseVersion: sql`${runRequests.leaseVersion} + 1`,
           updatedAt: nowIso,
         })
         .where(and(eq(runRequests.requestId, candidate.requestId), claimable()))
@@ -1338,32 +1530,67 @@ export class PostgresRunRequestStore implements RunRequestStore {
     return null;
   }
 
-  async heartbeat(requestId: string, owner: string, now: Date): Promise<void> {
+  async heartbeat(
+    requestId: string,
+    owner: string,
+    now: Date,
+    expectedLeaseVersion?: number,
+  ): Promise<RunRequestRecord | null> {
     const nowIso = now.toISOString();
-    await this.db
+    const conditions: SQL[] = [
+      eq(runRequests.requestId, requestId),
+      eq(runRequests.claimedBy, owner),
+    ];
+    if (expectedLeaseVersion !== undefined) {
+      conditions.push(eq(runRequests.leaseVersion, expectedLeaseVersion));
+    }
+    const [row] = await this.db
       .update(runRequests)
       .set({ heartbeatAt: nowIso, updatedAt: nowIso })
-      .where(
-        and(
-          eq(runRequests.requestId, requestId),
-          eq(runRequests.claimedBy, owner),
-        ),
-      );
+      .where(and(...conditions))
+      .returning();
+    if (!row) {
+      if (expectedLeaseVersion !== undefined) {
+        await this.rejectLease(
+          requestId,
+          owner,
+          expectedLeaseVersion,
+          "lease_mismatch",
+        );
+      }
+      return null;
+    }
+    return fromRunRequestRow(row);
   }
 
   async finish(
     requestId: string,
     status: "done" | "failed" | "cancelled",
     error?: string,
+    lease?: Pick<WriteLease, "owner" | "leaseVersion">,
   ): Promise<void> {
-    await this.db
+    const conditions: SQL[] = [eq(runRequests.requestId, requestId)];
+    if (lease) {
+      conditions.push(eq(runRequests.claimedBy, lease.owner));
+      conditions.push(eq(runRequests.leaseVersion, lease.leaseVersion));
+    }
+    const rows = await this.db
       .update(runRequests)
       .set({
         status,
         error: error ?? null,
         updatedAt: new Date().toISOString(),
       })
-      .where(eq(runRequests.requestId, requestId));
+      .where(and(...conditions))
+      .returning({ requestId: runRequests.requestId });
+    if (rows.length === 0 && lease) {
+      await this.rejectLease(
+        requestId,
+        lease.owner,
+        lease.leaseVersion,
+        "lease_mismatch",
+      );
+    }
   }
 
   async find(runId: string): Promise<RunRequestRecord | null> {
@@ -1373,6 +1600,44 @@ export class PostgresRunRequestStore implements RunRequestStore {
       .where(eq(runRequests.runId, runId))
       .limit(1);
     return row ? fromRunRequestRow(row) : null;
+  }
+
+  private async rejectLease(
+    requestId: string,
+    owner: string,
+    leaseVersion: number,
+    reason: "lease_mismatch",
+  ): Promise<never> {
+    let workspaceId: string | null = null;
+    let currentVersion: number | null = null;
+    try {
+      const [row] = await this.db
+        .select({
+          workspaceId: runRequests.workspaceId,
+          leaseVersion: runRequests.leaseVersion,
+        })
+        .from(runRequests)
+        .where(eq(runRequests.requestId, requestId))
+        .limit(1);
+      workspaceId = row?.workspaceId ?? null;
+      currentVersion = row ? Number(row.leaseVersion) : null;
+    } catch {
+      workspaceId = null;
+    }
+    const detail: WriteConflictDetail = {
+      entityKind: "run_request",
+      entityId: requestId,
+      reason,
+      leaseVersion,
+      owner,
+      requestId,
+      currentVersion,
+    };
+    await recordWriteConflict(this.opLog, detail, {
+      workspaceId,
+      actor: owner,
+    });
+    throw new VersionConflictError(detail);
   }
 }
 

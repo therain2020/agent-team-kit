@@ -13,3 +13,4 @@ export * from "./repositories";
 export * from "./s3";
 export * from "./schema";
 export * from "./store";
+export * from "./write-fencing";
