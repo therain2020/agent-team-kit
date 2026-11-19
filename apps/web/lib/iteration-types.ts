@@ -1,6 +1,8 @@
 export interface IterationRunView {
   iterationId: string;
   workflowId: string | null;
+  /** Absolute repo path the iteration operated on (upstream project). */
+  repoRoot: string | null;
   goal: string;
   acceptance: string | null;
   runMode: string;

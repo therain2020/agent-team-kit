@@ -1,4 +1,5 @@
 import { ActivityFeed } from "@/components/activity/activity-feed";
+import { JobHubPanel } from "@/components/jobs/job-hub-panel";
 import {
   ArtifactViewer,
   type LineageItem,
@@ -6,6 +7,8 @@ import {
 import { StageTimeline } from "@/components/kit/stage-timeline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { JobHubSummary } from "@/lib/job-hub";
+import type { JobHubTab } from "@/lib/job-hub-view";
 import {
   type TraceTarget,
   observabilityConfigFromEnv,
@@ -23,6 +26,7 @@ import { atlasHref } from "@/lib/world-view";
 import {
   Activity,
   ArrowRight,
+  Boxes,
   CheckCircle2,
   ExternalLink,
   FileText,
@@ -38,14 +42,18 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { DrawerShell } from "./drawer-shell";
 
-export type WorldDrawerTab = "timeline" | "activity" | "artifacts";
+/** Tabs of the job drawer; `hub` is the aggregate job detail view (#107). */
+export type WorldDrawerTab = JobHubTab;
 
 export async function WorldDrawer({
   data,
+  hub,
   tab,
   closeHref,
 }: {
   data: WorldDrawerData;
+  /** Cross-plane summary; `null` only for a missing job. */
+  hub: JobHubSummary | null;
   tab: WorldDrawerTab;
   closeHref: string;
 }) {
@@ -97,6 +105,7 @@ export async function WorldDrawer({
     label: string;
     icon: typeof Activity;
   }> = [
+    { id: "hub", label: t("drawer.hub"), icon: Boxes },
     { id: "timeline", label: t("drawer.timeline"), icon: ScrollText },
     { id: "activity", label: t("drawer.activity"), icon: Activity },
     { id: "artifacts", label: t("drawer.artifacts"), icon: FileText },
@@ -231,6 +240,8 @@ export async function WorldDrawer({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        {tab === "hub" && hub ? <JobHubPanel hub={hub} /> : null}
+
         {tab === "timeline" ? (
           data.kind === "run" ? (
             <div className="space-y-3">
