@@ -84,9 +84,30 @@ on mismatch. Cycle records persist `evalSnapshotPath`, `evalSnapshotHash`,
 `evaluateCanary` reuses it, so manual canary evaluation cannot fall back to a
 mutable rubric.
 
+## Security invariants
+
+`packages/evolution/src/security-invariants.ts` makes the evolution-plane
+invariants executable. Each probe carries a stable id so a failure points at
+the rule it protects (70 §3.3/§5, 85 §3.6, 50 §3.8):
+
+| Id | Invariant | Enforcement |
+|---|---|---|
+| SEC-INV-01 | Agent writes to the recovery kernel, LKG or audit sink are rejected | `describeRecoverySurface` + `classifyProtectedWrite` against `<KIT_HOME>/bin`, `/audit`, `/state` and `KILL`; `evaluatePatchSecurity` refuses absolute or `..` patch paths |
+| SEC-INV-02 | Changes that disable audit or approval are blocked | `detectControlPlaneDisable` (config/flag forms) and `detectControlPlaneDeletion` (audit/approval code or tests) |
+| SEC-INV-03 | Eval snapshots live only in the external kit home | `assertSnapshotRootAllowed`; `createEvalSnapshot` rejects a root outside `KIT_HOME` or inside the repository when `kitHome` is supplied, and agents may not write under `<KIT_HOME>/cycles` |
+| SEC-INV-04 | Frozen eval snapshots fail closed when tampered | `assertFrozenSnapshotIntact` on top of the manifest hash check, plus a read-only write probe (Windows read-only attribute / POSIX 0444) |
+
+The probes are injectable (`kitHome`, `repoRoot`, temp roots); the tests never
+read or write the operator's real home. Run the gate with:
+
+```text
+bun run test:invariants
+```
+
+CI runs it before the full suite, so an invariant failure blocks the PR.
+
 ## Follow-ups
 
 - Hidden-set isolation and rotation: E2 (#27).
 - Goodhart divergence and drift re-evaluation: E3 (#28).
 - Incident freeze and convergence: E4 (#29).
-- Safety invariant tests: E6 (#31).

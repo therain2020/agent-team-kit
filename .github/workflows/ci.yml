@@ -17,4 +17,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run lint
+      # Security invariant gate (70 §3.3/§5, 85 §3.6): failures block the PR.
+      - run: bun run test:invariants
       - run: bun run test
