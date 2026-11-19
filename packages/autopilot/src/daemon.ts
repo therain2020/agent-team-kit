@@ -803,8 +803,15 @@ async function processEvolution(input: {
       repo,
     });
     console.log(
-      `[autopilot] evolution cycle ${record.cycleId} decision=${record.decision} candidatePass=${record.candidatePass}`,
+      `[autopilot] evolution cycle ${record.cycleId} decision=${record.decision} budget=${record.budgetStatus} costCny=${record.costCny} candidatePass=${record.candidatePass}`,
     );
+    if (record.budgetStatus === "budget_exceeded") {
+      // A budget gate must never look like a silent skip: the cycle record
+      // carries `budget_exceeded` and the rationale names the blocking phase.
+      console.warn(
+        `[autopilot] evolution cycle ${record.cycleId} stopped by budget: ${record.rationale}`,
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     input.state.lastError = message;

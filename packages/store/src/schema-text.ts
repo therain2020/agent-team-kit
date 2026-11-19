@@ -224,6 +224,9 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   rationale TEXT NOT NULL,
   auto_applied BOOLEAN NOT NULL DEFAULT false,
   error TEXT,
+  budget_status TEXT NOT NULL DEFAULT 'unledgered',
+  budget_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  budget_reconciliation JSONB,
   eval_snapshot_path TEXT,
   eval_snapshot_hash TEXT,
   evaluator_hash TEXT,
@@ -296,6 +299,12 @@ ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS signal_sources JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS budget_status TEXT NOT NULL DEFAULT 'unledgered';
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS budget_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS budget_reconciliation JSONB;
 ALTER TABLE evolution_state
   ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
@@ -937,6 +946,9 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   rationale TEXT NOT NULL,
   auto_applied INTEGER NOT NULL DEFAULT 0,
   error TEXT,
+  budget_status TEXT NOT NULL DEFAULT 'unledgered',
+  budget_refs TEXT NOT NULL DEFAULT '[]',
+  budget_reconciliation TEXT,
   eval_snapshot_path TEXT,
   eval_snapshot_hash TEXT,
   evaluator_hash TEXT,
@@ -1345,6 +1357,9 @@ ALTER TABLE evolution_cycles ADD COLUMN evaluator_hash TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN evaluator_approval_ref TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN signal_refs TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE evolution_cycles ADD COLUMN signal_sources TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE evolution_cycles ADD COLUMN budget_status TEXT NOT NULL DEFAULT 'unledgered';
+ALTER TABLE evolution_cycles ADD COLUMN budget_refs TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE evolution_cycles ADD COLUMN budget_reconciliation TEXT;
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS budgets (

@@ -9,6 +9,12 @@ export const budgetScopeSchema = z.enum([
   "run",
   "stage",
   "agent",
+  /**
+   * Independent self-evolution subject (D-38 / 70 §3.8). Evolution never draws
+   * from the production workspace/month/day budgets; it has its own cap sized
+   * as a share of the production month budget.
+   */
+  "evolution",
 ]);
 
 export type BudgetScope = z.infer<typeof budgetScopeSchema>;
@@ -171,4 +177,147 @@ export function hasBudgetLimit(limit: BudgetLimit | undefined): boolean {
     (limit?.cny !== undefined && limit.cny > 0) ||
     (limit?.tokens !== undefined && limit.tokens > 0)
   );
+}
+
+/**
+ * D-38: self-evolution may spend at most this share of the production budget.
+ * The production budget is the month subject; the evolution subject is derived
+ * from it and capped independently (60 §3.6: evolution must not borrow from the
+ * production budget without approval).
+ */
+export const DEFAULT_EVOLUTION_BUDGET_SHARE = 0.1;
+
+export const EVOLUTION_BUDGET_SHARE_ENV = "KIT_EVOLUTION_BUDGET_SHARE";
+
+export const evolutionBudgetPhaseSchema = z.enum([
+  "proposal",
+  "score",
+  "canary",
+]);
+
+export type EvolutionBudgetPhase = z.infer<typeof evolutionBudgetPhaseSchema>;
+
+/** Reserved purpose prefix keeps evolution charges attributable in the ledger. */
+export function evolutionBudgetPurpose(phase: EvolutionBudgetPhase): string {
+  return `evolution:${phase}`;
+}
+
+export function isEvolutionBudgetPurpose(purpose: string): boolean {
+  return purpose.startsWith("evolution:");
+}
+
+export function loadEvolutionBudgetShare(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env[EVOLUTION_BUDGET_SHARE_ENV];
+  const parsed = raw === undefined || raw === "" ? Number.NaN : Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
+    ? parsed
+    : DEFAULT_EVOLUTION_BUDGET_SHARE;
+}
+
+/**
+ * Sizes the evolution subject from the production month budget. Token limits
+ * only exist when the production budget carries one, mirroring the parent.
+ */
+export function evolutionBudgetLimit(
+  base: BudgetLimit,
+  share: number,
+): BudgetLimit {
+  const bounded = Math.min(1, Math.max(0, share));
+  const limit: BudgetLimit = {};
+  if (base.cny !== undefined) {
+    limit.cny = base.cny * bounded;
+  }
+  if (base.tokens !== undefined) {
+    limit.tokens = Math.floor(base.tokens * bounded);
+  }
+  return limit;
+}
+
+export const EVOLUTION_BUDGET_STATUSES = [
+  "admitted",
+  "budget_exceeded",
+  "unledgered",
+] as const;
+
+export type EvolutionBudgetStatus = (typeof EVOLUTION_BUDGET_STATUSES)[number];
+
+export interface EvolutionBudgetAdmitInput {
+  workspaceId: string;
+  /** Conservative upper bound for the whole cycle (all phases). */
+  estimateCnyMicro: number;
+  estimateTokens?: number;
+  /** Overrides KIT_EVOLUTION_BUDGET_SHARE for this call. */
+  share?: number;
+  policy?: BudgetPolicy;
+  now?: Date;
+}
+
+export interface EvolutionBudgetAdmitResult {
+  ok: boolean;
+  reason: string | null;
+  budgetId: string | null;
+  limitCnyMicro: number | null;
+  limitTokens: number | null;
+  remainingCnyMicro: number | null;
+  remainingTokens: number | null;
+  share: number;
+}
+
+export interface EvolutionBudgetReserveInput {
+  workspaceId: string;
+  cycleId: string;
+  phase: EvolutionBudgetPhase;
+  amountCnyMicro: number;
+  amountTokens: number;
+  share?: number;
+  policy?: BudgetPolicy;
+  now?: Date;
+}
+
+export interface EvolutionBudgetReserveResult {
+  ok: boolean;
+  reservationId: string | null;
+  budgetId: string | null;
+  message: string | null;
+}
+
+export interface EvolutionBudgetCommitResult {
+  ok: boolean;
+  chargeId: string | null;
+  overshoot: boolean;
+  message?: string;
+}
+
+export interface EvolutionBudgetReconcileResult {
+  chargedCnyMicro: number;
+  chargedTokens: number;
+  chargeIds: string[];
+  reservationIds: string[];
+}
+
+/**
+ * Ledger surface used by the evolution cycle. Implemented by the store's
+ * `BudgetService`; tests inject a fake ledger so cycles never need a real
+ * database or a real bill.
+ */
+export interface EvolutionBudgetLedger {
+  admitEvolution(
+    input: EvolutionBudgetAdmitInput,
+  ): Promise<EvolutionBudgetAdmitResult>;
+  reserveEvolution(
+    input: EvolutionBudgetReserveInput,
+  ): Promise<EvolutionBudgetReserveResult>;
+  commitEvolution(
+    reservationId: string,
+    actual: { cnyMicro: number; tokens: number },
+    now?: Date,
+  ): Promise<EvolutionBudgetCommitResult>;
+  /** Idempotent: returns the reservation's funds when a phase fails. */
+  releaseEvolution(reservationId: string, now?: Date): Promise<void>;
+  reconcileEvolution(input: {
+    workspaceId: string;
+    cycleId: string;
+  }): Promise<EvolutionBudgetReconcileResult>;
 }

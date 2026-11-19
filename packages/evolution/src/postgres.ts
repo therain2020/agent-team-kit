@@ -9,14 +9,18 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { newId } from "@kit/core";
+import { type EvolutionBudgetLedger, newId } from "@kit/core";
 import { type SqlClient, type initStore, withStoreLock } from "@kit/store";
 import {
   type CanaryState,
   type EvolutionDecisionRecord,
   normalizeCanaryStatus,
 } from "./canary";
-import type { EvolutionCycleRecord } from "./cycle";
+import type {
+  EvolutionBudgetReconciliation,
+  EvolutionBudgetRef,
+  EvolutionCycleRecord,
+} from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
 import type { EvolutionFreezeState } from "./freeze";
 import type {
@@ -85,6 +89,9 @@ interface CycleRow {
   rationale: string;
   auto_applied: boolean;
   error: string | null;
+  budget_status: string | null;
+  budget_refs: EvolutionBudgetRef[] | string | null;
+  budget_reconciliation: EvolutionBudgetReconciliation | string | null;
   eval_snapshot_path: string | null;
   eval_snapshot_hash: string | null;
   evaluator_hash: string | null;
@@ -135,6 +142,7 @@ interface FreezeRow {
 export class StoreEvolutionRepository implements EvolutionRepository {
   readonly kind: "postgres" | "sqlite";
   readonly workspaceId: string;
+  readonly budget: EvolutionBudgetLedger;
   private readonly variantsRoot: string;
   private readonly archivePath: string;
   private readonly cyclesPath: string;
@@ -147,6 +155,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
   ) {
     this.kind = store.driver;
     this.workspaceId = options.workspaceId ?? "default";
+    this.budget = store.budgetService;
     this.variantsRoot = path.resolve(options.variantsRoot ?? "variants");
     this.archivePath = path.resolve(
       options.archivePath ?? path.join(this.variantsRoot, "archive.jsonl"),
@@ -654,6 +663,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         baseline_variant_id, candidate_variant_id, baseline_name, candidate_name,
         baseline_pass, candidate_pass, baseline_score, candidate_score,
         cost_cny, decision, rationale, auto_applied, error,
+        budget_status, budget_refs, budget_reconciliation,
         eval_snapshot_path, eval_snapshot_hash, evaluator_hash,
         evaluator_approval_ref, created_at
       ) VALUES (
@@ -665,7 +675,14 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         ${record.candidateName}, ${record.baselinePass}, ${record.candidatePass},
         ${record.baselineScore}, ${record.candidateScore}, ${record.costCny},
         ${record.decision}, ${record.rationale}, ${record.autoApplied},
-        ${record.error ?? null}, ${record.evalSnapshotPath ?? null},
+        ${record.error ?? null}, ${record.budgetStatus ?? "unledgered"},
+        ${this.store.sql.json(record.budgetRefs ?? [])},
+        ${
+          record.budgetReconciliation
+            ? this.store.sql.json(record.budgetReconciliation)
+            : null
+        },
+        ${record.evalSnapshotPath ?? null},
         ${record.evalSnapshotHash ?? null}, ${record.evaluatorHash ?? null},
         ${record.evaluatorApprovalRef ?? null}, ${record.createdAt}
       )
@@ -907,6 +924,9 @@ function isFreezeKind(
 }
 
 function mapCycle(row: CycleRow): EvolutionCycleRecord {
+  const budgetReconciliation = parseOptionalJson<EvolutionBudgetReconciliation>(
+    row.budget_reconciliation ?? null,
+  );
   return {
     cycleId: row.cycle_id,
     packDir: row.pack_dir,
@@ -934,7 +954,12 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
     decision: row.decision as EvolutionCycleRecord["decision"],
     rationale: row.rationale,
     autoApplied: Boolean(row.auto_applied),
+    budgetStatus:
+      (row.budget_status as EvolutionCycleRecord["budgetStatus"] | null) ??
+      "unledgered",
+    budgetRefs: parseJsonArray<EvolutionBudgetRef>(row.budget_refs ?? null),
     createdAt: toIso(row.created_at) ?? new Date().toISOString(),
+    ...(budgetReconciliation ? { budgetReconciliation } : {}),
     ...(row.error ? { error: row.error } : {}),
     ...(row.eval_snapshot_path
       ? { evalSnapshotPath: row.eval_snapshot_path }
@@ -986,6 +1011,23 @@ async function readJsonl<T>(file: string): Promise<T[]> {
         return [];
       }
     });
+}
+
+function parseOptionalJson<T>(value: T | string | null): T | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed !== null && typeof parsed === "object"
+      ? (parsed as T)
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseJsonArray<T>(value: T[] | string | null): T[] {
