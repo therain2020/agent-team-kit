@@ -12,8 +12,36 @@ import {
   ok,
 } from "@kit/core";
 import { initStore, loadStoreConfig } from "@kit/store";
+import { Command } from "commander";
 import { afterEach, describe, expect, it } from "vitest";
-import { readActivityBatch, tailActivity } from "../src/commands/watch";
+import { registerApprove } from "../src/commands/approve";
+import { registerAutonomy } from "../src/commands/autonomy";
+import { registerBootstrap } from "../src/commands/bootstrap";
+import { registerDemo } from "../src/commands/demo";
+import { registerDev } from "../src/commands/dev";
+import { registerDoctor } from "../src/commands/doctor";
+import { registerEvent } from "../src/commands/event";
+import { registerEvolve } from "../src/commands/evolve";
+import { registerInit } from "../src/commands/init";
+import { registerIterate } from "../src/commands/iterate";
+import { registerJob } from "../src/commands/job";
+import { registerKillSwitch } from "../src/commands/kill-switch";
+import { registerManager } from "../src/commands/manager";
+import { registerModel } from "../src/commands/model";
+import { registerPack } from "../src/commands/pack";
+import { registerPatch } from "../src/commands/patch";
+import { registerPublish } from "../src/commands/publish";
+import { registerRun } from "../src/commands/run";
+import { registerSignals } from "../src/commands/signals";
+import { registerSource } from "../src/commands/source";
+import { registerStatus } from "../src/commands/status";
+import { registerUp } from "../src/commands/up";
+import {
+  readActivityBatch,
+  registerWatch,
+  tailActivity,
+} from "../src/commands/watch";
+import { registerWorkshop } from "../src/commands/workshop";
 import { failureEnvelope, successEnvelope } from "../src/output";
 
 const dirs: string[] = [];
@@ -108,6 +136,93 @@ describe("error code -> exit code mapping", () => {
     }
     expect(doc).toContain("`needs_confirmation`");
     expect(classifyError(new CliError("budget", "x")).code).toBe("budget");
+  });
+});
+
+function buildProgram(): Command {
+  const program = new Command();
+  registerInit(program);
+  registerBootstrap(program);
+  registerDoctor(program);
+  registerDemo(program);
+  registerPublish(program);
+  registerPack(program);
+  registerPatch(program);
+  registerRun(program);
+  registerStatus(program);
+  registerModel(program);
+  registerSource(program);
+  registerManager(program);
+  registerApprove(program);
+  registerEvolve(program);
+  registerDev(program);
+  registerEvent(program);
+  registerUp(program);
+  registerJob(program);
+  registerKillSwitch(program);
+  registerIterate(program);
+  registerSignals(program);
+  registerWatch(program);
+  registerWorkshop(program);
+  registerAutonomy(program);
+  return program;
+}
+
+function leafCommands(command: Command): Command[] {
+  if (command.commands.length === 0) {
+    return command.name() ? [command] : [];
+  }
+  return command.commands.flatMap((child) => leafCommands(child));
+}
+
+function findCommand(root: Command, ...names: string[]): Command | undefined {
+  let current: Command | undefined = root;
+  for (const name of names) {
+    current = current.commands.find((child) => child.name() === name);
+    if (!current) {
+      return undefined;
+    }
+  }
+  return current;
+}
+
+describe("command registry coverage", () => {
+  it("every leaf command accepts --json", () => {
+    const program = buildProgram();
+    const leaves = leafCommands(program);
+    expect(leaves.length).toBeGreaterThanOrEqual(60);
+    for (const command of leaves) {
+      const hasJson = command.options.some(
+        (option) => option.long === "--json",
+      );
+      expect(hasJson, `kit ${command.name()} is missing --json`).toBe(true);
+    }
+  });
+
+  it("write commands accept --idempotency-key", () => {
+    const program = buildProgram();
+    const paths = [
+      ["approve"],
+      ["run"],
+      ["iterate"],
+      ["job", "start"],
+      ["kill-switch", "activate"],
+      ["kill-switch", "release"],
+      ["autonomy", "enable"],
+      ["autonomy", "rollback"],
+      ["publish"],
+      ["event", "emit"],
+    ];
+    for (const path of paths) {
+      const command = findCommand(program, ...path);
+      expect(command, `kit ${path.join(" ")} is not registered`).toBeDefined();
+      const hasKey = command?.options.some(
+        (option) => option.long === "--idempotency-key",
+      );
+      expect(hasKey, `kit ${path.join(" ")} is missing --idempotency-key`).toBe(
+        true,
+      );
+    }
   });
 });
 
