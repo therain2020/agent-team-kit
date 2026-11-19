@@ -26,6 +26,7 @@ export interface ActivityEvent {
 }
 
 export interface ActivityFilter {
+  workspaceId?: string;
   runId?: string;
   agentId?: string;
   kind?: string;
