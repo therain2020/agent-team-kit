@@ -14,4 +14,5 @@ export * from "./retention";
 export * from "./s3";
 export * from "./schema";
 export * from "./store";
+export * from "./world";
 export * from "./write-fencing";

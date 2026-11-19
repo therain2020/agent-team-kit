@@ -5,7 +5,6 @@ import {
   type RunProjection,
   agentStateFromEvent,
   backfillRunProjections,
-  loadAgentStateSnapshot,
   loadRunProjections,
 } from "@kit/store";
 import { toIso } from "./iteration-mapping";
@@ -22,41 +21,14 @@ type Store = ReturnType<typeof getStore>;
 // `/api/world` payloads without importing the server read model.
 export type { WorldDelta, WorldSnapshot, WorldSnapshotResult };
 
-export interface WorldSnapshotOptions {
-  workspaceId?: string;
-  /** Only runs materialized after this cursor; full snapshot when absent. */
-  since?: number;
-  limit?: number;
-}
-
-/**
- * World read model (87 §4.4): one row per run plus derived agent states. Two
- * constant-cost indexed SELECTs — the agent view doubles as the activity
- * cursor — instead of the per-run N+1 assembly in the legacy loaders.
- *
- * The cursor is read before the projections: if an event commits in between,
- * the stream replays it (idempotent deltas) rather than skipping it.
- */
-export async function loadWorldSnapshot(
-  store: ProjectionStore,
-  options: WorldSnapshotOptions = {},
-): Promise<WorldSnapshotResult> {
-  const workspaceId = options.workspaceId ?? "default";
-  const { agents, seq } = await loadAgentStateSnapshot(store.sql, {
-    workspaceId,
-  });
-  const runs = await loadRunProjections(store.sql, {
-    workspaceId,
-    ...(options.since !== undefined ? { since: options.since } : {}),
-    ...(options.limit !== undefined ? { limit: options.limit } : {}),
-  });
-
-  return {
-    snapshot: { runs, agents, computedAt: new Date().toISOString() },
-    seq,
-    etag: worldEtag(seq),
-  };
-}
+// The snapshot loader is owned by `@kit/store` so the console and the agent CLI
+// (`kit agent world`) serve literally the same contract. Re-exported here to
+// keep the existing `@/lib/world` import sites unchanged.
+export {
+  type WorldSnapshotOptions,
+  loadWorldSnapshot,
+  worldEtag,
+} from "@kit/store";
 
 /**
  * Builds one stream delta from a drained activity batch: the current
@@ -93,10 +65,6 @@ export async function buildWorldDelta(
     agents: [...agents.values()],
     eventCount: events.length,
   };
-}
-
-export function worldEtag(seq: number): string {
-  return `W/"world-${seq}"`;
 }
 
 export type WorldRunKind = "run" | "iteration";
