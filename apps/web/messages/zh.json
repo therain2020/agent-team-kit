@@ -25,9 +25,8 @@
     "office": "办公室",
     "commandCenter": "指挥中心",
     "manager": "Manager",
-    "inbox": "收件箱",
+    "approvals": "审批",
     "ops": "运营",
-    "factory": "工厂",
     "runs": "运行",
     "iterations": "迭代",
     "activity": "活动",
@@ -644,6 +643,13 @@
     "stationQa": "质检",
     "stationGatekeeper": "闸门",
     "stationDeliver": "交付"
+  },
+  "approvals": {
+    "title": "审批",
+    "description": "同一个队列，两种看法：审批塔看排队与到期，像素流水线看物料与门禁。",
+    "viewQueue": "队列",
+    "viewFactory": "流水线",
+    "shortcuts": "J/K 选择 · A 批准 · R 拒绝 · Enter 详情 · Esc 关闭 · S 多选"
   },
   "inbox": {
     "title": "收件箱",

@@ -1,6 +1,6 @@
 "use client";
 
-import { PixelWorkpiece } from "@/components/factory/pixel-workpiece";
+import { PixelWorkpiece } from "@/components/approvals/pixel-workpiece";
 import {
   RunModeBadge,
   RunStatusBadge,
@@ -19,29 +19,55 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { FactoryDetail, FactoryItem } from "@/lib/factory";
 import { cn, formatCny, formatNumber, timeAgo, timeUntil } from "@/lib/utils";
-import { CheckCircle2, ExternalLink, ShieldAlert, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ExternalLink,
+  Hand,
+  ShieldAlert,
+  XCircle,
+} from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type DrawerTab = "summary" | "diff" | "evidence" | "history";
 
-export function DetailDrawer({
+/** Approval kinds the tower labels; unknown kinds fall back to gate failure. */
+const KIND_KEYS: Record<string, string> = {
+  stage_before: "kind_stage_before",
+  stage_after: "kind_stage_after",
+  gate_failure: "kind_gate_failure",
+  budget_exceeded: "kind_budget_exceeded",
+};
+
+/**
+ * The one approval detail drawer (82 §4.3, 89 §3.2). Opened from either view,
+ * it carries kind, requester, run/stage context, draft diff, gate scores,
+ * budget impact, the #140 evidence chain and the four decisions:
+ * approve, reject, take over, or jump to the run.
+ */
+export function ApprovalDrawer({
   item,
   open,
+  operator,
   onOpenChange,
   onApprove,
   onReject,
+  onTakeOver,
   pending,
 }: {
   item: FactoryItem | null;
   open: boolean;
+  operator: string;
   onOpenChange: (open: boolean) => void;
   onApprove: (item: FactoryItem) => void;
   onReject: (item: FactoryItem) => void;
+  onTakeOver: (item: FactoryItem, version: number) => void;
   pending: boolean;
 }) {
   const t = useTranslations("factory");
+  const inboxT = useTranslations("inbox");
+  const approvalT = useTranslations("approval");
   const riskT = useTranslations("risk");
   const locale = useLocale();
   const [detail, setDetail] = useState<FactoryDetail | null>(null);
@@ -93,6 +119,9 @@ export function DetailDrawer({
   }, [open, runId, reloadKey, t]);
 
   const actionable = detail?.kind === "approval" && detail.status === "paused";
+  const approval = detail?.approval ?? null;
+  const ownedByMe = approval?.assignee === operator;
+  const takenByOther = Boolean(approval?.assignee) && !ownedByMe;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -161,6 +190,28 @@ export function DetailDrawer({
                   >
                     {riskT(detail.summary.riskClass)}
                   </Badge>
+                  {approval ? (
+                    <Badge
+                      variant="outline"
+                      className="rounded-none text-[9px]"
+                    >
+                      {inboxT(KIND_KEYS[approval.kind] ?? "kind_gate_failure")}
+                    </Badge>
+                  ) : null}
+                  {ownedByMe ? (
+                    <Badge
+                      variant="success"
+                      className="rounded-none text-[9px]"
+                    >
+                      {inboxT("ownerYou")}
+                    </Badge>
+                  ) : takenByOther ? (
+                    <Badge variant="info" className="rounded-none text-[9px]">
+                      {inboxT("ownerOther", {
+                        owner: approval?.assignee ?? "",
+                      })}
+                    </Badge>
+                  ) : null}
                 </div>
                 <p className="text-xs leading-5 text-zinc-300">
                   {detail.summary.title}
@@ -190,6 +241,21 @@ export function DetailDrawer({
                   <Meta
                     label={t("gatesLabel")}
                     value={String(detail.summary.gateCount)}
+                  />
+                  <Meta
+                    label={inboxT("budgetImpact")}
+                    value={
+                      approval?.budget
+                        ? approval.budget.limitCny !== null
+                          ? inboxT("budgetSpentLimit", {
+                              spent: formatCny(approval.budget.spentCny),
+                              limit: formatCny(approval.budget.limitCny),
+                            })
+                          : inboxT("budgetSpentOnly", {
+                              spent: formatCny(approval.budget.spentCny),
+                            })
+                        : inboxT("budgetUnknown")
+                    }
                   />
                   {detail.summary.expiresAt ? (
                     <Meta
@@ -280,6 +346,38 @@ export function DetailDrawer({
                         </div>
                       ))}
                     </div>
+                  )}
+                </section>
+
+                <section>
+                  <h3 className="mb-1.5 font-mono text-[10px] uppercase tracking-widest text-zinc-500">
+                    {inboxT("whyTitle")}
+                  </h3>
+                  {detail.evidence.ancestry.length === 0 ? (
+                    <p className="text-[11px] text-zinc-600">
+                      {inboxT("whyNone")}
+                    </p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {detail.evidence.ancestry.map((ref) => (
+                        <li
+                          key={`${ref.artifactId}:${ref.version}:${ref.relation}`}
+                          className="flex min-w-0 items-center gap-2 border border-zinc-800/70 px-2 py-1 font-mono text-[10px] text-zinc-500"
+                        >
+                          <span className="truncate text-zinc-300">
+                            {ref.artifactId} v{ref.version}
+                          </span>
+                          <span className="truncate text-zinc-600">
+                            {ref.stageId
+                              ? ref.stageId.split(":").slice(-1)[0]
+                              : ""}
+                          </span>
+                          <span className="ml-auto shrink-0 text-zinc-600">
+                            {ref.relation}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </section>
 
@@ -384,7 +482,7 @@ export function DetailDrawer({
                   <Button
                     size="sm"
                     onClick={() => onApprove(item)}
-                    disabled={pending}
+                    disabled={pending || takenByOther}
                   >
                     <CheckCircle2 className="size-3.5" />
                     {t("approve")}
@@ -394,12 +492,29 @@ export function DetailDrawer({
                     variant="outline"
                     className="border-red-500/30 text-red-300 hover:bg-red-500/10"
                     onClick={() => onReject(item)}
-                    disabled={pending}
+                    disabled={pending || takenByOther}
                   >
                     <XCircle className="size-3.5" />
                     {t("abort")}
                   </Button>
                 </>
+              ) : null}
+              {actionable && approval && item && !ownedByMe ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onTakeOver(item, approval.version)}
+                  disabled={pending}
+                >
+                  <Hand className="size-3.5" />
+                  {approvalT("takeOver")}
+                </Button>
+              ) : null}
+              {takenByOther ? (
+                <span className="flex items-center gap-1 text-[10px] text-sky-300/80">
+                  <ShieldAlert className="size-3" />
+                  {inboxT("alreadyTaken")}
+                </span>
               ) : null}
               <Button size="sm" variant="ghost" asChild>
                 <Link href={`/runs/${encodeURIComponent(detail.runId)}`}>

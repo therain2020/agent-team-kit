@@ -1,15 +1,23 @@
+import { microToCny } from "@kit/core";
 import { diffLines } from "diff";
 import { loadInboxData } from "./approvals";
 import {
+  type FactoryApprovalInfo,
   type FactoryDetail,
   type FactoryDiffPart,
+  type FactoryEvidenceRef,
   type FactoryHistoryEntry,
   type FactoryItem,
   type FactorySnapshot,
   stationForApproval,
   stationsFor,
 } from "./factory";
+import { loadApprovalWhy } from "./inbox";
 import { type ArtifactView, loadArtifactContent, loadRunDetail } from "./runs";
+import { ensureStoreSchema, getStore } from "./store";
+
+/** Same default workspace the approval tower reads budgets from. */
+const DEFAULT_WORKSPACE = "default";
 
 const MAX_DETAIL_ARTIFACTS = 40;
 const MAX_DIFF_PARTS = 500;
@@ -78,6 +86,51 @@ export async function loadFactoryDetail(
 
   const diff = await buildDiff(draftView, detail.artifacts);
 
+  await ensureStoreSchema();
+  const client = await getStore();
+  const requestId = approval?.requestId;
+  const [record, budgetRows, why] = await Promise.all([
+    requestId ? client.approvals.get(requestId) : Promise.resolve(null),
+    client.budgetService
+      .listBudgets({
+        workspaceId: DEFAULT_WORKSPACE,
+        scope: "run",
+        targetPrefix: detail.run.runId,
+        limit: 20,
+      })
+      .catch(() => []),
+    requestId
+      ? loadApprovalWhy(requestId, client).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  const budget = budgetRows.find((row) => row.targetKey === detail.run.runId);
+  const approvalInfo: FactoryApprovalInfo | null = requestId
+    ? {
+        requestId,
+        kind: record?.kind ?? approval?.requestType ?? "gate_failure",
+        ...(approval?.requestType ? { requestType: approval.requestType } : {}),
+        assignee: record?.assignee ?? null,
+        version: record?.version ?? 1,
+        budget: budget
+          ? {
+              spentCny: microToCny(budget.spentCnyMicro),
+              limitCny:
+                budget.limitCnyMicro === null
+                  ? null
+                  : microToCny(budget.limitCnyMicro),
+            }
+          : null,
+      }
+    : null;
+  const ancestry: FactoryEvidenceRef[] = why
+    ? [...why.producedBy, ...why.consumedBy].map((ref) => ({
+        artifactId: ref.artifactId,
+        version: ref.version,
+        stageId: ref.stageId,
+        relation: ref.relation,
+      }))
+    : [];
+
   const history = (
     await Promise.all(
       detail.decisions.map(async (view) => {
@@ -139,9 +192,11 @@ export async function loadFactoryDetail(
         ...(stage.startedAt ? { startedAt: stage.startedAt } : {}),
         ...(stage.finishedAt ? { finishedAt: stage.finishedAt } : {}),
       })),
+      ancestry,
       costCny: detail.costCny,
       tokens: detail.tokens,
     },
+    approval: approvalInfo,
     history,
   };
 }

@@ -25,9 +25,8 @@
     "office": "Office",
     "commandCenter": "Command Center",
     "manager": "Manager",
-    "inbox": "Inbox",
+    "approvals": "Approvals",
     "ops": "Ops",
-    "factory": "Factory",
     "runs": "Runs",
     "iterations": "Iterations",
     "activity": "Activity",
@@ -644,6 +643,13 @@
     "stationQa": "QA",
     "stationGatekeeper": "Gatekeeper",
     "stationDeliver": "Deliver"
+  },
+  "approvals": {
+    "title": "Approvals",
+    "description": "One queue, two views: the tower for SLA pressure and the pixel line for what is on the belt.",
+    "viewQueue": "Queue",
+    "viewFactory": "Line",
+    "shortcuts": "J/K select · A approve · R reject · Enter detail · Esc close · S multi-select"
   },
   "inbox": {
     "title": "Inbox",

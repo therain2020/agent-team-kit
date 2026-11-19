@@ -1,6 +1,5 @@
 import {
   Activity,
-  Factory,
   FlaskConical,
   Gamepad2,
   GitBranch,
@@ -28,8 +27,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/office", labelKey: "office", icon: Gamepad2 },
   { href: "/", labelKey: "commandCenter", icon: LayoutDashboard, exact: true },
-  { href: "/factory", labelKey: "factory", icon: Factory, badge: true },
-  { href: "/inbox", labelKey: "inbox", icon: Inbox, badge: true },
+  { href: "/approvals", labelKey: "approvals", icon: Inbox, badge: true },
   { href: "/ops", labelKey: "ops", icon: Siren },
   { href: "/runs", labelKey: "runs", icon: Play },
   { href: "/iterations", labelKey: "iterations", icon: GitBranch },

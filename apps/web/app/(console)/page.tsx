@@ -181,7 +181,7 @@ export default async function CommandCenterPage() {
                       key={`paused-${item.run.runId}`}
                       href={
                         item.approval
-                          ? `/inbox/${encodeURIComponent(item.approval.requestId)}`
+                          ? `/approvals?request=${encodeURIComponent(item.approval.requestId)}`
                           : `/runs/${encodeURIComponent(item.run.runId)}`
                       }
                       className="flex items-start gap-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 transition-colors hover:bg-amber-500/10"

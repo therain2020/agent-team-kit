@@ -2,6 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { approvalsHref } from "@/lib/approvals-view";
 import type { ApprovalTowerCard } from "@/lib/inbox-shared";
 import { cn, formatCny, timeAgo, timeUntil, truncate } from "@/lib/utils";
 import {
@@ -202,7 +203,7 @@ export const ApprovalCard = forwardRef<
             )}
           </span>
           <Link
-            href={`/inbox/${encodeURIComponent(card.requestId)}`}
+            href={approvalsHref("queue", card.requestId)}
             onClick={(event) => event.stopPropagation()}
             className="ml-auto shrink-0 text-emerald-400 outline-none hover:text-emerald-300 focus-visible:ring-2 focus-visible:ring-ring/70"
           >
