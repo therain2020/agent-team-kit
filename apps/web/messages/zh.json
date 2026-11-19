@@ -1037,7 +1037,7 @@
     "securityNotice": "工坊条目属于第三方内容。安装会固定 commit 并记录 manifest 的 SHA-256；声明可执行代码的条目需要额外确认，安装过程中绝不执行代码。",
     "publishTitle": "发布你自己的团队",
     "publishDescription": "先在本地生成并校验 workshop.yaml，再由你自己推送仓库。控制台不会代推送，也不会执行第三方代码。",
-    "publishStepManifest": "运行 kit workshop publish <dir>，生成带文件哈希、权限与检查清单的 manifest。",
+    "publishStepManifest": "运行 kit workshop publish「目录」，生成带文件哈希、权限与检查清单的 manifest。",
     "publishStepTopic": "为仓库添加 GitHub topic agent-team-workshop。",
     "publishStepPush": "提交 workshop.yaml、打版本 tag，并从你自己的终端推送。",
     "installedTitle": "已安装",
