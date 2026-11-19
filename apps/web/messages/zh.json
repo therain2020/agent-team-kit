@@ -1195,7 +1195,8 @@
     "installButton": "安装固定版本",
     "installing": "安装中…",
     "installFailed": "安装失败",
-    "installed": "{name} 已安装"
+    "installed": "{name} 已安装",
+    "installedPack": "{name} 已安装到 packs/，正在打开模具库…"
   },
   "workshopSurface": {
     "title": "工坊",
@@ -1228,6 +1229,14 @@
     "noSelectionDesc": "在左栏选择模具，信源与装配会随选择联动。",
     "openStudio": "Studio",
     "openDetail": "详情",
+    "workshopBadge": "工坊",
+    "legacyTitle": "旧版工坊 pack 可导入模具库",
+    "legacyDescription": "这些 pack 安装在 workshop/ 目录，不会出现在模具库。导入会把它们复制到 packs/ 并通过校验，原目录保留不动；未经你确认不会复制。",
+    "legacyImport": "导入为模具",
+    "legacyImporting": "导入中…",
+    "legacyImportDone": "{name} 已导入 packs/",
+    "legacyImportFailed": "导入失败",
+    "legacyDismiss": "不再提示",
     "runTrial": "试运行",
     "usedSourcesTitle": "此模具引用的信源",
     "usedSourcesEmpty": "该模具没有具名引用信源，显示全部可用信源。",

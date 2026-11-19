@@ -82,6 +82,7 @@ async function toPackView(
     roles: [] as WorkshopRoleView[],
     skills: [] as string[],
     usedSources: [] as string[],
+    ...(summary.workshop ? { workshop: summary.workshop } : {}),
   };
 
   if (summary.errors?.length) {

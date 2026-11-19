@@ -1,5 +1,6 @@
 import { sameOriginError } from "@/lib/http";
 import {
+  getWorkshopPacksRoot,
   getWorkshopRoot,
   loadInstalledWorkshop,
   searchWorkshopMarket,
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
     allowCode?: unknown;
     acceptUnsigned?: unknown;
     acceptHighRisk?: unknown;
+    overwrite?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -61,6 +63,8 @@ export async function POST(request: Request) {
       ref: typeof body.ref === "string" ? body.ref : undefined,
       token: process.env.GITHUB_TOKEN,
       root: getWorkshopRoot(),
+      packsRoot: getWorkshopPacksRoot(),
+      overwrite: body.overwrite === true,
       acceptThirdParty: true,
       allowCode: body.allowCode === true,
       acceptUnsigned: body.acceptUnsigned === true,
@@ -75,6 +79,8 @@ export async function POST(request: Request) {
         name: installed.manifest.name,
         version: installed.manifest.version,
         kind: installed.manifest.kind,
+        scope: installed.scope,
+        dir: installed.dir,
         manifestSha256: installed.manifestSha256,
         trust: installed.trust,
       },

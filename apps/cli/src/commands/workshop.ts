@@ -55,7 +55,11 @@ export function registerWorkshop(program: Command): void {
     .command("install <repo>")
     .description("Install a workshop item at a pinned commit")
     .option("--ref <ref>", "commit or branch")
-    .option("--target <dir>", "target root (default: ./workshop)")
+    .option(
+      "--target <dir>",
+      "workshop root for non-pack items (default: ./workshop); pack items install into ./packs",
+    )
+    .option("--overwrite", "replace an existing install target", false)
     .option("--yes", "accept third-party content", false)
     .option(
       "--accept-unsigned",
@@ -79,6 +83,7 @@ export function registerWorkshop(program: Command): void {
         options: {
           ref?: string;
           target?: string;
+          overwrite?: boolean;
           yes: boolean;
           acceptUnsigned: boolean;
           allowCode: boolean;
@@ -103,6 +108,7 @@ export function registerWorkshop(program: Command): void {
             repo,
             ref: options.ref,
             root: options.target,
+            overwrite: options.overwrite === true,
             acceptThirdParty: true,
             acceptUnsigned: options.acceptUnsigned,
             allowCode: options.allowCode,
