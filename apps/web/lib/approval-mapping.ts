@@ -16,6 +16,8 @@ export interface ApprovalEntityView {
   status: string;
   slaDueAt: string | null;
   expiresAt: string | null;
+  requester?: string;
+  assignee?: string | null;
   version: number;
   runStatus: string | null;
 }
@@ -34,6 +36,8 @@ export interface ApprovalApiItem {
   options: string[];
   expiresAt: string;
   status: string;
+  requester: string;
+  assignee: string | null;
   version: number;
   slaDueAt: string | null;
   runStatus: string | null;
@@ -64,6 +68,8 @@ export function toApiApprovalItem(
     options: normalizeOptions(payload?.options),
     expiresAt: entity.expiresAt ?? stringField(payload, "expiresAt"),
     status: entity.status,
+    requester: entity.requester ?? stringField(payload, "requestedBy"),
+    assignee: entity.assignee ?? null,
     version: entity.version,
     slaDueAt: entity.slaDueAt,
     runStatus: entity.runStatus,

@@ -37,6 +37,10 @@ export interface ApprovalDetail {
   draftUnavailable: boolean;
   expired: boolean;
   actionable: boolean;
+  /** Takeover owner and CAS version of the approvals entity. */
+  assignee: string | null;
+  assignedAt: string | null;
+  approvalVersion: number;
 }
 
 export interface InboxData {
@@ -106,6 +110,7 @@ async function buildApprovalDetail(
     detail.approval.expiresAt &&
       new Date(detail.approval.expiresAt).getTime() < Date.now(),
   );
+  const record = await client.approvals.get(detail.approval.requestId);
 
   return {
     run: detail.run,
@@ -116,6 +121,9 @@ async function buildApprovalDetail(
     draftUnavailable: content.unavailable,
     expired,
     actionable: detail.run.status === "paused" && !expired,
+    assignee: record?.assignee ?? null,
+    assignedAt: record?.assignedAt ?? null,
+    approvalVersion: record?.version ?? 1,
   };
 }
 
@@ -198,6 +206,8 @@ export async function loadPendingApprovals(
         status: item.status,
         slaDueAt: item.slaDueAt,
         expiresAt: item.expiresAt,
+        requester: item.requester,
+        assignee: item.assignee,
         version: item.version,
         runStatus: item.runStatus,
       };
