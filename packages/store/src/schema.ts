@@ -511,9 +511,7 @@ export const runbooks = pgTable(
     }).notNull(),
     version: integer("version").notNull().default(0),
   },
-  (table) => [
-    index("idx_runbooks_mode").on(table.workspaceId, table.modeId),
-  ],
+  (table) => [index("idx_runbooks_mode").on(table.workspaceId, table.modeId)],
 );
 
 /** Per-runbook drill records (61 §5). */
@@ -569,7 +567,5 @@ export const recoveryDrills = pgTable(
       mode: "string",
     }).notNull(),
   },
-  (table) => [
-    index("idx_recovery_drills_executed").on(table.executedAt),
-  ],
+  (table) => [index("idx_recovery_drills_executed").on(table.executedAt)],
 );

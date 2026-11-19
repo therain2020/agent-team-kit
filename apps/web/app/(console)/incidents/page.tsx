@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic";
 const MODE = "font-mono text-[11px]";
 const HEADING =
   "font-mono text-[12px] font-bold tracking-[0.1em] text-px-strong uppercase";
-const PASS = "mt-1 inline-block border border-emerald-700 px-1 text-emerald-300";
+const PASS =
+  "mt-1 inline-block border border-emerald-700 px-1 text-emerald-300";
 const WARN = "mt-1 inline-block border border-amber-700 px-1 text-amber-300";
 
 function coverageLabel(

@@ -495,9 +495,7 @@ export const newRecoveryDrillInputSchema = z.object({
   now: z.string().datetime().optional(),
 });
 
-export type NewRecoveryDrillInput = z.input<
-  typeof newRecoveryDrillInputSchema
->;
+export type NewRecoveryDrillInput = z.input<typeof newRecoveryDrillInputSchema>;
 
 export interface RecoveryDrillEvaluation {
   pass: boolean;

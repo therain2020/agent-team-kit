@@ -83,9 +83,7 @@ describe("incident store", () => {
 
     const listed = await store.incidents.list("ws-1", { status: "resolved" });
     expect(listed.map((item) => item.incidentId)).toEqual([record.incidentId]);
-    expect(listed[0]?.postmortem.draftDueAt).toBe(
-      "2026-11-16T00:00:00.000Z",
-    );
+    expect(listed[0]?.postmortem.draftDueAt).toBe("2026-11-16T00:00:00.000Z");
   });
 });
 

@@ -15,11 +15,11 @@ import type {
   QualityFloor,
   RecoveryDrill,
   Run,
-  Runbook,
-  RunbookDrill,
   RunMode,
   RunOriginKind,
   RunStatus,
+  Runbook,
+  RunbookDrill,
   Sensitivity,
   Stage,
   StageStatus,
@@ -2209,10 +2209,7 @@ export interface RunbookListOptions {
 export interface IncidentStore {
   create(incident: Incident): Promise<void>;
   get(incidentId: string): Promise<Incident | null>;
-  list(
-    workspaceId: string,
-    options?: IncidentListOptions,
-  ): Promise<Incident[]>;
+  list(workspaceId: string, options?: IncidentListOptions): Promise<Incident[]>;
   /** Optimistic update; returns false and mutates nothing on version conflict. */
   update(incident: Incident): Promise<boolean>;
 }
@@ -2221,10 +2218,7 @@ export interface RunbookStore {
   /** Inserts a new runbook or replaces one with the same id. */
   upsert(runbook: Runbook): Promise<void>;
   get(runbookId: string): Promise<Runbook | null>;
-  list(
-    workspaceId: string,
-    options?: RunbookListOptions,
-  ): Promise<Runbook[]>;
+  list(workspaceId: string, options?: RunbookListOptions): Promise<Runbook[]>;
   /** Optimistic update; returns false on version conflict. */
   update(runbook: Runbook): Promise<boolean>;
 }
@@ -2261,9 +2255,7 @@ export function toIncidentRow(record: Incident) {
   };
 }
 
-export function fromIncidentRow(
-  row: typeof incidents.$inferSelect,
-): Incident {
+export function fromIncidentRow(row: typeof incidents.$inferSelect): Incident {
   return {
     incidentId: row.incidentId,
     workspaceId: row.workspaceId,
