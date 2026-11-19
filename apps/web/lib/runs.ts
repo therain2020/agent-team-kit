@@ -1,4 +1,5 @@
 import type { ArtifactVersion, Blob, Manifest, Run, Stage } from "@kit/core";
+import { diffLines } from "diff";
 import { cache } from "react";
 import { getStore } from "./store";
 
@@ -467,4 +468,64 @@ async function readJson(
   } catch {
     return null;
   }
+}
+
+export interface DiffPart {
+  value: string;
+  added?: boolean;
+  removed?: boolean;
+}
+
+/**
+ * Resolves the artifact a run deep link should show: an explicit
+ * `artifactId[:version]` when valid, otherwise the deliverable report, then
+ * the newest committed artifact.
+ */
+export function pickRunArtifact(
+  detail: RunDetail,
+  query?: string,
+): ArtifactView | null {
+  if (query) {
+    const [artifactId, versionRaw] = query.split(":");
+    const version = Number(versionRaw ?? 1);
+    const match = detail.artifacts.find(
+      (view) =>
+        view.artifact.artifactId === artifactId &&
+        view.artifact.version === version,
+    );
+    if (match) {
+      return match;
+    }
+  }
+  if (detail.report) {
+    return detail.report;
+  }
+  return detail.artifacts.at(-1) ?? null;
+}
+
+/** Diffs a revision against the first input it supersedes, when available. */
+export async function buildArtifactDiff(
+  selected: ArtifactView,
+  artifacts: ArtifactView[],
+  store?: Store,
+): Promise<DiffPart[] | null> {
+  const input = selected.manifest?.inputs[0];
+  if (!input) {
+    return null;
+  }
+  const previous = artifacts.find(
+    (view) => view.artifact.artifactId === input.artifactId,
+  );
+  if (!previous) {
+    return null;
+  }
+  const [before, after] = await Promise.all([
+    loadArtifactContent(previous.artifact, store),
+    loadArtifactContent(selected.artifact, store),
+  ]);
+  return diffLines(before.text, after.text).map((part) => ({
+    value: part.value,
+    added: part.added,
+    removed: part.removed,
+  }));
 }

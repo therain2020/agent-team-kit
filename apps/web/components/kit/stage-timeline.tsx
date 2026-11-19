@@ -25,9 +25,15 @@ const ICONS = {
 export async function StageTimeline({
   detail,
   selectedKey,
+  artifactHref,
 }: {
   detail: RunDetail;
   selectedKey?: string;
+  /**
+   * Destination for artifact chips. The world drawer routes them through the
+   * `/world` deep link; legacy callers keep the `/runs/[id]` alias.
+   */
+  artifactHref?: (artifactKey: string) => string;
 }) {
   const { run, stages, artifacts } = detail;
   const t = await getTranslations("runDetail");
@@ -114,6 +120,7 @@ export async function StageTimeline({
                       key={`${view.artifact.artifactId}:${view.artifact.version}`}
                       view={view}
                       runId={run.runId}
+                      artifactHref={artifactHref}
                       kindLabel={artifactT(`kind.${view.kind}`)}
                       selected={
                         selectedKey ===
@@ -134,11 +141,13 @@ export async function StageTimeline({
 function ArtifactLink({
   view,
   runId,
+  artifactHref,
   kindLabel,
   selected,
 }: {
   view: ArtifactView;
   runId: string;
+  artifactHref?: (artifactKey: string) => string;
   kindLabel: string;
   selected: boolean;
 }) {
@@ -146,7 +155,11 @@ function ArtifactLink({
   return (
     <li>
       <Link
-        href={`/runs/${encodeURIComponent(runId)}?artifact=${encodeURIComponent(key)}`}
+        href={
+          artifactHref
+            ? artifactHref(key)
+            : `/runs/${encodeURIComponent(runId)}?artifact=${encodeURIComponent(key)}`
+        }
         className={cn(
           "flex items-center gap-2 rounded-none px-2 py-1 text-[11px] text-px-muted transition-colors hover:bg-px-panel3 hover:text-px-text",
           selected && "bg-px-panel3 text-px-strong",
