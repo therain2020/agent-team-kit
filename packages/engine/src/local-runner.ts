@@ -1,4 +1,4 @@
-import { newId } from "@kit/core";
+import { newId, priorityClassFor } from "@kit/core";
 import { findDecisionForRequest } from "@kit/manager";
 import {
   VersionConflictError,
@@ -124,6 +124,16 @@ export async function enqueueLocalRun(
   store: Store,
 ): Promise<{ requestId: string }> {
   await assertKillSwitchClear(store, { workspaceId: input.workspaceId }, "run");
+  // Admission merge: a duplicate run id folds into the queued request instead
+  // of stacking a second one (60 §3.4 "事件合并").
+  const existing = await store.runRequests.find(input.runId);
+  if (existing) {
+    return { requestId: existing.requestId };
+  }
+  const priority = priorityClassFor({
+    priority: input.priority,
+    runMode: input.runMode,
+  });
   return enqueueLocalRequest(
     {
       runId: input.runId,
@@ -131,7 +141,7 @@ export async function enqueueLocalRun(
       workflowId: input.workflowId,
     },
     "pack_run",
-    JSON.stringify(input),
+    JSON.stringify({ ...input, priority }),
     store,
   );
 }
@@ -141,6 +151,14 @@ export async function enqueueLocalIteration(
   store: Store,
 ): Promise<{ requestId: string }> {
   await assertKillSwitchClear(store, { workspaceId: input.workspaceId }, "run");
+  const existing = await store.runRequests.find(input.iterationId);
+  if (existing) {
+    return { requestId: existing.requestId };
+  }
+  const priority = priorityClassFor({
+    priority: input.priority,
+    runMode: input.runMode,
+  });
   return enqueueLocalRequest(
     {
       runId: input.iterationId,
@@ -148,7 +166,7 @@ export async function enqueueLocalIteration(
       workflowId: input.workflowId ?? `iteration-${input.iterationId}`,
     },
     "iteration",
-    JSON.stringify(input),
+    JSON.stringify({ ...input, priority }),
     store,
   );
 }

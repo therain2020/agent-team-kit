@@ -6,6 +6,7 @@ import {
   cnyToMicro,
   isExecutionBlocked,
   newId,
+  priorityClassFor,
   resolveKillSwitch,
 } from "@kit/core";
 import { activeModeForWorkspace, auditBlockedExecution } from "@kit/engine";
@@ -240,6 +241,12 @@ export class EventRouter {
               : {}),
           });
           built.input.eventId = event.eventId;
+          // Rule 10 event priority → PriorityClass (60 §2). Explicit payload
+          // priority/tier wins; non-LIVE event runs fall back to P3.
+          built.input.priority = priorityClassFor({
+            priority: eventPriorityOf(payload),
+            runMode: built.input.runMode,
+          });
 
           const simulated = simulatePack(pack).workflows.find(
             (item) => item.id === workflow.id,
@@ -448,6 +455,24 @@ function nonNegativeNumber(value: string | undefined): number | undefined {
 
 function round4(value: number): number {
   return Math.round(value * 10000) / 10000;
+}
+
+/**
+ * Reads the priority hint carried by an event payload (rule 10 contract). The
+ * envelope itself has no priority field, so this stays defensive.
+ */
+export function eventPriorityOf(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const key of ["priority", "priorityClass", "tier"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 export function triggerMatches(pattern: string, type: string): boolean {
