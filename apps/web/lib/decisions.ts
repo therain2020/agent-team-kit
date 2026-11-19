@@ -1,12 +1,12 @@
 import { appendActivity } from "@kit/activity";
 import { newId } from "@kit/core";
 import {
+  decideApprovalRecord,
   findApprovalRequest,
-  findDecisionForRequest,
   recordDecision,
 } from "@kit/manager";
 import { createTemporalClient } from "@kit/workflow";
-import { getStore } from "./store";
+import { ensureStoreSchema, getStore } from "./store";
 
 export type DecisionOutcome =
   | {
@@ -33,6 +33,7 @@ export async function decideApproval(input: {
   actor: string;
   batchId?: string;
 }): Promise<DecisionOutcome> {
+  await ensureStoreSchema();
   const store = await getStore();
   const run = await store.runs.get(input.runId);
   if (!run) {
@@ -65,13 +66,19 @@ export async function decideApproval(input: {
     return { ok: false, status: 409, error: "approval request expired" };
   }
 
-  const existing = await findDecisionForRequest(
-    store,
-    input.runId,
-    input.requestId,
-  );
-  const batchId = input.batchId ?? newId("batch");
-  if (!existing) {
+  const recorded = await decideApprovalRecord(store, {
+    runId: input.runId,
+    requestId: input.requestId,
+    decision: input.decision,
+    actor: input.actor,
+    note: input.note,
+  });
+  if (!recorded.ok) {
+    return { ok: false, status: recorded.status, error: recorded.error };
+  }
+
+  const batchId = input.batchId ?? recorded.batchId ?? newId("batch");
+  if (!recorded.duplicate) {
     await recordDecision(store, input.runId, input.decision, input.note, {
       requestId: input.requestId,
       actor: input.actor,
@@ -79,7 +86,8 @@ export async function decideApproval(input: {
       riskClass: approval.riskClass,
     });
   }
-  const effectiveBatchId = existing?.batchId ?? batchId;
+  const effectiveBatchId = batchId;
+  const duplicate = recorded.duplicate;
 
   await appendActivity(store, {
     runId: input.runId,
@@ -90,7 +98,7 @@ export async function decideApproval(input: {
     payload: {
       requestId: input.requestId,
       actor: input.actor,
-      duplicate: Boolean(existing),
+      duplicate,
     },
   }).catch(() => undefined);
 
@@ -100,7 +108,7 @@ export async function decideApproval(input: {
       ok: true,
       requestId: input.requestId,
       decision: input.decision,
-      duplicate: Boolean(existing),
+      duplicate,
       batchId: effectiveBatchId,
     };
   }
@@ -131,7 +139,7 @@ export async function decideApproval(input: {
     ok: true,
     requestId: input.requestId,
     decision: input.decision,
-    duplicate: Boolean(existing),
+    duplicate,
     batchId: effectiveBatchId,
   };
 }
