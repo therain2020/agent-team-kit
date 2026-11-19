@@ -1,4 +1,4 @@
-import type { initStore } from "@kit/store";
+import { type initStore, projectActivityEvent } from "@kit/store";
 import type { ActivityEvent, ActivityFilter, ActivityInput } from "./types";
 
 export * from "./types";
@@ -42,6 +42,20 @@ export async function appendActivity(
     if (!eventId) {
       throw new Error("failed to append activity event");
     }
+    // Single choke point for the run world projection (87 §4.4): the upsert
+    // shares this transaction so the projection never drifts from the log.
+    await projectActivityEvent(tx, {
+      eventId,
+      workspaceId: input.workspaceId ?? "default",
+      runId: input.runId ?? null,
+      stageId: input.stageId ?? null,
+      agentId: input.agentId ?? null,
+      kind: input.kind,
+      status: input.status ?? null,
+      tool: input.tool ?? null,
+      summary: input.summary?.slice(0, 2000) ?? null,
+      createdAt: at,
+    });
     await tx.notify(
       "kit_activity_events",
       JSON.stringify({
@@ -60,6 +74,9 @@ export async function listActivity(
   filter: ActivityFilter = {},
 ): Promise<ActivityEvent[]> {
   const limit = clampInt(filter.limit, 1, 500, 100);
+  const workspaceFilter = filter.workspaceId
+    ? store.sql`AND workspace_id = ${filter.workspaceId}`
+    : store.sql``;
   const runFilter = filter.runId
     ? store.sql`AND run_id = ${filter.runId}`
     : store.sql``;
@@ -75,7 +92,7 @@ export async function listActivity(
     rows = await store.sql<ActivityRow[]>`
       SELECT * FROM activity_events
       WHERE event_id > ${filter.after}
-        ${runFilter} ${agentFilter} ${kindFilter}
+        ${workspaceFilter} ${runFilter} ${agentFilter} ${kindFilter}
       ORDER BY event_id ASC
       LIMIT ${limit}
     `;
@@ -84,7 +101,7 @@ export async function listActivity(
     rows = await store.sql<ActivityRow[]>`
       SELECT * FROM activity_events
       WHERE event_id < ${before}
-        ${runFilter} ${agentFilter} ${kindFilter}
+        ${workspaceFilter} ${runFilter} ${agentFilter} ${kindFilter}
       ORDER BY event_id DESC
       LIMIT ${limit}
     `;

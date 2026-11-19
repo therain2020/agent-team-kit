@@ -397,6 +397,26 @@ CREATE INDEX IF NOT EXISTS idx_op_log_workspace_seq
 CREATE INDEX IF NOT EXISTS idx_op_log_entity
   ON op_log(entity_kind, entity_id, seq);
 
+CREATE TABLE IF NOT EXISTS run_projection (
+  run_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  status TEXT NOT NULL DEFAULT 'pending',
+  current_stage TEXT,
+  progress DOUBLE PRECISION NOT NULL DEFAULT 0,
+  cost_cny NUMERIC NOT NULL DEFAULT 0,
+  tokens BIGINT NOT NULL DEFAULT 0,
+  artifact_count INTEGER NOT NULL DEFAULT 0,
+  wait_reason TEXT,
+  last_event_id BIGINT NOT NULL DEFAULT 0,
+  version INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_projection_status
+  ON run_projection(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_run_projection_updated
+  ON run_projection(workspace_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS degradation_state (
   scope TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
@@ -551,6 +571,7 @@ CREATE INDEX IF NOT EXISTS idx_budget_charges_run_timeline
   ON budget_charges(workspace_id, run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
+CREATE INDEX IF NOT EXISTS idx_manifests_run ON manifests(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_run_requests_status ON run_requests(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_evolution_scores_variant ON evolution_scores(variant_id, created_at DESC);
@@ -975,6 +996,26 @@ CREATE INDEX IF NOT EXISTS idx_op_log_workspace_seq
 CREATE INDEX IF NOT EXISTS idx_op_log_entity
   ON op_log(entity_kind, entity_id, seq);
 
+CREATE TABLE IF NOT EXISTS run_projection (
+  run_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  status TEXT NOT NULL DEFAULT 'pending',
+  current_stage TEXT,
+  progress REAL NOT NULL DEFAULT 0,
+  cost_cny REAL NOT NULL DEFAULT 0,
+  tokens INTEGER NOT NULL DEFAULT 0,
+  artifact_count INTEGER NOT NULL DEFAULT 0,
+  wait_reason TEXT,
+  last_event_id INTEGER NOT NULL DEFAULT 0,
+  version INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_projection_status
+  ON run_projection(workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_run_projection_updated
+  ON run_projection(workspace_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS degradation_state (
   scope TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
@@ -1141,6 +1182,7 @@ CREATE INDEX IF NOT EXISTS idx_budget_charges_run_timeline
   ON budget_charges(workspace_id, run_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stages_run ON stages(run_id);
+CREATE INDEX IF NOT EXISTS idx_manifests_run ON manifests(run_id);
 CREATE INDEX IF NOT EXISTS idx_artifacts_workspace ON artifacts(workspace_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_run_requests_status ON run_requests(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_evolution_scores_variant ON evolution_scores(variant_id, created_at DESC);
