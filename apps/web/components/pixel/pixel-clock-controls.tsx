@@ -3,7 +3,7 @@
 import { SPEED_STEPS, type Ticker } from "@/lib/use-ticker";
 import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
-import { PixelMotionToggle } from "./motion-preference";
+import { PixelMotionToggle } from "./use-pixel-motion";
 
 /**
  * Compact controls for the shared game clock: tick readout, play/pause,

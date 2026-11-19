@@ -1,11 +1,15 @@
 import type { AutopilotConfig } from "@kit/core";
+import { type DraftStage, validateStageGraph } from "@kit/pack";
 import { describe, expect, it } from "vitest";
 import {
   type AgentDraftFacts,
   type AgentDraftValues,
   type EvolutionCycleValues,
+  type WorkflowDraftFacts,
+  type WorkflowDraftValues,
   composeJob,
   validateAgentDraft,
+  validateWorkflowDraft,
 } from "../src/compose";
 
 const repoRoot = process.cwd();
@@ -167,6 +171,211 @@ describe("agent composer", () => {
     expect(result.values.tools).toEqual(["repo_read"]);
     expect(result.values.skills).toEqual(["review"]);
     expect(result.warnings.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("workflow composer", () => {
+  it("falls back to a linear single-stage graph", async () => {
+    const result = await composeJob({
+      kind: "workflow",
+      intent: "先调研再发布",
+      packDir: "minimal",
+      repoRoot,
+      env,
+    });
+
+    const values = result.values as WorkflowDraftValues;
+    expect(result.kind).toBe("workflow");
+    expect(result.model).toBe("heuristic");
+    expect(values.stages).toHaveLength(1);
+    const [stage] = values.stages;
+    expect(stage?.id).toBe("echo");
+    expect(stage?.type).toBe("agent");
+    expect(stage?.agent).toBe("echo");
+    expect(stage?.depends).toEqual([]);
+    expect(stage?.goal).toBe("先调研再发布");
+    expect(validateStageGraph(values.stages, ["echo"]).ok).toBe(true);
+  });
+
+  it("preserves the current stage graph when editing", async () => {
+    const current: DraftStage[] = [
+      {
+        id: "research",
+        type: "agent",
+        agent: "echo",
+        inputs: ["task"],
+        outputs: ["notes"],
+        depends: [],
+      },
+      {
+        id: "publish",
+        type: "agent",
+        agent: "echo",
+        inputs: ["notes"],
+        outputs: ["final"],
+        depends: ["research"],
+        approval: {
+          mode: "required",
+          position: "before",
+          riskClass: "high",
+          ttl: "72h",
+        },
+      },
+    ];
+
+    const result = await composeJob({
+      kind: "workflow",
+      intent: "保留现有阶段",
+      packDir: "minimal",
+      repoRoot,
+      env,
+      currentStages: current,
+    });
+
+    const values = result.values as WorkflowDraftValues;
+    expect(result.model).toBe("heuristic");
+    expect(values.stages.map((stage) => stage.id)).toEqual([
+      "research",
+      "publish",
+    ]);
+    expect(values.stages[1]?.depends).toEqual(["research"]);
+    expect(values.stages[1]?.approval?.riskClass).toBe("high");
+    expect(validateStageGraph(values.stages, ["echo"]).ok).toBe(true);
+  });
+
+  it("rejects an invalid live draft and keeps the fallback", async () => {
+    const fallback: DraftStage[] = [
+      {
+        id: "echo",
+        type: "agent",
+        agent: "echo",
+        inputs: ["task"],
+        outputs: ["echo_output"],
+        depends: [],
+      },
+    ];
+    const facts: WorkflowDraftFacts = {
+      pack: "minimal",
+      workflows: [],
+      agents: [
+        {
+          id: "echo",
+          role: "builder",
+          model: "deepseek-flash",
+          tools: [],
+          skills: [],
+        },
+      ],
+      tools: [],
+      skills: [],
+      gates: [],
+      current: null,
+    };
+
+    const result = validateWorkflowDraft(
+      {
+        stages: [
+          {
+            id: "research",
+            type: "agent",
+            agent: "ghost",
+            inputs: ["task"],
+            outputs: ["notes"],
+            depends: [],
+          },
+        ],
+      },
+      fallback,
+      facts,
+    );
+
+    expect(result.accepted).toBe(false);
+    expect(result.values.stages).toEqual(fallback);
+    expect(result.warnings.join(" ")).toContain("ghost");
+  });
+});
+
+describe("stage graph validation", () => {
+  const base: DraftStage = {
+    id: "research",
+    type: "agent",
+    agent: "echo",
+    inputs: ["task"],
+    outputs: ["notes"],
+    depends: [],
+  };
+
+  it("accepts an ordered single-entry DAG", () => {
+    const stages: DraftStage[] = [
+      base,
+      {
+        id: "review",
+        type: "agent",
+        agent: "echo",
+        inputs: ["notes"],
+        outputs: ["review"],
+        depends: ["research"],
+      },
+      {
+        id: "publish",
+        type: "agent",
+        agent: "echo",
+        inputs: ["notes", "review"],
+        outputs: ["final"],
+        depends: ["research", "review"],
+      },
+    ];
+    expect(validateStageGraph(stages, ["echo"])).toEqual({
+      ok: true,
+      errors: [],
+    });
+  });
+
+  it("rejects unknown agents and non-slug stage ids", () => {
+    const result = validateStageGraph(
+      [{ ...base, id: "Bad Stage", agent: "ghost" }],
+      ["echo"],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("slug");
+    expect(result.errors.join(" ")).toContain("ghost");
+  });
+
+  it("rejects forward dependencies and multiple entry stages", () => {
+    const forward = validateStageGraph(
+      [
+        {
+          id: "write",
+          type: "agent",
+          agent: "echo",
+          inputs: ["task"],
+          outputs: ["draft"],
+          depends: ["research"],
+        },
+        base,
+        {
+          id: "side",
+          type: "agent",
+          agent: "echo",
+          inputs: ["task"],
+          outputs: ["aside"],
+          depends: [],
+        },
+      ],
+      ["echo"],
+    );
+    expect(forward.ok).toBe(false);
+    expect(forward.errors.join(" ")).toContain("earlier stage");
+    expect(forward.errors.join(" ")).toContain("exactly one entry stage");
+  });
+
+  it("rejects self dependencies", () => {
+    const result = validateStageGraph(
+      [{ ...base, depends: ["research"] }],
+      ["echo"],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.errors.join(" ")).toContain("cannot depend on itself");
   });
 });
 

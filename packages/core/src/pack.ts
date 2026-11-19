@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ASSET_ENTRY } from "./assets";
 import { autopilotSchema } from "./autopilot";
 import { policySchema } from "./policy";
 import { workflowDefinitionSchema } from "./workflow";
@@ -151,7 +152,16 @@ export type WorkshopSignature = z.infer<typeof workshopSignatureSchema>;
 export const workshopManifestSchema = z
   .object({
     apiVersion: z.literal("agentteam/v1").default("agentteam/v1"),
-    kind: z.enum(["pack", "workflow", "agent", "toolpack", "skillpack"]),
+    kind: z.enum([
+      "pack",
+      "workflow",
+      "agent",
+      "toolpack",
+      "skillpack",
+      "pipeline",
+      "source",
+      "template",
+    ]),
     id: z.string().regex(/^[a-z][a-z0-9-]*$/),
     name: z.string().min(1),
     version: z.string().regex(/^\d+\.\d+\.\d+/),
@@ -185,6 +195,14 @@ export const workshopManifestSchema = z
         code: z.ZodIssueCode.custom,
         message: "files must be unique",
         path: ["files"],
+      });
+    }
+    const expectedEntry = ASSET_ENTRY[manifest.kind];
+    if (expectedEntry && manifest.entry !== expectedEntry) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${manifest.kind} items must use entry ${expectedEntry}`,
+        path: ["entry"],
       });
     }
   });

@@ -17,6 +17,15 @@ import {
   proposeVariant,
   scoreVariant,
 } from "./evolve";
+import {
+  DEFAULT_CONVERGENCE_WINDOW,
+  type FreezeOptions,
+  budgetStop,
+  convergenceGuard,
+  freezeEvolution,
+  frozenRationale,
+  loadFreezeState,
+} from "./freeze";
 import type { EvolutionRepository } from "./repository";
 import {
   type EvolutionSignalRef,
@@ -71,11 +80,14 @@ export interface CycleOptions {
   autoApply?: boolean;
   force?: boolean;
   budgetCny?: number;
+  budgetTokens?: number;
   archivePath?: string;
   signalsRoot?: string;
   iterationsPath?: string;
   cyclesPath?: string;
   statePath?: string;
+  freezePath?: string;
+  convergenceWindow?: number;
   variantsRoot?: string;
   percent?: number;
   repo?: EvolutionRepository;
@@ -99,12 +111,37 @@ export async function runEvolutionCycle(
   const statePath = options.statePath ?? DEFAULT_STATE;
   const variantsRoot =
     options.variantsRoot ?? path.join(path.dirname(archivePath), "");
+  const freezePath =
+    options.freezePath ?? path.join(variantsRoot, "freeze.json");
   const repo = options.repo;
   if (repo) {
     await repo.ensureReady();
   }
-  const persistCycle = (record: EvolutionCycleRecord) =>
-    finish(cyclesPath, record, repo);
+  const freezeOptions: FreezeOptions = {
+    freezePath,
+    ...(repo ? { repo } : {}),
+  };
+  const convergenceWindow = Math.max(
+    1,
+    options.convergenceWindow ?? DEFAULT_CONVERGENCE_WINDOW,
+  );
+  const loadRecentCycles = async (
+    limit: number,
+  ): Promise<EvolutionCycleRecord[]> =>
+    repo
+      ? await repo.listCycles(limit)
+      : await loadEvolutionCycles(cyclesPath, limit);
+  const persistCycle = async (record: EvolutionCycleRecord) => {
+    const saved = await finish(cyclesPath, record, repo);
+    if (saved.decision === "rejected" || saved.decision === "failed") {
+      await maybeFreezeOnConvergence({
+        loadRecentCycles,
+        window: convergenceWindow,
+        freezeOptions,
+      });
+    }
+    return saved;
+  };
   let snapshotFields: Partial<EvolutionCycleRecord> = {};
   const baseRecord: EvolutionCycleRecord = {
     cycleId,
@@ -128,6 +165,33 @@ export async function runEvolutionCycle(
   };
 
   try {
+    // A freeze is a hard stop: no model calls, no variant writes, no snapshot.
+    // It is checked before the evidence file so a missing input cannot mask it.
+    const freeze = await loadFreezeState(freezeOptions);
+    if (freeze.status === "frozen") {
+      return await persistCycle({
+        ...baseRecord,
+        decision: "skipped",
+        rationale: frozenRationale(freeze),
+      });
+    }
+
+    // Convergence is checked before any spend: once the trailing streak of
+    // no-improvement cycles reaches the window, auto-freeze and stop.
+    const recentCycles = await loadRecentCycles(convergenceWindow + 5);
+    const guard = convergenceGuard(recentCycles, convergenceWindow);
+    if (guard.frozen && guard.hint) {
+      const frozen = await freezeEvolution(
+        { kind: "convergence", reason: guard.hint, actor: "system" },
+        freezeOptions,
+      );
+      return await persistCycle({
+        ...baseRecord,
+        decision: "skipped",
+        rationale: frozenRationale(frozen),
+      });
+    }
+
     if (!existsSync(options.inputFile)) {
       throw new Error(`evidence input missing: ${options.inputFile}`);
     }
@@ -247,6 +311,25 @@ export async function runEvolutionCycle(
       stub: options.stub ?? false,
     });
 
+    // Stop-loss #1: the proposal is the first model call; if it already blows
+    // the cycle budget, stop before any variant or score is written.
+    const proposalStop = budgetStop(
+      { costCny: proposal.costCny, tokens: proposal.tokens },
+      { budgetCny: options.budgetCny, budgetTokens: options.budgetTokens },
+    );
+    if (proposalStop) {
+      return await persistCycle({
+        ...baseRecord,
+        ...snapshotFields,
+        agentId,
+        hypothesis,
+        signals,
+        costCny: round(proposal.costCny),
+        decision: "skipped",
+        rationale: proposalStop,
+      });
+    }
+
     const stamp = cycleId.replace(/[^a-z0-9]/gi, "").slice(-10);
     const baselineDir = path.join(variantsRoot, `cycle-${stamp}-baseline`);
     const candidateDir = path.join(variantsRoot, `cycle-${stamp}-candidate`);
@@ -310,6 +393,7 @@ export async function runEvolutionCycle(
 
     let costCny =
       proposal.costCny + baselineScore.costCny + candidateScore.costCny;
+    let tokens = proposal.tokens + baselineScore.tokens + candidateScore.tokens;
     const baselineAvg = averageScore(baselineScore);
     const candidateAvg = averageScore(candidateScore);
     const improved = options.stub
@@ -333,6 +417,19 @@ export async function runEvolutionCycle(
       candidateScore: candidateAvg,
       costCny: round(costCny),
     };
+
+    // Stop-loss #2: scoring spent the second and third model calls.
+    const scoreStop = budgetStop(
+      { costCny, tokens },
+      { budgetCny: options.budgetCny, budgetTokens: options.budgetTokens },
+    );
+    if (scoreStop) {
+      return await persistCycle({
+        ...withScores,
+        decision: "skipped",
+        rationale: scoreStop,
+      });
+    }
 
     if (!improved) {
       return await persistCycle({
@@ -361,10 +458,27 @@ export async function runEvolutionCycle(
       (sum, record) => sum + record.costCny,
       0,
     );
+    tokens += [...canary.champion, ...canary.variant].reduce(
+      (sum, record) => sum + record.tokens,
+      0,
+    );
     const updated: EvolutionCycleRecord = {
       ...withScores,
       costCny: round(costCny),
     };
+
+    // Stop-loss #3: the canary evaluation is the last spend of the cycle.
+    const canaryStop = budgetStop(
+      { costCny, tokens },
+      { budgetCny: options.budgetCny, budgetTokens: options.budgetTokens },
+    );
+    if (canaryStop) {
+      return await persistCycle({
+        ...updated,
+        decision: "skipped",
+        rationale: canaryStop,
+      });
+    }
 
     if (canary.decision.rollback) {
       return await persistCycle({
@@ -445,7 +559,7 @@ async function proposeInstructions(input: {
   signals: string[];
   hypothesis?: string;
   stub: boolean;
-}): Promise<{ instructions: string; costCny: number }> {
+}): Promise<{ instructions: string; costCny: number; tokens: number }> {
   if (input.stub || process.env.KIT_MODEL_MODE === "stub") {
     return {
       instructions: deterministicInstructions(
@@ -453,6 +567,7 @@ async function proposeInstructions(input: {
         input.signals,
       ),
       costCny: 0,
+      tokens: 0,
     };
   }
 
@@ -481,7 +596,38 @@ ${input.signals.length > 0 ? input.signals.map((signal) => `- ${signal}`).join("
   return {
     instructions: response.text.trim().slice(0, 4000),
     costCny: response.usage.costCny ?? 0,
+    tokens: response.usage.inputTokens + response.usage.outputTokens,
   };
+}
+
+/**
+ * After a non-improving cycle is recorded, auto-freeze when the trailing
+ * no-improvement streak reaches the convergence window. The freeze is
+ * idempotent with the start-of-cycle guard; failures here must not invalidate
+ * the cycle that was already persisted.
+ */
+async function maybeFreezeOnConvergence(input: {
+  loadRecentCycles: (limit: number) => Promise<EvolutionCycleRecord[]>;
+  window: number;
+  freezeOptions: FreezeOptions;
+}): Promise<void> {
+  try {
+    const current = await loadFreezeState(input.freezeOptions);
+    if (current.status === "frozen") {
+      return;
+    }
+    const recent = await input.loadRecentCycles(input.window + 5);
+    const guard = convergenceGuard(recent, input.window);
+    if (guard.frozen && guard.hint) {
+      await freezeEvolution(
+        { kind: "convergence", reason: guard.hint, actor: "system" },
+        input.freezeOptions,
+      );
+    }
+  } catch {
+    // Freezes are advisory to the cycle record; a failed write must not turn
+    // an already-persisted cycle into a duplicate failure record.
+  }
 }
 
 function deterministicInstructions(current: string, signals: string[]): string {

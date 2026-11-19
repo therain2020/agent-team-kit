@@ -1,6 +1,7 @@
 import { newId, priorityClassFor } from "@kit/core";
 import { findDecisionForRequest } from "@kit/manager";
 import {
+  type RunRequestRecord,
   VersionConflictError,
   type WriteLease,
   type initStore,
@@ -22,7 +23,15 @@ import { assertKillSwitchClear } from "./kill-switch";
 import * as packActivities from "./pack-activities";
 import { type ApprovalOutcome, runPackPipeline } from "./pack-pipeline";
 import { reconcileLocalIterationRuns } from "./reconciler";
-import { withWriteLease } from "./write-lease";
+import { verifyRunRecoveryIntegrity } from "./recovery";
+import {
+  DEFAULT_RUN_LEASE_HEARTBEAT_MS,
+  DEFAULT_RUN_LEASE_STALE_MS,
+  RunLeaseLostError,
+  assertRunLeaseTimings,
+  markWriteLeaseLost,
+  withWriteLease,
+} from "./write-lease";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -187,8 +196,11 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
   const owner =
     options.owner ?? `local-${process.pid}-${Date.now().toString(36)}`;
   const tickMs = options.tickMs ?? 1000;
-  const staleMs = options.staleMs ?? 60_000;
-  const heartbeatMs = options.heartbeatMs ?? 15_000;
+  const staleMs = options.staleMs ?? DEFAULT_RUN_LEASE_STALE_MS;
+  // A heartbeat slower than half the stale window can be reclaimed while the
+  // worker still believes it owns the run; refuse to start instead.
+  const heartbeatMs = options.heartbeatMs ?? DEFAULT_RUN_LEASE_HEARTBEAT_MS;
+  assertRunLeaseTimings(staleMs, heartbeatMs);
   const reconcileEveryMs = options.reconcileEveryMs ?? 60_000;
   const onError =
     options.onError ??
@@ -233,7 +245,7 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
           staleMs,
         );
         if (request) {
-          await execute(request.payload, request.requestId, request.kind, {
+          await execute(request, {
             requestId: request.requestId,
             owner,
             leaseVersion: request.leaseVersion,
@@ -253,31 +265,74 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
   };
 
   async function execute(
-    payload: string,
-    requestId: string,
-    kind: "pack_run" | "iteration",
+    request: RunRequestRecord,
     lease: WriteLease,
   ): Promise<void> {
+    const requestId = request.requestId;
+    const leaseLost = (reason: string): RunLeaseLostError =>
+      markWriteLeaseLost(
+        new RunLeaseLostError(reason, requestId, lease.leaseVersion),
+      );
+
     const heartbeatTimer = setInterval(() => {
       void options.store.runRequests
         .heartbeat(requestId, owner, new Date(), lease.leaseVersion)
         .then((record) => {
           if (record) {
             lease.leaseVersion = record.leaseVersion;
+            return;
           }
+          // No row means the claim is gone even though the store did not
+          // throw; treat it exactly like a fenced rejection.
+          leaseLost(`run request ${requestId} is no longer held by ${owner}`);
         })
-        .catch(() => undefined);
+        .catch((error: unknown) => {
+          if (error instanceof VersionConflictError) {
+            leaseLost(
+              `run request ${requestId} was reclaimed by another worker`,
+            );
+            return;
+          }
+          // Transient heartbeat failures are retried on the next beat; a
+          // full stale window without a successful renewal still fences all
+          // writes, because the store only accepts the current owner.
+        });
     }, heartbeatMs);
     try {
       await withWriteLease(lease, async () => {
-        if (kind === "iteration") {
+        if (request.leaseVersion > 1) {
+          // This request was claimed before; its previous owner may have
+          // half-executed. Verify ArtifactVersion integrity before running
+          // another stage or side effect.
+          const recovery = await verifyRunRecoveryIntegrity({
+            store: options.store,
+            runId: request.runId,
+            workspaceId: request.workspaceId,
+            requestId,
+            owner,
+            leaseVersion: request.leaseVersion,
+          });
+          if (recovery.action === "failed") {
+            await options.store.runRequests
+              .finish(
+                requestId,
+                "failed",
+                recovery.failureReason ??
+                  "recovery integrity verification failed",
+                lease,
+              )
+              .catch(() => undefined);
+            return;
+          }
+        }
+        if (request.kind === "iteration") {
           await executeIteration(
-            JSON.parse(payload) as IterationInput,
+            JSON.parse(request.payload) as IterationInput,
             requestId,
             lease,
           );
         } else {
-          const input = JSON.parse(payload) as PackRunInput;
+          const input = JSON.parse(request.payload) as PackRunInput;
           await runPackWorkflowLocal(input, { store: options.store });
           await options.store.runRequests.finish(
             requestId,
@@ -288,6 +343,13 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
         }
       });
     } catch (error) {
+      if (error instanceof RunLeaseLostError) {
+        // The lease is gone; the new owner drives the request from here. Do
+        // not write run status or finish the request — that is the fencing
+        // conflict this watchdog exists to surface early.
+        onError(error);
+        return;
+      }
       if (error instanceof VersionConflictError) {
         // The claim was superseded while this worker was running; the new
         // owner drives the request from here. The store already audited the

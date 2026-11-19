@@ -30,6 +30,7 @@
   "scripts": {
     "kit": "bun run apps/cli/src/index.ts",
     "test": "bunx vitest run",
+    "test:invariants": "bunx vitest run packages/evolution/test/security-invariants.test.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
     "lint": "bunx biome check .",
     "dev:up": "docker compose -f deploy/docker-compose.yml up -d",

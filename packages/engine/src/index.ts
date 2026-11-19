@@ -1,4 +1,5 @@
 export * from "./admission";
+export * from "./circuit-breaker";
 export * from "./degradation-guard";
 export * from "./fair-queue";
 export * from "./heartbeat";
@@ -9,4 +10,6 @@ export * from "./local-runner";
 export * from "./pack-activities";
 export * from "./pack-pipeline";
 export * from "./reconciler";
+export * from "./recovery";
+export * from "./side-effect-gateway";
 export * from "./write-lease";

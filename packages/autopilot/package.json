@@ -9,6 +9,7 @@
   "dependencies": {
     "@kit/core": "workspace:*",
     "@kit/evolution": "workspace:*",
+    "@kit/job": "workspace:*",
     "@kit/manager": "workspace:*",
     "@kit/ops": "workspace:*",
     "@kit/pack": "workspace:*",

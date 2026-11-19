@@ -3,6 +3,7 @@ import {
   type CanaryState,
   type EvolutionCycleRecord,
   type EvolutionDecisionRecord,
+  type EvolutionFreezeState,
   type EvolutionRecord,
   StoreEvolutionRepository,
   type VariantMeta,
@@ -22,11 +23,13 @@ export interface VariantView {
 
 export interface EvolutionData {
   state: CanaryState | null;
+  freeze: EvolutionFreezeState;
   variants: VariantView[];
   cycles: EvolutionCycleRecord[];
   decisions: EvolutionDecisionRecord[];
   archivePath: string;
   statePath: string;
+  freezePath: string;
   cyclesPath: string;
   repoRoot: string;
 }
@@ -38,9 +41,10 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
   const repo = new StoreEvolutionRepository(getStore(), { variantsRoot });
   await repo.ensureReady();
 
-  const [storedState, records, cycles, storedVariants, decisions] =
+  const [storedState, freeze, records, cycles, storedVariants, decisions] =
     await Promise.all([
       repo.getState(),
+      repo.getFreeze(),
       repo.latestScores(),
       repo.listCycles(50),
       repo.listVariants(),
@@ -80,11 +84,13 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
 
   return {
     state,
+    freeze: freeze ?? { workspaceId: repo.workspaceId, status: "active" },
     variants,
     cycles,
     decisions,
     archivePath: path.join(variantsRoot, "archive.jsonl"),
     statePath: path.join(variantsRoot, "state.json"),
+    freezePath: path.join(variantsRoot, "freeze.json"),
     cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
     repoRoot,
   };

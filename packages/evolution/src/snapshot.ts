@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { assertSnapshotRootAllowed } from "./security-invariants";
 
 /**
  * Bump when the judge prompt or scoring logic changes. The evaluator hash
@@ -66,11 +67,24 @@ export async function createEvalSnapshot(input: {
   hiddenEvalsDir?: string;
   freeze?: boolean;
   expectedEvaluatorHash?: string;
+  /**
+   * External kit home (`KIT_HOME`, default `~/.agent-team-kit`). When supplied,
+   * the snapshot root must live inside it (SEC-INV-03); otherwise the cycle
+   * refuses to write the frozen eval snapshot.
+   */
+  kitHome?: string;
 }): Promise<EvalSnapshot> {
   const packDir = path.resolve(input.packDir);
   const cyclesRoot = path.resolve(input.cyclesRoot ?? defaultCyclesRoot());
   assertOutside(cyclesRoot, packDir, "pack directory");
   assertOutside(cyclesRoot, process.cwd(), "repository");
+  if (input.kitHome) {
+    assertSnapshotRootAllowed({
+      cyclesRoot,
+      kitHome: input.kitHome,
+      repoRoot: path.resolve(process.cwd()),
+    });
+  }
 
   const evalsDir = path.join(packDir, "evals");
   if (!existsSync(evalsDir)) {

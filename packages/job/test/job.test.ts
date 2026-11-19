@@ -185,6 +185,110 @@ describe("job control", () => {
     ).rejects.toMatchObject({ code: "already_finished" });
   });
 
+  it("dedupes a pack run by key and preserves trigger inputs", async () => {
+    const store = await sqliteStore();
+    const params = {
+      kind: "packRun" as const,
+      packDir: "tech-radar",
+      workflow: "flash-radar",
+      runMode: "DRY_RUN" as const,
+      stub: true,
+      runId: "run_fixed_trigger",
+      eventId: "evt_trigger_1",
+      dedupeKey: "event:evt_trigger_1:flash-radar",
+      origin: {
+        kind: "event" as const,
+        triggerId: "tech-radar:flash-radar",
+        triggerRunId: "evt_trigger_1",
+        actor: "trigger:event-router",
+      },
+      variant: {
+        role: "canary" as const,
+        variantId: "var_canary",
+        trafficPercent: 20,
+      },
+    };
+
+    const first = await startJob(store, params, { repoRoot: process.cwd() });
+    const second = await startJob(store, params, { repoRoot: process.cwd() });
+
+    expect(first.jobId).toBe("run_fixed_trigger");
+    expect(first.deduped).toBeUndefined();
+    expect(second.jobId).toBe(first.jobId);
+    expect(second.deduped).toBe(true);
+
+    const request = await store.runRequests.find(first.jobId);
+    const payload = JSON.parse(request?.payload ?? "{}") as {
+      eventId: string;
+      runId: string;
+      origin: unknown;
+      variant: unknown;
+    };
+    expect(payload.runId).toBe("run_fixed_trigger");
+    expect(payload.eventId).toBe("evt_trigger_1");
+    expect(payload.origin).toEqual({
+      kind: "event",
+      triggerId: "tech-radar:flash-radar",
+      triggerRunId: "evt_trigger_1",
+    });
+    expect(payload.variant).toEqual({
+      role: "canary",
+      variantId: "var_canary",
+      trafficPercent: 20,
+    });
+  }, 30_000);
+
+  it("reads a schedule input file into the run", async () => {
+    const store = await sqliteStore();
+    const result = await startJob(
+      store,
+      {
+        kind: "packRun",
+        packDir: "tech-radar",
+        workflow: "daily-radar",
+        inputFile: path.join("packs", "tech-radar", "README.md"),
+        runMode: "DRY_RUN",
+        stub: true,
+        origin: {
+          kind: "schedule",
+          triggerId: "daily-radar",
+          actor: "policy:autopilot",
+        },
+      },
+      { repoRoot: process.cwd() },
+    );
+
+    const request = await store.runRequests.find(result.jobId);
+    const payload = JSON.parse(request?.payload ?? "{}") as {
+      initialInput: string;
+    };
+    expect(payload.initialInput).toContain("# Tech Radar");
+  }, 30_000);
+
+  it("dedupes an iteration by slot key", async () => {
+    const store = await sqliteStore();
+    const params = {
+      kind: "iteration" as const,
+      packDir: "self-improve",
+      goal: "find a weakness",
+      runMode: "DRY_RUN" as const,
+      dedupeKey: "autopilot:self-improve:nightly:2026-11-20T00:00:00.000Z",
+      origin: {
+        kind: "schedule" as const,
+        triggerId: "nightly",
+        actor: "policy:autopilot",
+      },
+    };
+
+    const first = await startJob(store, params, { repoRoot: process.cwd() });
+    const second = await startJob(store, params, { repoRoot: process.cwd() });
+
+    expect(first.deduped).toBeUndefined();
+    expect(second.jobId).toBe(first.jobId);
+    expect(second.deduped).toBe(true);
+    expect(second.engine).toBe("local");
+  }, 30_000);
+
   it("requires a note before applying a pending change", async () => {
     const store = await sqliteStore();
     await expect(
