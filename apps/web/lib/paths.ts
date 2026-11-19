@@ -11,6 +11,13 @@ export function getPacksRoot(): string {
   return path.join(getRepoRoot(), "packs");
 }
 
+/** Local component library root (agent/workflow/toolpack/skillpack). */
+export function getComponentsRoot(): string {
+  return (
+    process.env.KIT_COMPONENTS_ROOT ?? path.join(getRepoRoot(), "components")
+  );
+}
+
 export function resolvePackDir(input: string): string | null {
   return resolveNamedDir("packs", input);
 }

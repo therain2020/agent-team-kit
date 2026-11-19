@@ -1,6 +1,7 @@
 import type {
   CoderId,
   IterationTask,
+  PriorityClass,
   RunBudgetSpec,
   RunOrigin,
   TaskPlan,
@@ -27,6 +28,8 @@ export interface IterationInput {
   budget?: RunBudgetSpec;
   dedupeKey?: string;
   origin?: RunOrigin;
+  /** Queue priority (60 §2); derived from the triggering event when absent. */
+  priority?: PriorityClass;
 }
 
 export interface PlannedIteration {

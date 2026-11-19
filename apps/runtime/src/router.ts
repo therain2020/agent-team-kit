@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   type EventEnvelope,
   isExecutionBlocked,
+  priorityClassFor,
   resolveKillSwitch,
 } from "@kit/core";
 import { activeModeForWorkspace, auditBlockedExecution } from "@kit/engine";
@@ -209,6 +210,8 @@ export class EventRouter {
           const selected = this.variantSelector
             ? await this.variantSelector.select(this.workspaceId, runId)
             : null;
+          const runMode =
+            process.env.KIT_EVENT_RUN_MODE === "live" ? "LIVE" : "DRY_RUN";
           const started = await startJob(
             this.store,
             {
@@ -220,9 +223,14 @@ export class EventRouter {
               dedupeKey,
               eventId: event.eventId,
               workspaceId: this.workspaceId,
-              runMode:
-                process.env.KIT_EVENT_RUN_MODE === "live" ? "LIVE" : "DRY_RUN",
+              runMode,
               stub: process.env.KIT_MODEL_MODE === "stub",
+              // Rule 10 event priority → PriorityClass (60 §2). Explicit
+              // payload priority/tier wins; non-LIVE event runs fall back to P3.
+              priority: priorityClassFor({
+                priority: eventPriorityOf(payload),
+                runMode,
+              }),
               origin: {
                 kind: "event",
                 triggerId: `${packName}:${workflow.id}`,
@@ -414,6 +422,24 @@ function nonNegativeNumber(value: string | undefined): number | undefined {
 
 function round4(value: number): number {
   return Math.round(value * 10000) / 10000;
+}
+
+/**
+ * Reads the priority hint carried by an event payload (rule 10 contract). The
+ * envelope itself has no priority field, so this stays defensive.
+ */
+export function eventPriorityOf(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const record = payload as Record<string, unknown>;
+  for (const key of ["priority", "priorityClass", "tier"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 export function triggerMatches(pattern: string, type: string): boolean {

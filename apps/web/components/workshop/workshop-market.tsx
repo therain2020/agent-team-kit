@@ -257,21 +257,6 @@ export function WorkshopMarket({
         <p>{t("securityNotice")}</p>
       </div>
 
-      <details className="rounded-xl border border-border bg-card px-4 py-3 text-[11px] text-zinc-400">
-        <summary className="cursor-pointer font-medium text-zinc-200">
-          {t("publishTitle")}
-        </summary>
-        <p className="mt-2">{t("publishDescription")}</p>
-        <ol className="mt-2 list-decimal space-y-1 pl-4 text-[10px] text-zinc-500">
-          <li>{t("publishStepManifest")}</li>
-          <li>{t("publishStepTopic")}</li>
-          <li>{t("publishStepPush")}</li>
-        </ol>
-        <pre className="mt-2 overflow-auto rounded border border-border bg-black/30 p-2 font-mono text-[10px] text-zinc-400">
-          kit workshop publish ./packs/my-team
-        </pre>
-      </details>
-
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="rounded-xl border border-border bg-card p-4">
           <div className="mb-3 flex items-center justify-between">

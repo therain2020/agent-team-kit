@@ -1,9 +1,24 @@
 import { loadApiKey, loadModelDefaults } from "@kit/bootstrap";
+import { type PriorityClass, type Quota, loadQuotaPolicies } from "@kit/core";
+import {
+  ModelHttpError,
+  QuotaTracker,
+  type ResilientGatewayOptions,
+  estimateTokens,
+  loadRetryPolicy,
+  parseRetryAfterMs,
+  runWithResilience,
+} from "./resilience";
+
+export * from "./resilience";
 
 export interface ModelRequest {
   model: string;
   instructions: string;
   input: string;
+  /** Quota scope (60 §2); defaults to `default` for single-workspace deployments. */
+  workspaceId?: string;
+  priority?: PriorityClass;
 }
 
 export interface ModelUsage {
@@ -45,6 +60,8 @@ export interface ToolCompletionRequest {
   tools: ModelToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  workspaceId?: string;
+  priority?: PriorityClass;
 }
 
 export interface ToolCompletionResponse {
@@ -223,7 +240,11 @@ export class OpenAiCompatibleGateway implements ModelGateway {
 
     if (!response.ok) {
       const detail = await response.text();
-      throw new Error(`model request failed: ${response.status} ${detail}`);
+      throw new ModelHttpError(
+        response.status,
+        `model request failed: ${response.status} ${detail}`,
+        parseRetryAfterMs(response.headers.get("retry-after")),
+      );
     }
 
     const payload = (await response.json()) as ChatCompletionResponse;
@@ -283,7 +304,11 @@ export class OpenAiCompatibleGateway implements ModelGateway {
 
     if (!response.ok) {
       const detail = await response.text();
-      throw new Error(`model request failed: ${response.status} ${detail}`);
+      throw new ModelHttpError(
+        response.status,
+        `model request failed: ${response.status} ${detail}`,
+        parseRetryAfterMs(response.headers.get("retry-after")),
+      );
     }
 
     const payload = (await response.json()) as ToolChatCompletionResponse;
@@ -332,10 +357,131 @@ export class OpenAiCompatibleGateway implements ModelGateway {
   }
 }
 
+export interface CreateModelGatewayOptions extends ResilientGatewayOptions {
+  /**
+   * Retry/backoff and quota enforcement around a live gateway. Defaults on;
+   * set false for a raw client (tests, one-off probes).
+   */
+  resilient?: boolean;
+}
+
+/** Provider label used in quota keys. */
+export function providerOf(config: ModelConfig): string {
+  if (/deepseek/i.test(config.baseUrl)) {
+    return "deepseek";
+  }
+  try {
+    return new URL(config.baseUrl).host || "openai-compatible";
+  } catch {
+    return "openai-compatible";
+  }
+}
+
+/**
+ * Wraps a live gateway with 429 backoff + quota admission (60 §3.4). Stub mode
+ * stays untouched so tests and dry runs never sleep.
+ */
+export class ResilientModelGateway implements ModelGateway {
+  private readonly tracker: QuotaTracker | null;
+  private readonly quotas: readonly Quota[];
+
+  constructor(
+    private readonly inner: ModelGateway,
+    private readonly provider: string,
+    private readonly options: ResilientGatewayOptions = {},
+    tracker?: QuotaTracker,
+  ) {
+    this.quotas = options.quotas ?? [];
+    this.tracker =
+      tracker ??
+      options.tracker ??
+      (this.quotas.length > 0
+        ? new QuotaTracker(this.quotas, options.now)
+        : null);
+  }
+
+  complete(
+    request: ModelRequest,
+    signal?: AbortSignal,
+  ): Promise<ModelResponse> {
+    return runWithResilience(
+      () => this.inner.complete(request, signal),
+      {
+        request: this.quotaRequest(request.workspaceId, request.model),
+        tokens: estimateTokens(`${request.instructions}\n${request.input}`),
+        ...(request.priority ? { priority: request.priority } : {}),
+        ...(signal ? { signal } : {}),
+      },
+      this.effectiveOptions(),
+    );
+  }
+
+  completeWithTools(
+    request: ToolCompletionRequest,
+    signal?: AbortSignal,
+  ): Promise<ToolCompletionResponse> {
+    const text = request.messages
+      .map((message) =>
+        "content" in message && typeof message.content === "string"
+          ? message.content
+          : "",
+      )
+      .join("\n");
+    return runWithResilience(
+      () => this.inner.completeWithTools(request, signal),
+      {
+        request: this.quotaRequest(request.workspaceId, request.model),
+        tokens: estimateTokens(text),
+        ...(request.priority ? { priority: request.priority } : {}),
+        ...(signal ? { signal } : {}),
+      },
+      this.effectiveOptions(),
+    );
+  }
+
+  quickQuotaUsage(workspaceId = "default", model = "deepseek-flash") {
+    return this.tracker?.usage(this.quotaRequest(workspaceId, model)) ?? null;
+  }
+
+  private effectiveOptions(): ResilientGatewayOptions {
+    return {
+      ...this.options,
+      retry: this.options.retry ?? loadRetryPolicy(),
+      quotas: this.quotas,
+      ...(this.tracker ? { tracker: this.tracker } : {}),
+    };
+  }
+
+  private quotaRequest(workspaceId: string | undefined, model: string) {
+    return {
+      workspaceId: workspaceId ?? "default",
+      provider: this.provider,
+      model,
+    };
+  }
+}
+
 export function createModelGateway(
   config: ModelConfig = loadModelConfig(),
+  options: CreateModelGatewayOptions = {},
 ): ModelGateway {
-  return config.mode === "live"
-    ? new OpenAiCompatibleGateway(config)
-    : new StubModelGateway();
+  if (config.mode !== "live") {
+    return new StubModelGateway();
+  }
+  const inner = new OpenAiCompatibleGateway(config);
+  if (options.resilient === false) {
+    return inner;
+  }
+  return new ResilientModelGateway(inner, providerOf(config), {
+    retry: options.retry ?? loadRetryPolicy(),
+    quotas: options.quotas ?? loadQuotaPolicies(),
+    ...(options.tracker ? { tracker: options.tracker } : {}),
+    ...(options.sleep ? { sleep: options.sleep } : {}),
+    ...(options.random ? { random: options.random } : {}),
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.quotaPollMs !== undefined
+      ? { quotaPollMs: options.quotaPollMs }
+      : {}),
+    ...(options.onRetry ? { onRetry: options.onRetry } : {}),
+  });
 }

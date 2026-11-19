@@ -3,6 +3,7 @@ export * from "./cycle";
 export * from "./evidence";
 export * from "./evolve";
 export * from "./freeze";
+export * from "./hidden";
 export * from "./postgres";
 export * from "./repository";
 export * from "./security-invariants";
