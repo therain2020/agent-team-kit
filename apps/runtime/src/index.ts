@@ -2,6 +2,8 @@
 import { StoreEvolutionRepository } from "@kit/evolution";
 import { NatsEventQueue } from "@kit/queue";
 import { initStore } from "@kit/store";
+import { createTemporalClient } from "@kit/workflow";
+import { type CollectionLoop, startCollectionLoop } from "./collector";
 import { EventIngestor } from "./ingestor";
 import { EventRouter, EvolutionRunVariantSelector } from "./router";
 
@@ -72,6 +74,16 @@ console.log(
   `[runtime] consuming ${natsUrl} stream=${stream} subject=${subject}`,
 );
 
+// Continuous passive collection (98 I-1) is opt-in: enabling it means the
+// runtime actually pulls external sources on an interval, so it never starts
+// unless KIT_INFORMATION_COLLECT names the sources to watch.
+const collector = startInformationCollector();
+if (!collector) {
+  console.log(
+    "[runtime] information collection disabled (set KIT_INFORMATION_COLLECT)",
+  );
+}
+
 let stopping = false;
 async function shutdown(): Promise<void> {
   if (stopping) {
@@ -79,6 +91,7 @@ async function shutdown(): Promise<void> {
   }
   stopping = true;
   console.log("[runtime] shutting down");
+  collector?.stop();
   await stop();
   await queue.close();
   await store.close();
@@ -87,6 +100,37 @@ async function shutdown(): Promise<void> {
 
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);
+
+function startInformationCollector(): CollectionLoop | null {
+  const configured = process.env.KIT_INFORMATION_COLLECT?.trim();
+  if (!configured || configured === "0") {
+    return null;
+  }
+  const sources = configured
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const intervalMs = Number(process.env.KIT_INFORMATION_INTERVAL_MS ?? "");
+  const loop = startCollectionLoop(store, {
+    workspaceId,
+    sources: sources.length > 0 ? sources : undefined,
+    intervalMs:
+      Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : undefined,
+    onRun: (summary) => {
+      console.log(
+        `[runtime] information ${summary.eventsCreated} new / ${summary.duplicates} duplicate across ${summary.sources.length} sources`,
+      );
+    },
+    onError: (error) => {
+      console.error(
+        `[runtime] information collection error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    },
+  });
+  return loop;
+}
 
 function resolveRepoRoot(): string {
   const cwd = process.cwd();

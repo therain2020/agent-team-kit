@@ -3,6 +3,7 @@ import path from "node:path";
 import { CliError } from "@kit/core";
 import {
   SOURCE_TOPIC,
+  collectOnce,
   fetchEvidence,
   installSource,
   listInstalledSources,
@@ -10,6 +11,7 @@ import {
   searchSources,
   testSource,
 } from "@kit/source";
+import { initStore } from "@kit/store";
 import type { Command } from "commander";
 import { emit, emitError, wantsJson } from "../output";
 
@@ -70,6 +72,91 @@ export function registerSource(program: Command): void {
         }
       },
     );
+
+  source
+    .command("collect")
+    .description(
+      "Run one information collection pass and persist events (98 I-1)",
+    )
+    .option("--sources <list>", "comma-separated source names", "hn,arxiv")
+    .option("--limit <n>", "per-source item limit", "5")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: { sources: string; limit: string; json?: boolean }) => {
+        const json = wantsJson(options);
+        const sources = options.sources
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean);
+        if (sources.length === 0) {
+          emitError(json, new CliError("usage", "no valid sources"));
+          return;
+        }
+        const limit = Number(options.limit);
+        if (!Number.isInteger(limit) || limit <= 0) {
+          emitError(
+            json,
+            new CliError("usage", "--limit must be a positive integer"),
+          );
+          return;
+        }
+
+        const store = await initStore();
+        try {
+          const summary = await collectOnce(store, { sources, limit });
+          emit(json, summary, () => {
+            for (const item of summary.sources) {
+              const status = item.ok
+                ? `${item.eventsCreated} new, ${item.duplicates} dup`
+                : `FAILED: ${item.error ?? "unknown"}`;
+              console.log(
+                `${item.sourceId}  ${status}  ${item.latencyMs}ms${
+                  item.degraded ? "  [degraded]" : ""
+                }`,
+              );
+            }
+            console.log(
+              `total: ${summary.eventsCreated} new / ${summary.duplicates} duplicate / ${summary.failures} failed`,
+            );
+          });
+        } catch (error) {
+          report("collect", error, json);
+        } finally {
+          await store.close();
+        }
+      },
+    );
+
+  source
+    .command("health")
+    .description("Show per-source collection health (success, latency, yield)")
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { json?: boolean }) => {
+      const json = wantsJson(options);
+      const store = await initStore();
+      try {
+        const health = await store.information.listSourceHealth();
+        emit(json, { sources: health }, () => {
+          if (health.length === 0) {
+            console.log(
+              "No source health yet. Run: kit source collect --sources hn,arxiv",
+            );
+            return;
+          }
+          for (const item of health) {
+            const avgMs =
+              item.runs > 0 ? Math.round(item.latencyMsTotal / item.runs) : 0;
+            console.log(
+              `${item.sourceId}  runs=${item.runs} ok=${item.successes} fail=${item.failures} streak=${item.consecutiveFailures} items=${item.itemsCollected} events=${item.eventsCreated} avg=${avgMs}ms${item.degraded ? "  [degraded]" : ""}`,
+            );
+          }
+        });
+      } catch (error) {
+        report("health", error, json);
+      } finally {
+        await store.close();
+      }
+    });
 
   source
     .command("search")
