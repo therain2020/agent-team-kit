@@ -2,6 +2,7 @@ import type {
   CoderId,
   IterationTask,
   RunBudgetSpec,
+  RunOrigin,
   TaskPlan,
 } from "@kit/core";
 
@@ -25,6 +26,7 @@ export interface IterationInput {
   budgetCny?: number;
   budget?: RunBudgetSpec;
   dedupeKey?: string;
+  origin?: RunOrigin;
 }
 
 export interface PlannedIteration {
