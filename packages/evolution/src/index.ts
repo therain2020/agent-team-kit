@@ -5,5 +5,6 @@ export * from "./evolve";
 export * from "./freeze";
 export * from "./postgres";
 export * from "./repository";
+export * from "./security-invariants";
 export * from "./signals";
 export * from "./snapshot";
