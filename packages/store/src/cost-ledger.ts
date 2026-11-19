@@ -480,6 +480,9 @@ export class CostLedger {
     const days = Array.from(byDay.keys()).sort();
     for (let index = 0; index < days.length; index += 1) {
       const dayKey = days[index];
+      if (!dayKey) {
+        continue;
+      }
       const prior = days
         .slice(0, index)
         .map((key) => byDay.get(key)?.costCnyMicro ?? 0)
