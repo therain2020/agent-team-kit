@@ -41,6 +41,9 @@ export interface ApprovalRecord {
   decisionBy: string | null;
   decisionAt: string | null;
   decisionReason: string | null;
+  /** Operator who took over the approval (`null` while unassigned). */
+  assignee: string | null;
+  assignedAt: string | null;
   version: number;
   createdAt: string;
 }
@@ -99,6 +102,16 @@ export type ApprovalDecisionResult =
       current: ApprovalRecord | null;
     };
 
+export interface ApprovalAssignInput {
+  approvalId: string;
+  /** Version read by the caller; the update fails if it changed. */
+  expectedVersion: number;
+  assignee: string;
+  at?: string;
+}
+
+export type ApprovalAssignResult = ApprovalDecisionResult;
+
 interface ApprovalRow {
   approval_id: string;
   workspace_id: string;
@@ -114,6 +127,8 @@ interface ApprovalRow {
   decision_by: string | null;
   decision_at: string | Date | null;
   decision_reason: string | null;
+  assignee: string | null;
+  assigned_at: string | Date | null;
   version: number | string | bigint;
   created_at: string | Date;
 }
@@ -305,6 +320,50 @@ export class ApprovalService {
   }
 
   /**
+   * Takeover: assigns a queued approval to an operator with the same CAS
+   * semantics as {@link decide}. Bumping the version means a decision read
+   * before the takeover loses with an explicit conflict instead of silently
+   * racing the new owner.
+   */
+  async assign(input: ApprovalAssignInput): Promise<ApprovalAssignResult> {
+    const at = input.at ?? new Date().toISOString();
+    // Repeat takeovers by the same owner are a no-op so a double click does
+    // not bump the version and invalidate decisions read a moment earlier.
+    const existing = await this.get(input.approvalId);
+    if (
+      existing &&
+      existing.assignee === input.assignee &&
+      existing.status === "queued" &&
+      existing.version === input.expectedVersion
+    ) {
+      return { ok: true, record: existing };
+    }
+
+    const rows = await this.store.sql<ApprovalRow[]>`
+      UPDATE approvals
+      SET assignee = ${input.assignee},
+          assigned_at = ${at},
+          version = version + 1
+      WHERE approval_id = ${input.approvalId}
+        AND version = ${input.expectedVersion}
+        AND status = 'queued'
+      RETURNING *
+    `;
+    if (rows[0]) {
+      return { ok: true, record: mapRow(rows[0]) };
+    }
+
+    const current = await this.get(input.approvalId);
+    if (!current) {
+      return { ok: false, code: "not_found", current: null };
+    }
+    if (current.version !== input.expectedVersion) {
+      return { ok: false, code: "version_conflict", current };
+    }
+    return { ok: false, code: "not_pending", current };
+  }
+
+  /**
    * Moves queued approvals past their expiry to `expired` and writes an
    * activity-event audit row in the same transaction. Re-running is a no-op
    * for rows another tick already expired (version + status CAS).
@@ -394,6 +453,8 @@ function mapRow(row: ApprovalRow): ApprovalRecord {
     decisionBy: row.decision_by,
     decisionAt: toIso(row.decision_at),
     decisionReason: row.decision_reason,
+    assignee: row.assignee ?? null,
+    assignedAt: toIso(row.assigned_at),
     version: Number(row.version),
     createdAt: toIso(row.created_at) ?? new Date(0).toISOString(),
   };
