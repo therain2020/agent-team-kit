@@ -1,0 +1,134 @@
+apiVersion: agentteam/v1
+kind: TeamTemplate
+id: cold-start
+name: Cold Start Team
+description: Conservative starter team for the first 7 days. Evidence, draft, review, with an approval on every stage and no autopilot.
+roles:
+  requireSeller: false
+  requireBuilder: true
+  allowCombined: true
+
+# Cold-start posture: manual autonomy level. Autopilot stays off and every
+# stage pauses for approval, so 100% of runs are reviewed. There is no
+# sampling field in the template schema yet; the approval on every stage is
+# the cold-start substitute for a 100% sampling rate. If a deployment gains a
+# sampling control, set it to 100% for the whole cold-start window.
+
+agents:
+  - id: researcher
+    description: Collects and verifies source evidence
+    model: deepseek-flash
+    role: builder
+    tools: [http_fetch, browser_inspect]
+    skills: []
+    instructions: |
+      You are a researcher. Gather verifiable evidence, keep provenance for
+      every claim, and return a compact evidence set with citations.
+  - id: writer
+    description: Turns evidence into a structured draft
+    model: deepseek-pro
+    role: builder
+    tools: []
+    skills: []
+    instructions: |
+      You are a writer. Turn the evidence set into a structured draft. Cite
+      every factual claim with [S#]; never invent citations.
+  - id: reviewer
+    description: Checks citations, clarity, and actionability
+    model: deepseek-pro
+    role: specialist
+    tools: []
+    skills: []
+    instructions: |
+      You are a reviewer. Check citations against the evidence set, flag
+      unsupported claims, and suggest concrete fixes. Return a pass/fail
+      verdict with evidence.
+
+workflow:
+  id: cold-start
+  version: 1.0
+  trigger:
+    event: task.received
+  stages:
+    - id: researcher
+      type: agent
+      agent: researcher
+      inputs: [task]
+      outputs: [researcher_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      approval:
+        mode: required
+        position: after
+        riskClass: medium
+        ttl: 72h
+    - id: writer
+      type: agent
+      agent: writer
+      inputs: [researcher_output]
+      outputs: [writer_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+      approval:
+        mode: required
+        position: after
+        riskClass: medium
+        ttl: 72h
+    - id: reviewer
+      type: agent
+      agent: reviewer
+      inputs: [writer_output]
+      outputs: [reviewer_output]
+      timeout: 15m
+      retry: {max: 1, backoff: fixed}
+      includeInitialInput: true
+      failureMode: fail_closed
+      approval:
+        mode: required
+        position: after
+        riskClass: medium
+        ttl: 72h
+  delivery:
+    channel: local_file
+
+# More approvals than the shipped templates: class A read tools also require
+# per-item approval during the cold start, not just external delivery.
+policy:
+  version: 1
+  actions:
+    - {match: "tool.web_search", class: "A", approval: {ttl: "72h", scope: "per_item"}}
+    - {match: "tool.fetch", class: "A", approval: {ttl: "72h", scope: "per_item"}}
+    - {match: "tool.deliver_external", class: "C", approval: {ttl: "2h", scope: "per_item"}}
+    - {match: "tool.delete", class: "D"}
+
+# Most conservative autonomy level: autopilot and self-evolution stay off.
+autopilot:
+  version: 1
+  enabled: false
+  timezone: Asia/Shanghai
+  schedules: []
+  # One dry-run iteration, one task, no automatic repair and no apply. It
+  # only matters if autopilot is enabled after the cold start.
+  iterations:
+    - id: cold-start
+      cron: "0 9 * * *"
+      goal: One reviewed task under the cold-start policy
+      acceptance: Evidence attached and reviewed before any apply
+      maxTasks: 1
+      maxRepair: 0
+      mode: DRY_RUN
+      applyMode: none
+      budget:
+        dailyRuns: 2
+        dailyCostCny: 2
+  approval:
+    autoApprove:
+      enabled: false
+      maxRisk: low
+      maxRunCostCny: 0.5
+      onTimeout: wait
+  evolution:
+    enabled: false
+    cadence: weekly
+    autoApply: false
