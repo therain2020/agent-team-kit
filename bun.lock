@@ -19,6 +19,7 @@
         "kit": "./src/index.ts",
       },
       "dependencies": {
+        "@kit/activity": "workspace:*",
         "@kit/bootstrap": "workspace:*",
         "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
@@ -27,6 +28,7 @@
         "@kit/job": "workspace:*",
         "@kit/manager": "workspace:*",
         "@kit/model": "workspace:*",
+        "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/publish": "workspace:*",
         "@kit/source": "workspace:*",

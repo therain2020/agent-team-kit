@@ -10,6 +10,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@kit/activity": "workspace:*",
     "@kit/bootstrap": "workspace:*",
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",

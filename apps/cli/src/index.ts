@@ -22,7 +22,9 @@ import { registerSignals } from "./commands/signals";
 import { registerSource } from "./commands/source";
 import { registerStatus } from "./commands/status";
 import { registerUp } from "./commands/up";
+import { registerWatch } from "./commands/watch";
 import { registerWorkshop } from "./commands/workshop";
+import { emitError } from "./output";
 import { kitCommand } from "./repo";
 
 const program = new Command();
@@ -72,10 +74,12 @@ registerJob(program);
 registerKillSwitch(program);
 registerIterate(program);
 registerSignals(program);
+registerWatch(program);
 registerWorkshop(program);
 registerAutonomy(program);
 
+// Unhandled action rejections are classified into the shared error-code table.
+// `--json` may live after a subcommand, so inspect argv for the envelope shape.
 await program.parseAsync().catch((error: unknown) => {
-  console.error(`✖ ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
+  emitError(process.argv.includes("--json"), error);
 });
