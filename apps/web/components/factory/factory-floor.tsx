@@ -13,18 +13,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { WorldStatus } from "@/components/world/world-status";
 import {
   type FactoryItem,
   type FactorySnapshot,
-  type FactoryStation,
   type FactoryStationId,
   MAX_BATCH_SIZE,
   batchTargetsFor,
   lowRiskItems,
   needsConfirmation,
   orderGateItems,
+  stationsFor,
 } from "@/lib/factory";
 import { cn, formatCny, timeAgo } from "@/lib/utils";
+import { useWorld } from "@/lib/world-client";
+import { reconcileFactoryItems } from "@/lib/world-state";
 import {
   CheckCircle2,
   CircleAlert,
@@ -72,16 +75,14 @@ function sameItem(left: FactoryItem, right: FactoryItem): boolean {
 
 export function FactoryFloor({
   initialItems,
-  initialStations,
 }: {
   initialItems: FactoryItem[];
-  initialStations: FactoryStation[];
 }) {
   const t = useTranslations("factory");
   const riskT = useTranslations("risk");
   const locale = useLocale();
+  const world = useWorld();
   const [items, setItems] = useState(initialItems);
-  const [stations, setStations] = useState(initialStations);
   const [selectedId, setSelectedId] = useState(
     initialItems.find((item) => item.kind === "approval")?.requestId ?? "",
   );
@@ -102,6 +103,17 @@ export function FactoryFloor({
   const selected =
     gate.find((item) => item.requestId === selectedId) ?? gate[0];
   const lowCount = lowRiskItems(items).length;
+  const stations = useMemo(() => stationsFor(items), [items]);
+
+  // The world stream is the source of truth: when a delta shows the run left
+  // the paused state, the workpiece leaves the conveyor even if the optimistic
+  // removal already hid it; cost/timestamps follow the projection.
+  useEffect(() => {
+    if (!world.world) {
+      return;
+    }
+    setItems((current) => reconcileFactoryItems(current, world.world));
+  }, [world.world]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -112,7 +124,6 @@ export function FactoryFloor({
       }
       const snapshot = (await response.json()) as FactorySnapshot;
       setItems(snapshot.items);
-      setStations(snapshot.stations);
     } catch {
       // Keep the current workpieces; the operator can retry manually.
     } finally {
@@ -165,7 +176,7 @@ export function FactoryFloor({
         toast.success(message);
         setAnnounce(message);
         setDrawerItem(null);
-        void refresh();
+        // No refresh needed: the world delta removes/updates the workpiece.
         return true;
       } catch (problem) {
         const message =
@@ -284,7 +295,6 @@ export function FactoryFloor({
       if (lowCount > targets.length) {
         toast.message(t("batchLimit", { max: MAX_BATCH_SIZE }));
       }
-      void refresh();
     } catch (problem) {
       const message =
         problem instanceof Error ? problem.message : t("actionFailed");
@@ -405,6 +415,7 @@ export function FactoryFloor({
           <span className="hidden font-mono text-[10px] uppercase text-zinc-500 sm:inline">
             {t("shortcuts")}
           </span>
+          <WorldStatus />
           <Button
             size="sm"
             variant="outline"

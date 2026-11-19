@@ -5,10 +5,5 @@ export const dynamic = "force-dynamic";
 
 export default async function FactoryPage() {
   const snapshot = await loadFactorySnapshot();
-  return (
-    <FactoryFloor
-      initialItems={snapshot.items}
-      initialStations={snapshot.stations}
-    />
-  );
+  return <FactoryFloor initialItems={snapshot.items} />;
 }

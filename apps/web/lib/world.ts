@@ -9,28 +9,17 @@ import {
   loadRunProjections,
 } from "@kit/store";
 import { ensureStoreSchema, getStore } from "./store";
+import type {
+  WorldDelta,
+  WorldSnapshot,
+  WorldSnapshotResult,
+} from "./world-state";
 
 type Store = ReturnType<typeof getStore>;
 
-export interface WorldSnapshot {
-  runs: RunProjection[];
-  agents: AgentState[];
-  computedAt: string;
-}
-
-export interface WorldSnapshotResult {
-  snapshot: WorldSnapshot;
-  /** `MAX(activity_events.event_id)` at snapshot time; resume streams here. */
-  seq: number;
-  etag: string;
-}
-
-export interface WorldDelta {
-  seq: number;
-  runs: RunProjection[];
-  agents: AgentState[];
-  eventCount: number;
-}
+// Types live in a client-safe module so the console can share them with the
+// `/api/world` payloads without importing the server read model.
+export type { WorldDelta, WorldSnapshot, WorldSnapshotResult };
 
 export interface WorldSnapshotOptions {
   workspaceId?: string;

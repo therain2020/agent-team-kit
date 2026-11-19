@@ -11,10 +11,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import type { OfficeAgentView } from "@/lib/office";
+import type { OptimisticMission } from "@/lib/office-live";
+import type { AgentRole } from "@kit/core";
 import { ArrowLeft, Play, RefreshCw, Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -27,6 +27,13 @@ interface MissionValues {
   acceptance: string;
 }
 
+/** Only the fields the dialog needs; live agents satisfy this shape. */
+interface MissionAgentOption {
+  id: string;
+  isManager: boolean;
+  role: AgentRole;
+}
+
 export function NewMissionDialog({
   open,
   onOpenChange,
@@ -34,20 +41,22 @@ export function NewMissionDialog({
   workflows,
   agents,
   roleRules,
+  onStarted,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   packDir: string;
   workflows: Array<{ id: string; stages: number }>;
-  agents: OfficeAgentView[];
+  agents: MissionAgentOption[];
   roleRules: {
     requireSeller: boolean;
     requireBuilder: boolean;
     allowCombined: boolean;
   };
+  /** Emitted after the job starts so the office can show it optimistically. */
+  onStarted?: (mission: OptimisticMission) => void;
 }) {
   const t = useTranslations("newMission");
-  const router = useRouter();
   const [step, setStep] = useState<"intent" | "review">("intent");
   const [intent, setIntent] = useState("");
   const [evidence, setEvidence] = useState("");
@@ -191,6 +200,18 @@ export function NewMissionDialog({
             .join("\n") || t("failed"),
         );
       }
+      onStarted?.({
+        runId: payload.jobId,
+        workflowId: values.workflow,
+        goal: intent.trim(),
+        acceptance: values.acceptance || undefined,
+        createdAt: new Date().toISOString(),
+        manager: values.manager,
+        sellers: seller ? [seller] : [],
+        builders: values.builders,
+        specialists: values.specialists,
+        agents: assigned,
+      });
       toast.success(t("started", { runId: payload.jobId }));
       onOpenChange(false);
       setIntent("");
@@ -198,7 +219,6 @@ export function NewMissionDialog({
       setEvidence("");
       setShowEvidence(false);
       setValues(null);
-      router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("failed"));
     } finally {
@@ -476,7 +496,7 @@ function PersonPicker({
   empty,
 }: {
   label: string;
-  agents: OfficeAgentView[];
+  agents: MissionAgentOption[];
   selected: string[];
   onToggle: (id: string) => void;
   empty: string;

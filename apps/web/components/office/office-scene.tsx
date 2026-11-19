@@ -5,13 +5,18 @@ import { OfficeChat } from "@/components/office/office-chat";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import type {
-  OfficeActivePack,
-  OfficeAgentView,
-  OfficeData,
-  OfficeMissionView,
-} from "@/lib/office";
+import { SinceLabel, WorldStatus } from "@/components/world/world-status";
+import type { OfficeData } from "@/lib/office";
+import {
+  type LiveAgent,
+  type LiveMission,
+  type OptimisticMission,
+  deriveLiveAgents,
+  deriveLiveMissions,
+} from "@/lib/office-live";
 import { cn } from "@/lib/utils";
+import { useWorld } from "@/lib/world-client";
+import { shortStage } from "@/lib/world-state";
 import type { UIMessage } from "ai";
 import {
   ArrowUpRight,
@@ -29,7 +34,7 @@ import {
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const PALETTES = [
   { hair: "#2f221c", shirt: "#4f7cff", pants: "#23304d", skin: "#f0c49f" },
@@ -39,6 +44,9 @@ const PALETTES = [
   { hair: "#2a2a33", shirt: "#d96c6c", pants: "#41252b", skin: "#f5d0b0" },
   { hair: "#4a2f24", shirt: "#63b3ed", pants: "#25384d", skin: "#e8b58c" },
 ];
+
+/** Optimistic missions are dropped if the stream never materializes the run. */
+const OPTIMISTIC_TTL_MS = 120_000;
 
 const ROLE_I18N = {
   builder: "roleBuilder",
@@ -51,34 +59,33 @@ const STATUS_I18N = {
   idle: "statusIdle",
   working: "statusWorking",
   blocked: "statusBlocked",
+  waiting: "statusWaiting",
   error: "statusError",
 } as const;
 
-const STATUS_STYLE: Record<
-  OfficeAgentView["status"],
-  { dot: string; label: string; text: string }
-> = {
-  working: {
-    dot: "bg-emerald-400",
-    label: "working",
-    text: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
-  },
-  blocked: {
-    dot: "bg-amber-400",
-    label: "blocked",
-    text: "border-amber-500/40 bg-amber-500/10 text-amber-200",
-  },
-  error: {
-    dot: "bg-red-400",
-    label: "error",
-    text: "border-red-500/40 bg-red-500/10 text-red-200",
-  },
-  idle: {
-    dot: "bg-zinc-500",
-    label: "idle",
-    text: "border-border bg-zinc-900 text-zinc-400",
-  },
-};
+const STATUS_STYLE: Record<LiveAgent["status"], { dot: string; text: string }> =
+  {
+    working: {
+      dot: "bg-emerald-400",
+      text: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+    },
+    waiting: {
+      dot: "bg-amber-300",
+      text: "border-amber-400/50 bg-amber-400/15 text-amber-100",
+    },
+    blocked: {
+      dot: "bg-orange-400",
+      text: "border-orange-500/40 bg-orange-500/10 text-orange-200",
+    },
+    error: {
+      dot: "bg-red-400",
+      text: "border-red-500/40 bg-red-500/10 text-red-200",
+    },
+    idle: {
+      dot: "bg-zinc-500",
+      text: "border-border bg-zinc-900 text-zinc-400",
+    },
+  };
 
 export function OfficeScene({
   data,
@@ -91,12 +98,58 @@ export function OfficeScene({
 }) {
   const t = useTranslations("office");
   const router = useRouter();
+  const world = useWorld();
   const active = data.active;
   const [selectedId, setSelectedId] = useState(
     active?.agents[0]?.id ?? "manager",
   );
   const [tab, setTab] = useState<"agent" | "chat">("agent");
   const [missionOpen, setMissionOpen] = useState(false);
+  const [optimistic, setOptimistic] = useState<OptimisticMission[]>([]);
+
+  const baseMissions = active?.missions ?? [];
+  const baseAgents = active?.agents ?? [];
+
+  // The stream wins: drop optimistic missions as soon as the projection has
+  // the run, and expire anything the stream never acknowledged.
+  useEffect(() => {
+    if (optimistic.length === 0) {
+      return;
+    }
+    const runs = new Set(world.world?.runs.map((run) => run.runId) ?? []);
+    const cutoff = Date.now() - OPTIMISTIC_TTL_MS;
+    const next = optimistic.filter(
+      (mission) =>
+        !runs.has(mission.runId) && Date.parse(mission.createdAt) > cutoff,
+    );
+    if (next.length !== optimistic.length) {
+      setOptimistic(next);
+    }
+  }, [optimistic, world.world]);
+
+  useEffect(() => {
+    if (optimistic.length === 0) {
+      return;
+    }
+    const id = setInterval(() => {
+      const cutoff = Date.now() - OPTIMISTIC_TTL_MS;
+      setOptimistic((current) =>
+        current.every((mission) => Date.parse(mission.createdAt) > cutoff)
+          ? current
+          : current.filter((mission) => Date.parse(mission.createdAt) > cutoff),
+      );
+    }, 5_000);
+    return () => clearInterval(id);
+  }, [optimistic.length]);
+
+  const agents = useMemo(
+    () => deriveLiveAgents(baseAgents, world.world, baseMissions, optimistic),
+    [baseAgents, baseMissions, world.world, optimistic],
+  );
+  const missions = useMemo(
+    () => deriveLiveMissions(baseMissions, world.world, optimistic),
+    [baseMissions, world.world, optimistic],
+  );
 
   if (!active) {
     return (
@@ -111,16 +164,12 @@ export function OfficeScene({
     );
   }
 
-  const selected =
-    active.agents.find((agent) => agent.id === selectedId) ?? active.agents[0];
-  const manager = active.agents.find((agent) => agent.isManager);
-  const employees = active.agents.filter((agent) => !agent.isManager);
-  const working = active.agents.filter(
-    (agent) => agent.status === "working",
-  ).length;
-  const blocked = active.agents.filter(
-    (agent) => agent.status === "blocked",
-  ).length;
+  const selected = agents.find((agent) => agent.id === selectedId) ?? agents[0];
+  const manager = agents.find((agent) => agent.isManager);
+  const employees = agents.filter((agent) => !agent.isManager);
+  const working = agents.filter((agent) => agent.status === "working").length;
+  const waiting = agents.filter((agent) => agent.status === "waiting").length;
+  const blocked = agents.filter((agent) => agent.status === "blocked").length;
 
   return (
     <div className="space-y-4">
@@ -143,14 +192,18 @@ export function OfficeScene({
           </select>
           <Badge variant="outline" className="gap-1">
             <Users className="size-3" />
-            {t("teamSize", { count: active.agents.length })}
+            {t("teamSize", { count: agents.length })}
           </Badge>
           <Badge variant={working > 0 ? "success" : "outline"}>
             {t("working", { count: working })}
           </Badge>
+          {waiting > 0 ? (
+            <Badge variant="info">{t("waiting", { count: waiting })}</Badge>
+          ) : null}
           {blocked > 0 ? (
             <Badge variant="warning">{t("blocked", { count: blocked })}</Badge>
           ) : null}
+          <WorldStatus />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button asChild size="sm" variant="ghost">
@@ -172,7 +225,7 @@ export function OfficeScene({
         </div>
       </div>
 
-      <TaskBoard missions={active.missions} />
+      <TaskBoard missions={missions} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_23rem]">
         <div className="space-y-3">
@@ -194,8 +247,10 @@ export function OfficeScene({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 text-[9px] text-zinc-500">
-                  <Wifi className="size-3 text-emerald-400" />
-                  {t("local")}
+                  <span className="flex items-center gap-1">
+                    <Wifi className="size-3 text-emerald-400" />
+                    {t("local")}
+                  </span>
                   <span className="flex items-center gap-1">
                     <Coffee className="size-3 text-amber-300" />
                     {t("coffee")}
@@ -334,8 +389,15 @@ export function OfficeScene({
         onOpenChange={setMissionOpen}
         packDir={active.dirName}
         workflows={active.workflows}
-        agents={active.agents}
+        agents={agents}
         roleRules={active.roleRules}
+        onStarted={(mission) =>
+          setOptimistic((current) =>
+            current.some((entry) => entry.runId === mission.runId)
+              ? current
+              : [mission, ...current],
+          )
+        }
       />
     </div>
   );
@@ -348,7 +410,7 @@ function Station({
   manager = false,
   index = 0,
 }: {
-  agent: OfficeAgentView;
+  agent: LiveAgent;
   selected: boolean;
   onSelect: () => void;
   manager?: boolean;
@@ -368,13 +430,16 @@ function Station({
       )}
       aria-label={`${agent.id} · ${t(STATUS_I18N[agent.status])} · ${t("clickToInspect")}`}
     >
-      <span
-        className={cn(
-          "relative z-10 mb-1 max-w-[11rem] truncate rounded border px-1.5 py-0.5 text-[9px]",
-          status.text,
-        )}
-      >
-        <ActivityText agent={agent} />
+      <span className="relative z-10 mb-1 flex max-w-[11rem] items-center gap-1">
+        <span
+          className={cn(
+            "max-w-[9rem] truncate rounded border px-1.5 py-0.5 text-[9px]",
+            status.text,
+          )}
+        >
+          <ActivityText agent={agent} />
+        </span>
+        {agent.status !== "idle" ? <SinceLabel since={agent.since} /> : null}
       </span>
       <span className="relative mb-1">
         <PixelCharacter
@@ -395,6 +460,7 @@ function Station({
           <span className="office-screen h-2.5 w-8 rounded-[1px] bg-sky-400/40" />
         </div>
         <div className="mx-auto mt-0.5 h-1 w-[40%] rounded bg-zinc-700" />
+        <ProgressBar progress={agent.progress} className="mt-1" />
       </div>
       <span className="mt-1 max-w-full truncate font-mono text-[9px] text-zinc-400">
         {agent.id}
@@ -404,9 +470,51 @@ function Station({
   );
 }
 
-function ActivityText({ agent }: { agent: OfficeAgentView }) {
+/**
+ * Visual progress for the current run stage. Decorative: the status chip and
+ * the stage/percent text carry the same information for screen readers.
+ */
+function ProgressBar({
+  progress,
+  className,
+}: {
+  progress?: number;
+  className?: string;
+}) {
+  if (typeof progress !== "number") {
+    return null;
+  }
+  const percent = Math.round(Math.min(1, Math.max(0, progress)) * 100);
+  return (
+    <span
+      className={cn("block h-1 w-full rounded bg-zinc-800", className)}
+      aria-hidden="true"
+    >
+      <span
+        className="block h-full rounded bg-emerald-400/80 motion-safe:transition-[width] motion-safe:duration-500"
+        style={{ width: `${percent}%` }}
+      />
+    </span>
+  );
+}
+
+function ActivityText({ agent }: { agent: LiveAgent }) {
   const t = useTranslations("office");
   switch (agent.activityKind) {
+    case "waitingApproval":
+      return <>{t("activityWaitingApproval")}</>;
+    case "liveTool":
+      return (
+        <>{t("activityUsingTool", { tool: agent.activityDetail ?? "—" })}</>
+      );
+    case "liveStage":
+      return (
+        <>
+          {t("activityWorkingStage", {
+            stage: shortStage(agent.activityDetail) || "—",
+          })}
+        </>
+      );
     case "teamIdle":
       return <>{t("activityTeamIdle")}</>;
     case "waitingDecision":
@@ -513,10 +621,10 @@ function AgentPanel({
   team,
   onSelectAgent,
 }: {
-  agent: OfficeAgentView;
+  agent: LiveAgent;
   packDir: string;
   onChat: () => void;
-  team: OfficeAgentView[];
+  team: LiveAgent[];
   onSelectAgent: (id: string) => void;
 }) {
   const t = useTranslations("office");
@@ -546,6 +654,7 @@ function AgentPanel({
               <span className={cn("size-1.5 rounded-full", status.dot)} />
               {t(STATUS_I18N[agent.status])}
             </span>
+            {agent.since ? <SinceLabel since={agent.since} /> : null}
             {agent.isManager ? (
               <Badge variant="violet">{t("manager")}</Badge>
             ) : (
@@ -561,6 +670,19 @@ function AgentPanel({
       <p className="mt-3 rounded border border-border bg-zinc-950/40 px-2 py-1.5 text-[11px] text-zinc-300">
         <ActivityText agent={agent} />
       </p>
+
+      {agent.stageId ? (
+        <div className="mt-2 rounded border border-border/70 px-2 py-1.5 text-[10px]">
+          <p className="text-zinc-500">{t("currentStage")}</p>
+          <p className="mt-0.5 font-mono text-zinc-300">{agent.stageId}</p>
+          <ProgressBar progress={agent.progress} className="mt-1.5" />
+          {typeof agent.progress === "number" ? (
+            <p className="mt-1 text-right font-mono text-[9px] text-zinc-500">
+              {Math.round(agent.progress * 100)}%
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {agent.isManager ? (
         <div className="mt-3">
@@ -642,7 +764,7 @@ function AgentPanel({
 }
 
 const TASK_LANES: Array<{
-  phase: OfficeMissionView["phase"];
+  phase: LiveMission["phase"];
   labelKey: string;
   accent: string;
 }> = [
@@ -653,7 +775,7 @@ const TASK_LANES: Array<{
   { phase: "done", labelKey: "laneDone", accent: "text-zinc-400" },
 ];
 
-function TaskBoard({ missions }: { missions: OfficeMissionView[] }) {
+function TaskBoard({ missions }: { missions: LiveMission[] }) {
   const t = useTranslations("office");
   return (
     <section className="rounded-xl border border-border bg-card/60 p-3">
@@ -706,7 +828,7 @@ function TaskBoard({ missions }: { missions: OfficeMissionView[] }) {
   );
 }
 
-function TaskCard({ mission }: { mission: OfficeMissionView }) {
+function TaskCard({ mission }: { mission: LiveMission }) {
   const t = useTranslations("office");
   const statusVariant =
     mission.status === "succeeded"
@@ -726,11 +848,31 @@ function TaskCard({ mission }: { mission: OfficeMissionView }) {
         <span className="font-mono text-[9px] text-zinc-500">
           {mission.runId.slice(-8)}
         </span>
-        <Badge variant={statusVariant}>{mission.status}</Badge>
+        <span className="flex items-center gap-1">
+          {mission.optimistic ? (
+            <span className="rounded border border-sky-500/30 px-1 py-0.5 text-[8px] text-sky-300">
+              {t("starting")}
+            </span>
+          ) : null}
+          <Badge variant={statusVariant}>{mission.status}</Badge>
+        </span>
       </div>
       <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-zinc-200">
         {mission.goal}
       </p>
+      {mission.currentStage || typeof mission.progress === "number" ? (
+        <p className="mt-1 flex items-center justify-between gap-2 font-mono text-[9px] text-sky-300/80">
+          <span className="truncate">
+            {mission.currentStage ? shortStage(mission.currentStage) : "…"}
+          </span>
+          {typeof mission.progress === "number" ? (
+            <span className="shrink-0 text-zinc-500">
+              {Math.round(mission.progress * 100)}%
+            </span>
+          ) : null}
+        </p>
+      ) : null}
+      <ProgressBar progress={mission.progress} className="mt-1" />
       <div className="mt-1.5 flex flex-wrap gap-1">
         {mission.sellers.length > 0 ? (
           <span className="rounded border border-sky-500/25 bg-sky-500/5 px-1 py-0.5 text-[9px] text-sky-300">
