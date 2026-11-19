@@ -28,22 +28,28 @@ describe("run lease guard (61 §3.5)", () => {
   });
 
   it("blocks further activity once the lease is lost", async () => {
-    await withWriteLease({ owner: "worker-a", leaseVersion: 1 }, async () => {
-      expect(() => assertWriteLeaseActive()).not.toThrow();
-      const lost = markWriteLeaseLost(
-        new RunLeaseLostError("reclaimed", "rrq_1", 1),
-      );
-      expect(currentWriteLeaseLost()).toBe(lost);
-      expect(() => assertWriteLeaseActive()).toThrowError(RunLeaseLostError);
-      expect(() => assertWriteLeaseActive()).toThrowError(/reclaimed/);
-    });
+    await withWriteLease(
+      { requestId: "rrq_1", owner: "worker-a", leaseVersion: 1 },
+      async () => {
+        expect(() => assertWriteLeaseActive()).not.toThrow();
+        const lost = markWriteLeaseLost(
+          new RunLeaseLostError("reclaimed", "rrq_1", 1),
+        );
+        expect(currentWriteLeaseLost()).toBe(lost);
+        expect(() => assertWriteLeaseActive()).toThrowError(RunLeaseLostError);
+        expect(() => assertWriteLeaseActive()).toThrowError(/reclaimed/);
+      },
+    );
   });
 
   it("clears the lost state when entering a new lease scope", async () => {
     markWriteLeaseLost("stale from previous scope");
-    await withWriteLease({ owner: "worker-b", leaseVersion: 2 }, async () => {
-      expect(currentWriteLeaseLost()).toBeNull();
-      expect(() => assertWriteLeaseActive()).not.toThrow();
-    });
+    await withWriteLease(
+      { requestId: "rrq_2", owner: "worker-b", leaseVersion: 2 },
+      async () => {
+        expect(currentWriteLeaseLost()).toBeNull();
+        expect(() => assertWriteLeaseActive()).not.toThrow();
+      },
+    );
   });
 });
