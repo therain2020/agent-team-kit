@@ -1,9 +1,13 @@
 import {
   type DegradedMode,
+  type ExternalDeliveryDecision,
+  type LastKnownGood,
   activeModeFor,
   evaluateQualityFloor,
   isExecutionBlocked,
   newId,
+  resolveExternalDelivery,
+  selectLastKnownGood,
 } from "@kit/core";
 import type {
   ArtifactStore,
@@ -11,6 +15,7 @@ import type {
   BlobRepository,
   DegradationStateRecord,
   DegradationStore,
+  LastKnownGoodStore,
 } from "@kit/store";
 import type { PackPipelineActivities } from "./pack-pipeline";
 
@@ -19,6 +24,8 @@ export interface DegradationGuardStore {
   artifactStore: Pick<ArtifactStore, "findById">;
   blobs: Pick<BlobRepository, "findById">;
   blobClient: Pick<BlobClient, "get">;
+  /** Artifact-level pins used to serve external delivery while degraded. */
+  lkg?: Pick<LastKnownGoodStore, "listActive">;
 }
 
 export class ExecutionBlockedError extends Error {
@@ -42,6 +49,16 @@ export class QualityFloorError extends Error {
   }
 }
 
+export class LkgDeliveryBlockedError extends Error {
+  constructor(
+    readonly modeId: string,
+    readonly reasons: string[],
+  ) {
+    super(`external delivery blocked: ${reasons.join("; ")}`);
+    this.name = "LkgDeliveryBlockedError";
+  }
+}
+
 export interface DegradationGuard {
   modeFor(workspaceId: string): Promise<DegradedMode | null>;
   assertCanPrepare(input: {
@@ -62,6 +79,16 @@ export interface DegradationGuard {
     artifactId: string;
     channel: string;
   }): Promise<void>;
+  /**
+   * Full delivery decision: floor check plus the LKG fallback for external
+   * channels. Returns the artifact that should actually be delivered.
+   */
+  resolveDelivery(input: {
+    runId: string;
+    workspaceId: string;
+    artifactId: string;
+    channel: string;
+  }): Promise<ExternalDeliveryDecision>;
 }
 
 export function toDegradedMode(record: DegradationStateRecord): DegradedMode {
@@ -175,46 +202,88 @@ export function createDegradationGuard(
     },
 
     async assertCanDeliver(input) {
-      const mode = await activeModeForWorkspace(store, input.workspaceId);
-      if (!mode) {
-        return;
-      }
-      if (isExecutionBlocked(mode)) {
-        await auditBlockedExecution(store, mode, input.workspaceId, {
-          action: "deliver",
-          runId: input.runId,
-          artifactId: input.artifactId,
-        });
-        throw new ExecutionBlockedError(
-          mode.modeId,
-          mode.kind,
-          "delivery is paused by read-only mode",
-        );
-      }
-
-      const text = await readArtifactText(store, input.artifactId);
-      if (text === null) {
-        await auditBlockedExecution(store, mode, input.workspaceId, {
-          action: "deliver",
-          runId: input.runId,
-          artifactId: input.artifactId,
-          reason: "artifact unavailable",
-        });
-        throw new QualityFloorError(mode.modeId, ["artifact unavailable"]);
-      }
-
-      const floor = evaluateQualityFloor(text, mode.qualityFloor);
-      if (!floor.pass) {
-        await auditBlockedExecution(store, mode, input.workspaceId, {
-          action: "deliver",
-          runId: input.runId,
-          artifactId: input.artifactId,
-          reasons: floor.reasons,
-        });
-        throw new QualityFloorError(mode.modeId, floor.reasons);
-      }
+      await resolveDelivery(input);
     },
+
+    resolveDelivery,
   };
+
+  async function resolveDelivery(input: {
+    runId: string;
+    workspaceId: string;
+    artifactId: string;
+    channel: string;
+  }): Promise<ExternalDeliveryDecision> {
+    const mode = await activeModeForWorkspace(store, input.workspaceId);
+    if (!mode) {
+      return resolveExternalDelivery({
+        artifactId: input.artifactId,
+        channel: input.channel,
+        mode: null,
+      });
+    }
+
+    if (isExecutionBlocked(mode)) {
+      await auditBlockedExecution(store, mode, input.workspaceId, {
+        action: "deliver",
+        runId: input.runId,
+        artifactId: input.artifactId,
+      });
+      throw new ExecutionBlockedError(
+        mode.modeId,
+        mode.kind,
+        "delivery is paused by read-only mode",
+      );
+    }
+
+    let lkg: LastKnownGood | null = null;
+    if (store.lkg) {
+      const records = await store.lkg.listActive(input.workspaceId);
+      lkg = selectLastKnownGood(records, input.artifactId);
+    }
+
+    const decision = resolveExternalDelivery({
+      artifactId: input.artifactId,
+      channel: input.channel,
+      mode,
+      lkg,
+    });
+    if (!decision.ok) {
+      await auditBlockedExecution(store, mode, input.workspaceId, {
+        action: "deliver",
+        runId: input.runId,
+        artifactId: input.artifactId,
+        channel: input.channel,
+        lkgId: decision.lkgId,
+        reasons: decision.reasons,
+      });
+      throw new LkgDeliveryBlockedError(mode.modeId, decision.reasons);
+    }
+
+    const text = await readArtifactText(store, decision.artifactId);
+    if (text === null) {
+      await auditBlockedExecution(store, mode, input.workspaceId, {
+        action: "deliver",
+        runId: input.runId,
+        artifactId: decision.artifactId,
+        reason: "artifact unavailable",
+      });
+      throw new QualityFloorError(mode.modeId, ["artifact unavailable"]);
+    }
+
+    const floor = evaluateQualityFloor(text, mode.qualityFloor);
+    if (!floor.pass) {
+      await auditBlockedExecution(store, mode, input.workspaceId, {
+        action: "deliver",
+        runId: input.runId,
+        artifactId: decision.artifactId,
+        reasons: floor.reasons,
+      });
+      throw new QualityFloorError(mode.modeId, floor.reasons);
+    }
+
+    return decision;
+  }
 }
 
 export function guardedActivities(
@@ -242,13 +311,18 @@ export function guardedActivities(
       return activities.executePackStage(input);
     },
     deliverPackRun: async (input) => {
-      await guard.assertCanDeliver({
+      const decision = await guard.resolveDelivery({
         runId: input.runId,
         workspaceId: input.workspaceId,
         artifactId: input.artifactId,
         channel: input.channel,
       });
-      return activities.deliverPackRun(input);
+      // While degraded the external output falls back to the verified LKG;
+      // the original artifact stays available internally.
+      return activities.deliverPackRun({
+        ...input,
+        artifactId: decision.artifactId,
+      });
     },
   };
 }

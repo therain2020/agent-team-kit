@@ -1,10 +1,12 @@
 import type {
   DegradationTrigger,
   ExitCriteria,
+  LkgArtifactRef,
   Producer,
   QualityFloor,
 } from "@kit/core";
 import {
+  index,
   integer,
   primaryKey,
   real,
@@ -139,6 +141,34 @@ export const runRequests = sqliteTable("run_requests", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+/** Artifact-level last-known-good pins (61 §2). */
+export const lastKnownGood = sqliteTable(
+  "last_known_good",
+  {
+    lkgId: text("lkg_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    targetKey: text("target_key").notNull(),
+    artifactRefs: text("artifact_refs", { mode: "json" })
+      .$type<LkgArtifactRef[]>()
+      .notNull(),
+    verifiedAt: text("verified_at").notNull(),
+    verifier: text("verifier").notNull(),
+    status: text("status").notNull(),
+    supersedes: text("supersedes"),
+    supersededBy: text("superseded_by"),
+    createdAt: text("created_at").notNull(),
+    createdBy: text("created_by").notNull(),
+  },
+  (table) => [
+    index("idx_lkg_active").on(
+      table.workspaceId,
+      table.targetKey,
+      table.status,
+    ),
+    index("idx_lkg_verified").on(table.verifiedAt),
+  ],
+);
 
 export const degradationState = sqliteTable(
   "degradation_state",

@@ -244,6 +244,13 @@
   "degradation": {
     "title": "Degradation & read-only",
     "description": "Explicitly switch into degraded or read-only mode. Every entry, exit, and blocked execution is audited.",
+    "lkgTitle": "Last-known-good artifacts",
+    "lkgEmpty": "No artifact last-known-good is registered.",
+    "lkgVerified": "verified",
+    "lkgStale": "internal-only",
+    "lkgVerifier": "verified by {verifier}",
+    "lkgExpires": "expires {expires}",
+    "lkgNote": "External delivery in degraded mode falls back to the last-known-good. Pins not re-verified within 7 days become internal-only.",
     "activeTitle": "Active modes",
     "empty": "No degraded or read-only mode is active.",
     "enterTitle": "Enter a mode",

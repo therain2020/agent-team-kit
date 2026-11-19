@@ -444,6 +444,25 @@ CREATE INDEX IF NOT EXISTS idx_run_projection_status
 CREATE INDEX IF NOT EXISTS idx_run_projection_updated
   ON run_projection(workspace_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS last_known_good (
+  lkg_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  artifact_refs JSONB NOT NULL,
+  verified_at TIMESTAMPTZ NOT NULL,
+  verifier TEXT NOT NULL,
+  status TEXT NOT NULL,
+  supersedes TEXT,
+  superseded_by TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  created_by TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lkg_active
+  ON last_known_good(workspace_id, target_key, status);
+CREATE INDEX IF NOT EXISTS idx_lkg_verified
+  ON last_known_good(verified_at DESC);
+
 CREATE TABLE IF NOT EXISTS degradation_state (
   scope TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
@@ -1074,6 +1093,25 @@ CREATE INDEX IF NOT EXISTS idx_run_projection_status
   ON run_projection(workspace_id, status);
 CREATE INDEX IF NOT EXISTS idx_run_projection_updated
   ON run_projection(workspace_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS last_known_good (
+  lkg_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  artifact_refs TEXT NOT NULL,
+  verified_at TEXT NOT NULL,
+  verifier TEXT NOT NULL,
+  status TEXT NOT NULL,
+  supersedes TEXT,
+  superseded_by TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lkg_active
+  ON last_known_good(workspace_id, target_key, status);
+CREATE INDEX IF NOT EXISTS idx_lkg_verified
+  ON last_known_good(verified_at DESC);
 
 CREATE TABLE IF NOT EXISTS degradation_state (
   scope TEXT NOT NULL,

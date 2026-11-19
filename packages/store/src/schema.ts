@@ -1,6 +1,7 @@
 import type {
   DegradationTrigger,
   ExitCriteria,
+  LkgArtifactRef,
   Producer,
   QualityFloor,
 } from "@kit/core";
@@ -8,6 +9,7 @@ import {
   bigint,
   boolean,
   date,
+  index,
   integer,
   jsonb,
   numeric,
@@ -178,6 +180,38 @@ export const runRequests = pgTable("run_requests", {
     mode: "string",
   }).notNull(),
 });
+
+/** Artifact-level last-known-good pins (61 §2). */
+export const lastKnownGood = pgTable(
+  "last_known_good",
+  {
+    lkgId: text("lkg_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    targetKey: text("target_key").notNull(),
+    artifactRefs: jsonb("artifact_refs").$type<LkgArtifactRef[]>().notNull(),
+    verifiedAt: timestamp("verified_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    verifier: text("verifier").notNull(),
+    status: text("status").notNull(),
+    supersedes: text("supersedes"),
+    supersededBy: text("superseded_by"),
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    createdBy: text("created_by").notNull(),
+  },
+  (table) => [
+    index("idx_lkg_active").on(
+      table.workspaceId,
+      table.targetKey,
+      table.status,
+    ),
+    index("idx_lkg_verified").on(table.verifiedAt),
+  ],
+);
 
 export const degradationState = pgTable(
   "degradation_state",

@@ -5,8 +5,10 @@ import {
   type DegradationModeView,
   type DependencyView,
 } from "@/components/degradation/degradation-controls";
+import { LkgCard } from "@/components/ops/lkg-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import type { LkgView } from "@/lib/lkg";
 import type { DegradedMode } from "@kit/core";
 import type { DegradationAuditRecord } from "@kit/store";
 import { ListChecks, ScrollText, ShieldAlert, Workflow } from "lucide-react";
@@ -16,10 +18,12 @@ export function DegradationSection({
   modes,
   audit,
   dependencies,
+  lkg,
 }: {
   modes: DegradedMode[];
   audit: DegradationAuditRecord[];
   dependencies: DependencyView[];
+  lkg: LkgView[];
 }) {
   const t = useTranslations("degradation");
 
@@ -196,6 +200,8 @@ export function DegradationSection({
           </ul>
         </CardContent>
       </Card>
+
+      <LkgCard entries={lkg} />
 
       <div className="flex items-start gap-2 rounded-lg border border-border bg-card px-4 py-3 text-[11px] text-zinc-500">
         <ListChecks className="mt-0.5 size-3.5 shrink-0" />

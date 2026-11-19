@@ -4,6 +4,7 @@ import { loadAutopilotOverview } from "@/lib/autopilot";
 import { loadBudgetOverview } from "@/lib/budgets";
 import { loadActiveModes, loadDegradationAudit } from "@/lib/degradation";
 import { loadKillSwitchState } from "@/lib/kill-switch";
+import { loadLkgOverview } from "@/lib/lkg";
 import { currentOperatorId } from "@/lib/operator";
 import { loadOpsConsole } from "@/lib/ops";
 import { resolveOpsSection } from "@/lib/ops-sections";
@@ -17,17 +18,27 @@ export default async function OpsPage({
 }: {
   searchParams: Promise<{ section?: string | string[] }>;
 }) {
-  const [{ section }, t, ops, modes, audit, budgets, killSwitch, autopilot] =
-    await Promise.all([
-      searchParams,
-      getTranslations("opsSurface"),
-      loadOpsConsole(),
-      loadActiveModes(),
-      loadDegradationAudit(20),
-      loadBudgetOverview(),
-      loadKillSwitchState(),
-      loadAutopilotOverview(),
-    ]);
+  const [
+    { section },
+    t,
+    ops,
+    modes,
+    audit,
+    budgets,
+    killSwitch,
+    autopilot,
+    lkg,
+  ] = await Promise.all([
+    searchParams,
+    getTranslations("opsSurface"),
+    loadOpsConsole(),
+    loadActiveModes(),
+    loadDegradationAudit(20),
+    loadBudgetOverview(),
+    loadKillSwitchState(),
+    loadAutopilotOverview(),
+    loadLkgOverview(),
+  ]);
 
   return (
     <div className="space-y-5">
@@ -47,6 +58,7 @@ export default async function OpsPage({
           budgets,
           killSwitch,
           autopilot,
+          lkg,
         }}
         operator={currentOperatorId()}
         initialSection={resolveOpsSection(section)}
