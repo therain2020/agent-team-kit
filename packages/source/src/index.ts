@@ -1,14 +1,10 @@
-import {
-  BUILTIN_SOURCES,
-  buildEvidenceSet,
-  fetchBuiltin,
-  fetchFromDefinition,
-  isBuiltinSource,
-} from "./adapters";
-import { loadInstalledSource } from "./registry";
+import { BUILTIN_SOURCES, buildEvidenceSet } from "./adapters";
+import { fetchSource } from "./fetch-source";
 import type { EvidenceError, EvidenceSet, RawSourceItem } from "./types";
 
 export * from "./adapters";
+export * from "./collect";
+export * from "./fetch-source";
 export * from "./registry";
 export * from "./types";
 
@@ -24,7 +20,7 @@ export async function fetchEvidence(
 
   const results = await Promise.allSettled(
     sources.map(async (source) => {
-      const items = await fetchOne(source, limit, options.root);
+      const items = await fetchSource(source, { limit, root: options.root });
       return { source, items };
     }),
   );
@@ -48,19 +44,4 @@ export async function fetchEvidence(
   });
 
   return buildEvidenceSet(items, errors);
-}
-
-async function fetchOne(
-  source: string,
-  limit: number,
-  root?: string,
-): Promise<RawSourceItem[]> {
-  if (isBuiltinSource(source)) {
-    return fetchBuiltin(source, limit);
-  }
-  const installed = await loadInstalledSource(source, root);
-  if (!installed) {
-    throw new Error(`source not installed: ${source}`);
-  }
-  return fetchFromDefinition(installed.definition, limit);
 }

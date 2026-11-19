@@ -20,6 +20,7 @@
     "@kit/ops": "workspace:*",
     "@kit/pack": "workspace:*",
     "@kit/queue": "workspace:*",
+    "@kit/source": "workspace:*",
     "@kit/store": "workspace:*",
     "@kit/telemetry": "workspace:*",
     "@kit/tools": "workspace:*",
