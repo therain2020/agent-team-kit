@@ -488,7 +488,9 @@ async function executePackStageInner(
     modelId:
       input.type === "coder"
         ? (input.coder ?? "dsh")
-        : (input.modelAlias ?? "deepseek-flash"),
+        : input.type === "agent"
+          ? (input.modelAlias ?? "deepseek-flash")
+          : "none",
     workflowId,
     workflowVersion,
   });
