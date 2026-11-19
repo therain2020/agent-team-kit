@@ -1,11 +1,17 @@
 import { CliError } from "@kit/core";
 import {
+  AssemblyError,
+  type ComponentRequest,
+  assembleComponents,
+} from "@kit/pack";
+import {
   type AssemblyLock,
   type ComponentKind,
   componentsRoot,
   listComponents,
   loadComponent,
   readAssemblyLock,
+  workshopComponentLibrary,
 } from "@kit/workshop";
 import type { Command } from "commander";
 import { emit, emitError, wantsJson } from "../output";
@@ -178,6 +184,102 @@ export function registerComponents(program: Command): void {
         });
       },
     );
+
+  components
+    .command("assemble")
+    .description(
+      "Bind library components into a pack (staged writes + components.lock.json)",
+    )
+    .requiredOption("--pack <dir>", "target pack directory")
+    .option(
+      "--component <kind:id>",
+      "component to bind, e.g. agent:researcher (repeatable)",
+      collectValues,
+      [],
+    )
+    .option("--root <dir>", "components root (default: ./components)")
+    .option("--allow-command", "allow command-adapter tools", false)
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        pack: string;
+        component: string[];
+        root?: string;
+        allowCommand?: boolean;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        const requests: ComponentRequest[] = [];
+        for (const raw of options.component) {
+          const [kind, id, ...rest] = raw.split(":");
+          if (rest.length > 0 || !kind || !id || !isComponentKind(kind)) {
+            emitError(
+              json,
+              new CliError("usage", `invalid --component: ${raw}`, {
+                hint: "expected <kind>:<id>, kind is agent|workflow|toolpack|skillpack",
+              }),
+            );
+            return;
+          }
+          requests.push({ kind, id });
+        }
+        if (requests.length === 0) {
+          emitError(
+            json,
+            new CliError("usage", "pass at least one --component <kind:id>"),
+          );
+          return;
+        }
+
+        try {
+          const result = await assembleComponents(
+            {
+              packDir: options.pack,
+              components: requests,
+              allowCommand: options.allowCommand === true,
+            },
+            workshopComponentLibrary(options.root),
+          );
+          emit(json, result, () => {
+            if (result.noop) {
+              console.log("✓ components already assembled (no changes)");
+            } else {
+              console.log(
+                `✓ assembled ${result.bindings.length} component(s) into ${result.packDir}`,
+              );
+              for (const written of result.written) {
+                console.log(`  + ${written}`);
+              }
+            }
+            for (const warning of result.warnings) {
+              console.log(`  ! ${warning}`);
+            }
+          });
+        } catch (error) {
+          if (error instanceof AssemblyError) {
+            emitError(
+              json,
+              new CliError("usage", error.message, {
+                details: { issues: error.issues, warnings: error.warnings },
+              }),
+            );
+            if (!json) {
+              for (const issue of error.issues) {
+                console.error(
+                  `  ! ${issue.code} ${issue.path}: ${issue.message}`,
+                );
+              }
+            }
+            return;
+          }
+          throw error;
+        }
+      },
+    );
+}
+
+function collectValues(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function isComponentKind(value: string): value is ComponentKind {
