@@ -571,6 +571,8 @@
     "title": "像素工厂",
     "description": "在流水线上处理审批件。低风险一键放行；更高风险需要确认。",
     "conveyor": "审批传送带",
+    "beltLive": "实时传送带",
+    "beltEmpty": "传送带待机",
     "gatekeeper": "闸门工位",
     "blocked": "阻塞 / 失败",
     "done": "已处理",
@@ -1443,6 +1445,19 @@
     "tickFailed": "执行失败",
     "tickDone": "执行完成：启动 {launched} · 自动批准 {approved}"
   },
+  "motion": {
+    "toggle": "动效",
+    "on": "动效开",
+    "off": "动效关",
+    "reducedHint": "已跟随系统的「减弱动效」设置。",
+    "clock": "T{tick} · {minutes} 分",
+    "clockHint": "游戏时钟：1 tick = 2 游戏分钟，由数据事件推动。",
+    "play": "播放",
+    "pause": "暂停",
+    "speed": "速度 {speed}×",
+    "stampPassed": "通过",
+    "stampFailed": "打回"
+  },
   "office": {
     "title": "经理办公室",
     "description": "走进办公室：看谁在工作、经理在管什么，并直接发起任务。",
@@ -1506,7 +1521,15 @@
     "laneDeliver": "交付 · Seller",
     "laneBlocked": "阻塞",
     "laneDone": "完成",
-    "laneEmpty": "空"
+    "laneEmpty": "空",
+    "liveConnecting": "连接中",
+    "live": "实时",
+    "liveReconnecting": "重连中",
+    "liveOffline": "离线",
+    "liveHint": "实时活动流；没有事件时画面保持静止。",
+    "artifactBelt": "工件传送带",
+    "beltCount": "{count} 个箱子",
+    "beltEmpty": "传送带待机"
   },
   "officeChat": {
     "stub": "stub",
