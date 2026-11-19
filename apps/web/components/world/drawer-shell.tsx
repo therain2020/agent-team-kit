@@ -13,11 +13,14 @@ export function DrawerShell({
   closeHref,
   label,
   closeLabel,
+  size = "md",
   children,
 }: {
   closeHref: string;
   label: string;
   closeLabel: string;
+  /** `md` is the run/activity drawer; `full` is the dense Atlas overlay. */
+  size?: "md" | "full";
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -44,7 +47,13 @@ export function DrawerShell({
         aria-label={closeLabel}
         className="absolute inset-0 bg-black/60 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150"
       />
-      <section className="absolute inset-y-0 right-0 flex w-full max-w-2xl flex-col overflow-hidden border-l border-border bg-background shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-right motion-safe:duration-200">
+      <section
+        className={
+          size === "full"
+            ? "absolute inset-0 flex w-full flex-col overflow-hidden border-l border-border bg-background shadow-2xl motion-safe:animate-in motion-safe:fade-in motion-safe:duration-150"
+            : "absolute inset-y-0 right-0 flex w-full max-w-2xl flex-col overflow-hidden border-l border-border bg-background shadow-2xl motion-safe:animate-in motion-safe:slide-in-from-right motion-safe:duration-200"
+        }
+      >
         {children}
       </section>
     </dialog>

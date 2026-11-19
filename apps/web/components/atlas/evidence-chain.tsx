@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import type { AtlasEvidence, AtlasEvidenceArtifact } from "@/lib/atlas";
 import { cn } from "@/lib/utils";
+import { atlasHref } from "@/lib/world-view";
 import { useTranslations } from "next-intl";
 import Link from "next/link";
 import { minuteOfDay, truncateLabel } from "./theme";
@@ -215,5 +216,5 @@ function ChainColumn({
 }
 
 function artifactHref(runId: string, key: string): string {
-  return `/atlas?runId=${encodeURIComponent(runId)}&artifact=${encodeURIComponent(key)}`;
+  return atlasHref({ runId, artifactKey: key });
 }

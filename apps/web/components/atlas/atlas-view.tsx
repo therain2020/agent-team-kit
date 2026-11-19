@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import type { AtlasRun } from "@/lib/atlas";
 import { cn } from "@/lib/utils";
+import { atlasHref } from "@/lib/world-view";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
@@ -53,10 +54,9 @@ export function AtlasView({ data }: { data: AtlasRun }) {
       const node = data.nodes.find((entry) => entry.id === id);
       const artifactKey = node?.artifactKeys[0];
       if (artifactKey) {
-        router.replace(
-          `/atlas?runId=${encodeURIComponent(data.runId)}&artifact=${encodeURIComponent(artifactKey)}`,
-          { scroll: false },
-        );
+        router.replace(atlasHref({ runId: data.runId, artifactKey }), {
+          scroll: false,
+        });
       }
     },
     [data.nodes, data.runId, reducedMotion, router],
@@ -96,7 +96,7 @@ export function AtlasView({ data }: { data: AtlasRun }) {
           onChange={(event) => {
             const value = event.target.value;
             if (value) {
-              router.push(`/atlas?runId=${encodeURIComponent(value)}`);
+              router.push(atlasHref({ runId: value }));
             }
           }}
           className="h-8 max-w-[24rem] border border-px-line2 bg-px-ink px-2 font-mono text-[11px] text-px-text"

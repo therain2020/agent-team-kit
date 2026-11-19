@@ -21,7 +21,7 @@ export interface NavItem {
 /**
  * The six first-class console entries (82 §3, issue #160). Everything else is
  * a drill-down or a legacy route folded into one of these surfaces. Atlas
- * (`/atlas`) is a `/world` drill-down, so it stays out of this list.
+ * (`/world?tab=atlas`) is a `/world` drill-down, so it stays out of this list.
  */
 export const NAV_ITEMS: NavItem[] = [
   { href: "/office", labelKey: "office", icon: Gamepad2, shortcut: "o" },

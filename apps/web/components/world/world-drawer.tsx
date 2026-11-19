@@ -14,6 +14,7 @@ import {
   timeUntil,
 } from "@/lib/utils";
 import type { WorldDrawerData } from "@/lib/world-page";
+import { atlasHref } from "@/lib/world-view";
 import {
   Activity,
   ArrowRight,
@@ -282,7 +283,7 @@ export async function WorldDrawer({
           </Link>
         </Button>
         <Button asChild size="sm" variant="outline">
-          <Link href={`/atlas?runId=${encodeURIComponent(data.runId)}`}>
+          <Link href={atlasHref({ runId: data.runId })}>
             <Network className="size-3.5" />
             {t("drawer.atlas")}
           </Link>
