@@ -4,6 +4,7 @@ import { registerAgent } from "./commands/agent";
 import { registerApprove } from "./commands/approve";
 import { registerAutonomy } from "./commands/autonomy";
 import { registerBootstrap } from "./commands/bootstrap";
+import { registerComponents } from "./commands/components";
 import { registerDemo } from "./commands/demo";
 import { registerDev } from "./commands/dev";
 import { registerDoctor } from "./commands/doctor";
@@ -56,6 +57,7 @@ program
 
 registerInit(program);
 registerBootstrap(program);
+registerComponents(program);
 registerDoctor(program);
 registerDemo(program);
 registerPublish(program);

@@ -2,7 +2,6 @@
 import { StoreEvolutionRepository } from "@kit/evolution";
 import { NatsEventQueue } from "@kit/queue";
 import { initStore } from "@kit/store";
-import { createTemporalClient } from "@kit/workflow";
 import { EventIngestor } from "./ingestor";
 import { EventRouter, EvolutionRunVariantSelector } from "./router";
 
@@ -22,14 +21,12 @@ const queue = new NatsEventQueue({
 
 await queue.connect();
 
-const temporal = await createTemporalClient();
 const evolutionRepo = new StoreEvolutionRepository(store, {
   workspaceId,
   variantsRoot: path.join(repoRoot, "variants"),
 });
 const router = new EventRouter(
   store,
-  temporal,
   repoRoot,
   new EvolutionRunVariantSelector(evolutionRepo),
   workspaceId,
@@ -84,7 +81,6 @@ async function shutdown(): Promise<void> {
   console.log("[runtime] shutting down");
   await stop();
   await queue.close();
-  await temporal.connection.close();
   await store.close();
   process.exit(0);
 }

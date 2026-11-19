@@ -1,7 +1,12 @@
 import { sameOriginError } from "@/lib/http";
 import { jobErrorResponse } from "@/lib/job-api";
 import { getRepoRoot } from "@/lib/paths";
-import { type AgentDraftValues, type ComposeKind, composeJob } from "@kit/job";
+import {
+  type AgentDraftValues,
+  type ComposeKind,
+  composeJob,
+  parseWorkflowDraftStages,
+} from "@kit/job";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -20,6 +25,7 @@ export async function POST(request: Request) {
     agentId?: unknown;
     current?: unknown;
     templateId?: unknown;
+    currentStages?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -32,7 +38,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, or pack",
+          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, or workflow",
       },
       { status: 400 },
     );
@@ -44,6 +50,7 @@ export async function POST(request: Request) {
   }
 
   const current = parseAgentCurrent(body.current);
+  const currentStages = parseWorkflowDraftStages(body.currentStages);
   try {
     const result = await composeJob({
       kind,
@@ -55,6 +62,7 @@ export async function POST(request: Request) {
         ? { templateId: body.templateId }
         : {}),
       ...(current ? { current } : {}),
+      ...(currentStages ? { currentStages } : {}),
     });
     return NextResponse.json(result);
   } catch (error) {
@@ -69,7 +77,8 @@ function parseKind(value: unknown): ComposeKind | undefined {
     value === "autopilot" ||
     value === "evolutionCycle" ||
     value === "agent" ||
-    value === "pack"
+    value === "pack" ||
+    value === "workflow"
     ? value
     : undefined;
 }
