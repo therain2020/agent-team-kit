@@ -17,4 +17,5 @@ export * from "./pack";
 export * from "./policy";
 export * from "./rubric";
 export * from "./run";
+export * from "./run-mode";
 export * from "./workflow";
