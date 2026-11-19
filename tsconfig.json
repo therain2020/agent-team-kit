@@ -16,6 +16,7 @@
       "@kit/workshop": ["./packages/workshop/src/index.ts"],
       "@kit/market": ["./packages/market/src/index.ts"],
       "@kit/store": ["./packages/store/src/index.ts"],
+      "@kit/source": ["./packages/source/src/index.ts"],
       "@kit/queue": ["./packages/queue/src/index.ts"],
       "@kit/workflow": ["./packages/workflow/src/index.ts"],
       "@kit/model": ["./packages/model/src/index.ts"],

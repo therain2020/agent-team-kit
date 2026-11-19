@@ -8,6 +8,7 @@ export * from "./config";
 export * from "./cost-service";
 export * from "./db";
 export * from "./event-spool";
+export * from "./information-service";
 export * from "./lkg-service";
 export * from "./locks";
 export * from "./migrate";

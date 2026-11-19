@@ -738,6 +738,63 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS information_raw_captures (
+  capture_key TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL,
+  content_ref TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  content TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_information_captures_source
+  ON information_raw_captures(workspace_id, source_id, fetched_at DESC);
+
+CREATE TABLE IF NOT EXISTS information_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL DEFAULT 'passive',
+  capture_key TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  item_ref TEXT NOT NULL,
+  url TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  occurred_at TIMESTAMPTZ NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL,
+  sensitivity TEXT NOT NULL DEFAULT 'internal',
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (workspace_id, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS idx_information_events_source
+  ON information_events(workspace_id, source_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_information_events_created
+  ON information_events(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS source_health (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  runs INTEGER NOT NULL DEFAULT 0,
+  successes INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  items_collected INTEGER NOT NULL DEFAULT 0,
+  events_created INTEGER NOT NULL DEFAULT 0,
+  latency_ms_total BIGINT NOT NULL DEFAULT 0,
+  last_latency_ms INTEGER,
+  total_cost_cny_micro BIGINT NOT NULL DEFAULT 0,
+  last_success_at TIMESTAMPTZ,
+  last_failure_at TIMESTAMPTZ,
+  last_error TEXT,
+  degraded BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, source_id)
+);
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -1469,4 +1526,61 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN assignee TEXT;
 ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
+
+CREATE TABLE IF NOT EXISTS information_raw_captures (
+  capture_key TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  content_ref TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  content TEXT NOT NULL,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_information_captures_source
+  ON information_raw_captures(workspace_id, source_id, fetched_at DESC);
+
+CREATE TABLE IF NOT EXISTS information_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  source_kind TEXT NOT NULL DEFAULT 'passive',
+  capture_key TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  item_ref TEXT NOT NULL,
+  url TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  occurred_at TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  sensitivity TEXT NOT NULL DEFAULT 'internal',
+  payload TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  UNIQUE (workspace_id, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS idx_information_events_source
+  ON information_events(workspace_id, source_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_information_events_created
+  ON information_events(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS source_health (
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  source_id TEXT NOT NULL,
+  runs INTEGER NOT NULL DEFAULT 0,
+  successes INTEGER NOT NULL DEFAULT 0,
+  failures INTEGER NOT NULL DEFAULT 0,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  items_collected INTEGER NOT NULL DEFAULT 0,
+  events_created INTEGER NOT NULL DEFAULT 0,
+  latency_ms_total INTEGER NOT NULL DEFAULT 0,
+  last_latency_ms INTEGER,
+  total_cost_cny_micro INTEGER NOT NULL DEFAULT 0,
+  last_success_at TEXT,
+  last_failure_at TEXT,
+  last_error TEXT,
+  degraded INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, source_id)
+);
 `;

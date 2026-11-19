@@ -6,6 +6,7 @@ import { CircuitBreakerService } from "./circuit-breaker-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
 import { createDb } from "./db";
 import { SqlEventSpoolStore } from "./event-spool";
+import { InformationService } from "./information-service";
 import { LastKnownGoodService } from "./lkg-service";
 import { ensureSchema } from "./migrate";
 import {
@@ -98,6 +99,8 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     lkgService: new LastKnownGoodService(repositories.lkg, {
       sql: handle.sql,
     }),
+    /** Information plane store (98 I-1): raw captures, events and health. */
+    information: new InformationService({ sql: handle.sql }),
     approvals: new ApprovalService({
       sql: handle.sql,
       driver: handle.driver,

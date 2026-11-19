@@ -67,6 +67,7 @@
         "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/queue": "workspace:*",
+        "@kit/source": "workspace:*",
         "@kit/store": "workspace:*",
         "@kit/telemetry": "workspace:*",
         "@kit/tools": "workspace:*",
@@ -295,6 +296,7 @@
       "dependencies": {
         "@kit/core": "workspace:*",
         "@kit/market": "workspace:*",
+        "@kit/store": "workspace:*",
         "yaml": "^2.6.1",
         "zod": "^3.24.1",
       },
