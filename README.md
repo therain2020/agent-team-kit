@@ -174,7 +174,12 @@ feedback → risk classifier → low-risk apply with commit + backup → report.
 - `--stub` uses a deterministic three-task plan (security + UX + docs) without
   a planner model call; the coder still runs for real.
 - `--apply none|low|low-medium` controls auto-apply. High-risk changes are
-  never auto-applied.
+  never auto-applied. Agent instructions and skills (`packs/*/agents/**`,
+  `packs/*/skills/**`, `skills/**`) are proposal-only in every mode: iterate
+  records a blocked change proposal with the diff and verification evidence for
+  the evolution plane to take over. Orchestration files
+  (`packs/*/workflows/**`, `team.yaml`, `autopilot.yaml`, `policies.yaml`,
+  `iteration.yaml`) are at least high risk and always need approval.
 - Coder overrides: `--coder dsh|codex|opencode|command`. Codex/OpenCode commands
   can be configured with `KIT_CODER_CODEX_CMD` / `KIT_CODER_OPENCODE_CMD`.
 - Evidence is stored as artifacts (`plan`, `coder.result`, `coder.transcript`,
@@ -273,10 +278,15 @@ remove the ability to recover. Product changes are classified:
 |---|---|---|
 | low | docs, tests, i18n copy, non-core styles | auto-apply after checks |
 | medium | non-core feature code, pages, scripts | auto in `low-medium` after checks + production build (canary gate) |
-| high | runtime/orchestrator, auth, approval/apply, dependencies, deploy, secrets | human approval |
+| high | runtime/orchestrator, auth, approval/apply, dependencies, deploy, secrets, `packs/*/workflows/**`, `team.yaml` | human approval |
 
 Forbidden changes (secrets, `.git`, deleting audit/tests, escaping the sandbox)
-are blocked outright.
+are blocked outright. Agent instructions and skills (`packs/*/agents/**`,
+`packs/*/skills/**`, `skills/**`) are never auto-applied in any mode: they stay
+blocked change proposals (diff + verification evidence + reason) so the
+evolution plane can evaluate and promote them. The rules live in one module
+(`packages/core/src/iteration-policy.ts`) shared by classification, apply, and
+autopilot.
 
 ### Storage backends
 

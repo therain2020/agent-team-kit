@@ -24,12 +24,13 @@ import {
   type IterationConfig,
   type IterationTask,
   type TaskPlan,
+  classifyIterationRisk,
   cnyToMicro,
+  evaluateIterationApply,
   newId,
   taskPlanSchema,
 } from "@kit/core";
 import {
-  allowedByApplyMode,
   appendCoderEvent,
   appendEvent,
   applyDiffToRepo,
@@ -1022,7 +1023,12 @@ export async function classifyIterationTask(
     kind: "risk.classified",
     status: classified.forbidden ? "blocked" : "completed",
     summary: `risk ${classified.risk}`,
-    payload: { reasons: classified.reasons, forbidden: classified.forbidden },
+    payload: {
+      reasons: classified.reasons,
+      forbidden: classified.forbidden,
+      requiresApproval: classified.requiresApproval,
+      protectedPaths: classified.protectedPaths,
+    },
   });
   await safeActivity(store, {
     workspaceId: input.workspaceId,
@@ -1037,6 +1043,8 @@ export async function classifyIterationTask(
       risk: classified.risk,
       reasons: classified.reasons,
       forbidden: classified.forbidden,
+      requiresApproval: classified.requiresApproval,
+      protectedPaths: classified.protectedPaths,
       artifactId,
     },
   });
@@ -1045,6 +1053,8 @@ export async function classifyIterationTask(
     risk: classified.risk,
     reasons: [...classified.reasons, `risk artifact: ${artifactId}`],
     forbidden: classified.forbidden,
+    requiresApproval: classified.requiresApproval,
+    protectedPaths: classified.protectedPaths,
   };
 }
 
@@ -1148,6 +1158,7 @@ export async function applyIterationTask(
         applyMode: input.applyMode,
         commit: extra.commit ?? null,
         artifactId,
+        ...extra.details,
       },
     });
     await safeActivity(store, {
@@ -1165,6 +1176,7 @@ export async function applyIterationTask(
         ticketId,
         commit: extra.commit ?? null,
         artifactId,
+        ...extra.details,
       },
     });
     return {
@@ -1183,8 +1195,46 @@ export async function applyIterationTask(
     if (input.runMode !== "LIVE") {
       return await publishApply("skipped", "dry run: apply disabled");
     }
-    if (input.forbidden) {
-      return await publishApply("blocked", "forbidden path detected");
+    // Re-evaluate the substrate policy here, not only in classification: the
+    // apply entry must enforce the boundary even when a caller (CLI, autopilot
+    // preset, direct activity invocation) hands us a pre-classified task.
+    const applyPolicy = evaluateIterationApply({
+      runMode: input.runMode,
+      applyMode: input.applyMode,
+      risk: input.risk,
+      changedFiles: input.changedFiles,
+    });
+    if (input.forbidden || applyPolicy.action === "block") {
+      const reason =
+        applyPolicy.action === "block"
+          ? applyPolicy.reason
+          : "forbidden path detected";
+      return await publishApply("blocked", reason, {
+        ...(applyPolicy.substrate.protectedPaths.length > 0
+          ? {
+              details: {
+                changeProposal: {
+                  kind: "change_proposal",
+                  handoff: "evolve",
+                  status: "blocked",
+                  iterationId: input.iterationId,
+                  taskId: input.task.id,
+                  domain: input.task.domain,
+                  ticketId,
+                  risk: applyPolicy.effectiveRisk,
+                  applyMode: input.applyMode,
+                  changedFiles: input.changedFiles,
+                  diffArtifactId: input.diffArtifactId,
+                  verificationArtifactId: input.verificationArtifactId ?? null,
+                  verificationPass: input.verificationPass,
+                  blockedReason: reason,
+                  protection: applyPolicy.substrate.protection,
+                  protectedPaths: applyPolicy.substrate.protectedPaths,
+                },
+              },
+            }
+          : {}),
+      });
     }
     if (!input.verificationPass) {
       return await publishApply("blocked", "verification did not pass");
@@ -1192,11 +1242,8 @@ export async function applyIterationTask(
     if (!input.diffArtifactId) {
       return await publishApply("blocked", "missing diff artifact");
     }
-    if (!allowedByApplyMode(input.risk, input.applyMode)) {
-      return await publishApply(
-        "skipped",
-        `risk ${input.risk} is not auto-applied by mode ${input.applyMode}`,
-      );
+    if (applyPolicy.action === "skip") {
+      return await publishApply("skipped", applyPolicy.reason);
     }
 
     await updateRun(store, input.iterationId, { phase: "applying" });
@@ -1679,60 +1726,10 @@ export function classifyRisk(
   risk: "low" | "medium" | "high";
   reasons: string[];
   forbidden: boolean;
+  requiresApproval: boolean;
+  protectedPaths: string[];
 } {
-  let computed: "low" | "medium" | "high" = "low";
-  const reasons: string[] = [];
-  let forbidden = false;
-
-  for (const file of files) {
-    const normalized = file.replace(/\\/g, "/");
-    if (
-      normalized.startsWith("/") ||
-      normalized.includes("..") ||
-      /^(\.git|node_modules|\.env|\.tmp|variants|\.backup)(\/|$)/.test(
-        normalized,
-      )
-    ) {
-      forbidden = true;
-      reasons.push(`forbidden path: ${normalized}`);
-      continue;
-    }
-    if (
-      /^(apps\/runtime\/|packages\/(core|workflow|store|queue|model|manager|evolution|telemetry|testing|source|autopilot)\/|deploy\/|\.github\/|bun\.lock$|package\.json$|packs\/[^/]+\/(team|autopilot|policies|iteration)\.yaml)/.test(
-        normalized,
-      )
-    ) {
-      computed = maxRisk(computed, "high");
-      reasons.push(`core path: ${normalized}`);
-      continue;
-    }
-    if (
-      /^(apps\/cli\/|apps\/gateway\/|packages\/(pack|tools|coder)\/|apps\/web\/app\/api\/|apps\/web\/lib\/)/.test(
-        normalized,
-      )
-    ) {
-      computed = maxRisk(computed, "medium");
-      reasons.push(`server code: ${normalized}`);
-      continue;
-    }
-    if (
-      /^(docs\/|.*README\.md$|.*CHANGELOG\.md$|apps\/web\/messages\/|.*\.test\.ts$|.*\/test\/)/.test(
-        normalized,
-      )
-    ) {
-      reasons.push(`low-risk path: ${normalized}`);
-      continue;
-    }
-    computed = maxRisk(computed, "medium");
-    reasons.push(`default medium: ${normalized}`);
-  }
-
-  let risk = maxRisk(plannedRisk, computed);
-  if (riskRank(risk) > riskRank(ceiling)) {
-    reasons.push(`exceeds domain risk ceiling ${ceiling}`);
-    risk = "high";
-  }
-  return { risk, reasons, forbidden };
+  return classifyIterationRisk(files, plannedRisk, ceiling);
 }
 
 export async function buildRepoContext(repoRoot: string): Promise<string> {
@@ -1991,15 +1988,4 @@ function resolveRepoRoot(override?: string): string {
 
 function stripFrontmatter(text: string): string {
   return text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim();
-}
-
-function riskRank(risk: "low" | "medium" | "high"): number {
-  return risk === "low" ? 0 : risk === "medium" ? 1 : 2;
-}
-
-function maxRisk(
-  a: "low" | "medium" | "high",
-  b: "low" | "medium" | "high",
-): "low" | "medium" | "high" {
-  return riskRank(a) >= riskRank(b) ? a : b;
 }
