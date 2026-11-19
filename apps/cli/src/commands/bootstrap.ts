@@ -11,7 +11,9 @@ import {
   saveApiKey,
   writeBootstrapProfile,
 } from "@kit/bootstrap";
+import { CliError, type CliErrorCode, exitCodeForCode } from "@kit/core";
 import type { Command } from "commander";
+import { emitError, printJson } from "../output";
 import { printPreflight } from "../preflight-output";
 
 interface BootstrapOptions {
@@ -23,6 +25,7 @@ interface BootstrapOptions {
   status?: boolean;
   probe?: boolean;
   installCoders?: boolean;
+  idempotencyKey?: string;
   json?: boolean;
 }
 
@@ -42,6 +45,10 @@ export function registerBootstrap(program: Command): void {
       "install missing coder CLIs (dsh, codex, opencode, pi) with npm",
       false,
     )
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
     .option("--json", "machine-readable output")
     .action(async (options: BootstrapOptions) => {
       const profile = readBootstrapProfileSync();
@@ -54,9 +61,16 @@ export function registerBootstrap(program: Command): void {
           mode: resolveRuntimeMode(process.env),
           profile: profile ?? null,
         };
+        if (options.json) {
+          printJson(state);
+          if (!profile) {
+            process.exitCode = exitCodeForCode("not_found");
+          }
+          return;
+        }
         console.log(JSON.stringify(state, null, 2));
         if (!profile) {
-          process.exitCode = 1;
+          process.exitCode = exitCodeForCode("not_found");
         }
         return;
       }
@@ -68,17 +82,16 @@ export function registerBootstrap(program: Command): void {
       if (!key) {
         const report = await collectPreflight({ probe: false });
         if (options.json) {
-          console.log(
-            JSON.stringify(
-              {
-                ok: false,
+          emitError(
+            true,
+            new CliError("usage", "No model API key found", {
+              hint: "kit bootstrap --key <key>, open /welcome, or export DEEPSEEK_API_KEY",
+              details: {
                 configured: false,
                 preflight: report,
                 ...(installs.length > 0 ? { coders: installs } : {}),
               },
-              null,
-              2,
-            ),
+            }),
           );
         } else {
           printPreflight(report);
@@ -88,8 +101,8 @@ export function registerBootstrap(program: Command): void {
             "  2. or open the web console /welcome and paste the key",
           );
           console.error("  3. or export DEEPSEEK_API_KEY");
+          process.exitCode = exitCodeForCode("usage");
         }
-        process.exitCode = 1;
         return;
       }
 
@@ -103,17 +116,21 @@ export function registerBootstrap(program: Command): void {
         probeResult = await probeModel({ apiKey: key, baseUrl, model: flash });
         if (!probeResult.ok) {
           const report = await collectPreflight({ probeResult });
+          const code = probeErrorCode(probeResult.error?.kind);
           if (options.json) {
-            console.log(
-              JSON.stringify(
+            emitError(
+              true,
+              new CliError(
+                code,
+                probeResult.error?.message ?? "model probe failed",
                 {
-                  ok: false,
-                  probe: probeResult,
-                  preflight: report,
-                  ...(installs.length > 0 ? { coders: installs } : {}),
+                  hint: "fix the model check and run kit bootstrap again; the key was not saved",
+                  details: {
+                    probe: probeResult,
+                    preflight: report,
+                    ...(installs.length > 0 ? { coders: installs } : {}),
+                  },
                 },
-                null,
-                2,
               ),
             );
           } else {
@@ -121,8 +138,8 @@ export function registerBootstrap(program: Command): void {
             console.error(
               "\n✖ key not saved — fix the model check above and run kit bootstrap again",
             );
+            process.exitCode = exitCodeForCode(code);
           }
-          process.exitCode = 1;
           return;
         }
 
@@ -151,22 +168,18 @@ export function registerBootstrap(program: Command): void {
       const report = await collectPreflight({ probeResult });
 
       if (options.json) {
-        console.log(
-          JSON.stringify(
-            {
-              ok: true,
-              profilePath,
-              secrets: { path: saved.path, backend: saved.backend },
-              models: { flash, pro },
-              baseUrl,
-              mode,
-              preflight: report,
-              ...(installs.length > 0 ? { coders: installs } : {}),
-            },
-            null,
-            2,
-          ),
-        );
+        printJson({
+          profilePath,
+          secrets: { path: saved.path, backend: saved.backend },
+          models: { flash, pro },
+          baseUrl,
+          mode,
+          preflight: report,
+          ...(installs.length > 0 ? { coders: installs } : {}),
+          ...(options.idempotencyKey
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+        });
         return;
       }
 
@@ -178,6 +191,21 @@ export function registerBootstrap(program: Command): void {
       console.log("  kit up          # start the supervisor");
       console.log("  kit init --list # create your first team");
     });
+}
+
+function probeErrorCode(kind: string | undefined): CliErrorCode {
+  switch (kind) {
+    case "auth":
+      return "permission";
+    case "quota":
+      return "budget";
+    case "network":
+      return "dependency_unavailable";
+    case "bad_request":
+      return "usage";
+    default:
+      return "dependency_unavailable";
+  }
 }
 
 function installMissingCoders(json: boolean): CoderInstallResult[] {

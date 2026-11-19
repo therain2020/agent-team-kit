@@ -1,6 +1,7 @@
 export * from "./artifact";
 export * from "./autopilot";
 export * from "./budget";
+export * from "./cli-contract";
 export * from "./degradation";
 export * from "./event";
 export * from "./fs-lock";

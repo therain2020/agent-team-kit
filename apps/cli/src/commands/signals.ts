@@ -7,6 +7,7 @@ import {
   summarizeSignals,
 } from "@kit/evolution";
 import type { Command } from "commander";
+import { emit, wantsJson } from "../output";
 
 export function registerSignals(program: Command): void {
   const signals = program
@@ -17,48 +18,75 @@ export function registerSignals(program: Command): void {
     .command("list")
     .description("List recent iteration signals")
     .option("--limit <n>", "number of signals", "20")
-    .action(async (options: { limit: string }) => {
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { limit: string; json?: boolean }) => {
+      const json = wantsJson(options);
       const all = await readSignals();
       const limit = Math.max(1, Number(options.limit) || 20);
-      console.log(JSON.stringify(all.slice(-limit), null, 2));
+      const data = all.slice(-limit);
+      emit(json, data, () => {
+        console.log(JSON.stringify(data, null, 2));
+      });
     });
 
   signals
     .command("summarize")
     .description("Aggregate pass/apply rates by domain")
-    .action(async () => {
-      console.log(
-        JSON.stringify(summarizeSignals(await readSignals()), null, 2),
-      );
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { json?: boolean }) => {
+      const json = wantsJson(options);
+      const summary = summarizeSignals(await readSignals());
+      emit(json, summary, () => {
+        console.log(JSON.stringify(summary, null, 2));
+      });
     });
 
   signals
     .command("propose")
     .description("Write improvement proposals for low-pass domains")
     .option("--dry-run", "print proposals without writing files", false)
-    .action(async (options: { dryRun: boolean }) => {
-      const proposals = proposeImprovements(
-        summarizeSignals(await readSignals()),
-      );
-      if (proposals.length === 0) {
-        console.log(
-          "No proposals: no domain is below the pass-rate threshold.",
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        dryRun: boolean;
+        idempotencyKey?: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        const echo = options.idempotencyKey
+          ? { idempotencyKey: options.idempotencyKey }
+          : {};
+        const proposals = proposeImprovements(
+          summarizeSignals(await readSignals()),
         );
-        return;
-      }
-      const files: string[] = [];
-      if (!options.dryRun) {
-        const dir = proposalsDir();
-        await mkdir(dir, { recursive: true });
-        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        for (const proposal of proposals) {
-          const file = path.join(dir, `${stamp}-${proposal.domain}.md`);
-          await writeFile(file, renderProposal(proposal), "utf8");
-          files.push(file);
+        if (proposals.length === 0) {
+          emit(json, { proposals: [], files: [], ...echo }, () => {
+            console.log(
+              "No proposals: no domain is below the pass-rate threshold.",
+            );
+          });
+          return;
         }
-      }
-      console.log(JSON.stringify({ proposals, files }, null, 2));
-    });
+        const files: string[] = [];
+        if (!options.dryRun) {
+          const dir = proposalsDir();
+          await mkdir(dir, { recursive: true });
+          const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+          for (const proposal of proposals) {
+            const file = path.join(dir, `${stamp}-${proposal.domain}.md`);
+            await writeFile(file, renderProposal(proposal), "utf8");
+            files.push(file);
+          }
+        }
+        emit(json, { proposals, files, ...echo }, () => {
+          console.log(JSON.stringify({ proposals, files }, null, 2));
+        });
+      },
+    );
 }
 
 function signalsFile(): string {

@@ -1,6 +1,8 @@
 import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { CliError } from "@kit/core";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 
 export function registerEvent(program: Command): void {
   const event = program
@@ -23,6 +25,11 @@ export function registerEvent(program: Command): void {
       "environment variable holding the HMAC secret",
       "KIT_EVENT_SECRET",
     )
+    .option(
+      "--idempotency-key <key>",
+      "event idempotency key (default: generated from type and timestamp)",
+    )
+    .option("--json", "machine-readable output", false)
     .action(
       async (options: {
         type: string;
@@ -30,11 +37,22 @@ export function registerEvent(program: Command): void {
         payloadFile?: string;
         url: string;
         secretEnv: string;
+        idempotencyKey?: string;
+        json?: boolean;
       }) => {
+        const json = wantsJson(options);
         const secret = process.env[options.secretEnv];
         if (!secret) {
-          console.error(`✖ ${options.secretEnv} is not set`);
-          process.exitCode = 1;
+          emitError(
+            json,
+            new CliError(
+              "dependency_unavailable",
+              `${options.secretEnv} is not set`,
+              {
+                hint: `export ${options.secretEnv}=<hmac secret>`,
+              },
+            ),
+          );
           return;
         }
 
@@ -46,18 +64,23 @@ export function registerEvent(program: Command): void {
           const clean = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
           payload = JSON.parse(clean);
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          console.error(`✖ invalid payload: ${message}`);
-          process.exitCode = 1;
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              `invalid payload: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
           return;
         }
 
+        const idempotencyKey =
+          options.idempotencyKey ?? `cli:${options.type}:${Date.now()}`;
         const body = JSON.stringify({
           type: options.type,
           payload,
           occurredAt: new Date().toISOString(),
-          idempotencyKey: `cli:${options.type}:${Date.now()}`,
+          idempotencyKey,
         });
         const signature = `sha256=${createHmac("sha256", secret)
           .update(body)
@@ -74,16 +97,63 @@ export function registerEvent(program: Command): void {
             body,
           });
           const text = await response.text();
-          console.log(`${response.status} ${text}`);
+          const data = {
+            url: options.url,
+            type: options.type,
+            status: response.status,
+            ok: response.ok,
+            idempotencyKey,
+            body: text,
+          };
           if (!response.ok) {
-            process.exitCode = 1;
+            emitError(
+              json,
+              new CliError(
+                statusToCode(response.status),
+                `gateway responded ${response.status}`,
+                { details: { response: text, status: response.status } },
+              ),
+              (classified) => {
+                console.log(`${response.status} ${text}`);
+                console.error(`✖ ${classified.message}`);
+              },
+            );
+            return;
           }
+          emit(json, data, () => {
+            console.log(`${response.status} ${text}`);
+          });
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          console.error(`✖ gateway unreachable: ${message}`);
-          process.exitCode = 1;
+          emitError(
+            json,
+            new CliError(
+              "dependency_unavailable",
+              `gateway unreachable: ${error instanceof Error ? error.message : String(error)}`,
+              {
+                hint: `check ${options.url} or start the gateway with \`kit up\``,
+              },
+            ),
+          );
         }
       },
     );
+}
+
+function statusToCode(status: number) {
+  if (status === 401 || status === 403) {
+    return "permission" as const;
+  }
+  if (status === 404) {
+    return "not_found" as const;
+  }
+  if (status === 409) {
+    return "conflict" as const;
+  }
+  if (status === 429) {
+    return "budget" as const;
+  }
+  if (status >= 400 && status < 500) {
+    return "usage" as const;
+  }
+  return "dependency_unavailable" as const;
 }

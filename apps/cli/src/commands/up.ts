@@ -10,7 +10,9 @@ import {
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CliError } from "@kit/core";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 import { parseWebMode, resolveWebMode } from "../web-mode";
 
 interface SupervisorState {
@@ -43,12 +45,14 @@ export function registerUp(program: Command): void {
       "keep the supervisor attached to this terminal",
       false,
     )
+    .option("--json", "machine-readable output", false)
     .action(
       async (options: {
         web: boolean;
         infra: boolean;
         foreground: boolean;
         webMode?: string;
+        json?: boolean;
       }) => {
         await start(options);
       },
@@ -56,15 +60,17 @@ export function registerUp(program: Command): void {
 
   up.command("status")
     .description("Show supervisor and service status")
-    .action(async () => {
-      await status();
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { json?: boolean }) => {
+      await status(options.json === true);
     });
 
   program
     .command("down")
     .description("Stop the supervisor and (optionally) docker compose")
     .option("--keep-infra", "leave docker compose services running", false)
-    .action((options: { keepInfra: boolean }) => {
+    .option("--json", "machine-readable output", false)
+    .action((options: { keepInfra: boolean; json?: boolean }) => {
       stop(options);
     });
 }
@@ -74,10 +80,14 @@ async function start(options: {
   infra: boolean;
   foreground: boolean;
   webMode?: string;
+  json?: boolean;
 }): Promise<void> {
+  const json = wantsJson(options);
   if (options.webMode && parseWebMode(options.webMode) === null) {
-    console.error("✖ --web-mode must be 'production' or 'dev'");
-    process.exitCode = 1;
+    emitError(
+      json,
+      new CliError("usage", "--web-mode must be 'production' or 'dev'"),
+    );
     return;
   }
   const webMode = resolveWebMode(options.webMode ?? process.env.KIT_WEB_MODE);
@@ -88,8 +98,18 @@ async function start(options: {
 
   const existing = readState(statePath);
   if (existing && isAlive(existing.supervisorPid)) {
-    console.log(
-      `Supervisor already running (pid ${existing.supervisorPid}). Use "kit up status".`,
+    emit(
+      json,
+      {
+        running: true,
+        alreadyRunning: true,
+        supervisorPid: existing.supervisorPid,
+      },
+      () => {
+        console.log(
+          `Supervisor already running (pid ${existing.supervisorPid}). Use "kit up status".`,
+        );
+      },
     );
     return;
   }
@@ -99,11 +119,15 @@ async function start(options: {
     process.env.KIT_DB_DRIVER === "sqlite";
 
   if (options.infra && localMode) {
-    console.log("[up] local mode: skipping docker compose (embedded SQLite)");
+    if (!json) {
+      console.log("[up] local mode: skipping docker compose (embedded SQLite)");
+    }
   }
 
   if (options.infra && !localMode) {
-    console.log("[up] starting docker compose infra...");
+    if (!json) {
+      console.log("[up] starting docker compose infra...");
+    }
     const compose = spawnSync(
       "docker",
       [
@@ -113,22 +137,37 @@ async function start(options: {
         "up",
         "-d",
       ],
-      { cwd: repoRoot, stdio: "inherit", windowsHide: true },
+      { cwd: repoRoot, stdio: json ? "ignore" : "inherit", windowsHide: true },
     );
     if (compose.status !== 0) {
-      console.error("✖ docker compose failed");
-      process.exitCode = 1;
+      emitError(
+        json,
+        new CliError("dependency_unavailable", "docker compose failed", {
+          hint: "check `docker compose -f deploy/docker-compose.yml up -d` output",
+        }),
+      );
       return;
     }
-    const ready = await waitForPorts([
-      { host: "127.0.0.1", port: 5432, name: "postgres" },
-      { host: "127.0.0.1", port: 9000, name: "minio" },
-      { host: "127.0.0.1", port: 4222, name: "nats" },
-      { host: "127.0.0.1", port: 7233, name: "temporal" },
-    ]);
+    const ready = await waitForPorts(
+      [
+        { host: "127.0.0.1", port: 5432, name: "postgres" },
+        { host: "127.0.0.1", port: 9000, name: "minio" },
+        { host: "127.0.0.1", port: 4222, name: "nats" },
+        { host: "127.0.0.1", port: 7233, name: "temporal" },
+      ],
+      !json,
+    );
     if (!ready) {
-      console.error("✖ infra did not become ready in time");
-      process.exitCode = 1;
+      emitError(
+        json,
+        new CliError(
+          "dependency_unavailable",
+          "infra did not become ready in time",
+          {
+            hint: "check `docker compose ps` and .tmp/supervisor logs",
+          },
+        ),
+      );
       return;
     }
   }
@@ -164,42 +203,45 @@ async function start(options: {
 
   const started = await waitForState(statePath, 10_000);
   if (!started) {
-    console.error(
-      "✖ supervisor did not start; see .tmp/supervisor/supervisor.log",
+    emitError(
+      json,
+      new CliError(
+        "dependency_unavailable",
+        "supervisor did not start; see .tmp/supervisor/supervisor.log",
+      ),
     );
-    process.exitCode = 1;
     return;
   }
 
-  console.log(
-    JSON.stringify(
-      {
-        supervisorPid: started.supervisorPid,
-        mode: localMode ? "local" : "scale",
-        web: options.web,
-        webMode: options.web ? webMode : undefined,
-        ...(localMode
-          ? { engine: "local runner (SQLite queue)" }
-          : {
-              gateway: "http://127.0.0.1:8787",
-              temporalUi: "http://localhost:8080",
-              jaeger: "http://localhost:16686",
-            }),
-        logs: ".tmp/supervisor/*.log",
-        next: "kit up status | kit pack run <dir> --dry-run --stub | kit down",
-      },
-      null,
-      2,
-    ),
-  );
+  const data = {
+    supervisorPid: started.supervisorPid,
+    mode: localMode ? "local" : "scale",
+    web: options.web,
+    webMode: options.web ? webMode : undefined,
+    ...(localMode
+      ? { engine: "local runner (SQLite queue)" }
+      : {
+          gateway: "http://127.0.0.1:8787",
+          temporalUi: "http://localhost:8080",
+          jaeger: "http://localhost:16686",
+        }),
+    logs: ".tmp/supervisor/*.log",
+    next: "kit up status | kit pack run <dir> --dry-run --stub | kit down",
+  };
+  emit(json, data, () => {
+    console.log(JSON.stringify(data, null, 2));
+  });
 }
 
-async function status(): Promise<void> {
+async function status(json: boolean): Promise<void> {
   const repoRoot = process.cwd();
   const statePath = path.join(repoRoot, ".tmp", "supervisor", "state.json");
   const state = readState(statePath);
   if (!state) {
-    console.log(JSON.stringify({ running: false }, null, 2));
+    const data = { running: false };
+    emit(json, data, () => {
+      console.log(JSON.stringify(data, null, 2));
+    });
     return;
   }
   const supervisorAlive = isAlive(state.supervisorPid);
@@ -212,34 +254,36 @@ async function status(): Promise<void> {
     ? await fetchHealth("http://localhost:3000/api/health")
     : undefined;
   const webMode = state.web ? (state.webMode ?? "dev") : null;
-  console.log(
-    JSON.stringify(
-      {
-        running: supervisorAlive,
-        supervisorPid: state.supervisorPid,
-        startedAt: state.startedAt,
-        updatedAt: state.updatedAt,
-        gateway,
-        web,
-        webMode,
-        children,
-      },
-      null,
-      2,
-    ),
-  );
+  const data = {
+    running: supervisorAlive,
+    supervisorPid: state.supervisorPid,
+    startedAt: state.startedAt,
+    updatedAt: state.updatedAt,
+    gateway,
+    web,
+    webMode,
+    children,
+  };
+  emit(json, data, () => {
+    console.log(JSON.stringify(data, null, 2));
+  });
 }
 
-function stop(options: { keepInfra: boolean }): void {
+function stop(options: { keepInfra: boolean; json?: boolean }): void {
+  const json = wantsJson(options);
   const repoRoot = process.cwd();
   const stateDir = path.join(repoRoot, ".tmp", "supervisor");
   const statePath = path.join(stateDir, "state.json");
   const state = readState(statePath);
+  const stoppedPid =
+    state && isAlive(state.supervisorPid) ? state.supervisorPid : undefined;
 
-  if (state && isAlive(state.supervisorPid)) {
-    console.log(`[down] stopping supervisor ${state.supervisorPid}`);
-    killPid(state.supervisorPid);
-  } else {
+  if (stoppedPid) {
+    if (!json) {
+      console.log(`[down] stopping supervisor ${stoppedPid}`);
+    }
+    killPid(stoppedPid);
+  } else if (!json) {
     console.log("[down] no running supervisor");
   }
   try {
@@ -249,7 +293,9 @@ function stop(options: { keepInfra: boolean }): void {
   }
 
   if (!options.keepInfra) {
-    console.log("[down] stopping docker compose");
+    if (!json) {
+      console.log("[down] stopping docker compose");
+    }
     spawnSync(
       "docker",
       [
@@ -258,9 +304,19 @@ function stop(options: { keepInfra: boolean }): void {
         path.join(repoRoot, "deploy", "docker-compose.yml"),
         "down",
       ],
-      { cwd: repoRoot, stdio: "inherit", windowsHide: true },
+      {
+        cwd: repoRoot,
+        stdio: json ? "ignore" : "inherit",
+        windowsHide: true,
+      },
     );
   }
+
+  emit(
+    json,
+    { stopped: Boolean(stoppedPid), supervisorPid: stoppedPid ?? null },
+    () => undefined,
+  );
 }
 
 function readState(statePath: string): SupervisorState | null {
@@ -315,6 +371,7 @@ async function waitForState(
 
 async function waitForPorts(
   ports: Array<{ host: string; port: number; name: string }>,
+  verbose = true,
 ): Promise<boolean> {
   for (const target of ports) {
     const ok = await waitForPort(target.host, target.port, 120_000);
@@ -324,7 +381,9 @@ async function waitForPorts(
       );
       return false;
     }
-    console.log(`[up] ${target.name} ready on ${target.port}`);
+    if (verbose) {
+      console.log(`[up] ${target.name} ready on ${target.port}`);
+    }
   }
   return true;
 }

@@ -1,10 +1,11 @@
-﻿import path from "node:path";
-import { eventEnvelopeSchema, newId } from "@kit/core";
+import path from "node:path";
+import { CliError, eventEnvelopeSchema, newId } from "@kit/core";
 import { runPackWorkflowLocal } from "@kit/engine";
 import { buildPackRun, loadPack, simulatePack } from "@kit/pack";
 import { initStore } from "@kit/store";
 import { createTemporalClient, taskQueue } from "@kit/workflow";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 import { exportPack } from "../pack-export";
 
 export function registerPack(program: Command): void {
@@ -13,60 +14,67 @@ export function registerPack(program: Command): void {
   pack
     .command("validate <dir>")
     .description("Validate a Team Pack")
-    .action(async (dir: string) => {
+    .option("--json", "machine-readable output", false)
+    .action(async (dir: string, options: { json?: boolean }) => {
+      const json = wantsJson(options);
       const result = await loadPack(dir);
 
       if (!result.ok) {
-        console.error(`✖ validate failed: ${path.resolve(dir)}`);
-        for (const error of result.errors) {
-          console.error(`  - ${error}`);
-        }
-        if (
-          result.errors.some((error) => error.includes("team.yaml not found"))
-        ) {
-          console.error(
-            "  use the directory that contains team.yaml (try `kit init <dir>` first)",
-          );
-        }
-        process.exitCode = 1;
+        emitError(
+          json,
+          packLoadError("validate failed", path.resolve(dir), result.errors),
+        );
         return;
       }
 
       const { pack: parsed } = result;
-      console.log(
-        `✔ ${parsed.metadata.name}@${parsed.metadata.version} (${parsed.apiVersion})`,
+      emit(
+        json,
+        {
+          dir: path.resolve(dir),
+          name: parsed.metadata.name,
+          version: parsed.metadata.version,
+          apiVersion: parsed.apiVersion,
+          agents: parsed.agents.length,
+          skills: result.skills.size,
+          workflows: result.workflows.length,
+          policies: result.policies.length,
+          warnings: result.warnings,
+        },
+        () => {
+          console.log(
+            `✔ ${parsed.metadata.name}@${parsed.metadata.version} (${parsed.apiVersion})`,
+          );
+          console.log(
+            `  agents: ${parsed.agents.length}  skills: ${result.skills.size}  workflows: ${result.workflows.length}  policies: ${result.policies.length}`,
+          );
+          for (const warning of result.warnings) {
+            console.log(`  ! ${warning}`);
+          }
+        },
       );
-      console.log(
-        `  agents: ${parsed.agents.length}  skills: ${result.skills.size}  workflows: ${result.workflows.length}  policies: ${result.policies.length}`,
-      );
-      for (const warning of result.warnings) {
-        console.log(`  ! ${warning}`);
-      }
     });
 
   pack
     .command("simulate <dir>")
     .description("Simulate a Team Pack without side effects")
-    .action(async (dir: string) => {
+    .option("--json", "machine-readable output", false)
+    .action(async (dir: string, options: { json?: boolean }) => {
+      const json = wantsJson(options);
       const result = await loadPack(dir);
 
       if (!result.ok) {
-        console.error(`✖ simulate failed: ${path.resolve(dir)}`);
-        for (const error of result.errors) {
-          console.error(`  - ${error}`);
-        }
-        if (
-          result.errors.some((error) => error.includes("team.yaml not found"))
-        ) {
-          console.error(
-            "  use the directory that contains team.yaml (try `kit init <dir>` first)",
-          );
-        }
-        process.exitCode = 1;
+        emitError(
+          json,
+          packLoadError("simulate failed", path.resolve(dir), result.errors),
+        );
         return;
       }
 
-      console.log(JSON.stringify(simulatePack(result), null, 2));
+      const report = simulatePack(result);
+      emit(json, report, () => {
+        console.log(JSON.stringify(report, null, 2));
+      });
     });
 
   pack
@@ -77,6 +85,11 @@ export function registerPack(program: Command): void {
     .option("--input-file <path>", "initial input file (e.g. evidence JSON)")
     .option("--stub", "force stub model", false)
     .option("--dry-run", "no external side effects", false)
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key; used as the event idempotency key",
+    )
+    .option("--json", "machine-readable output", false)
     .action(
       async (
         dir: string,
@@ -86,21 +99,22 @@ export function registerPack(program: Command): void {
           inputFile?: string;
           stub: boolean;
           dryRun: boolean;
+          idempotencyKey?: string;
+          json?: boolean;
         },
       ) => {
+        const json = wantsJson(options);
         if (!options.dryRun) {
-          console.error("✖ M1 only supports --dry-run");
-          process.exitCode = 1;
+          emitError(json, new CliError("usage", "M1 only supports --dry-run"));
           return;
         }
 
         const loaded = await loadPack(dir);
         if (!loaded.ok) {
-          console.error("✖ cannot run: invalid Team Pack");
-          for (const error of loaded.errors) {
-            console.error(`  - ${error}`);
-          }
-          process.exitCode = 1;
+          emitError(
+            json,
+            packLoadError("cannot run: invalid Team Pack", dir, loaded.errors),
+          );
           return;
         }
 
@@ -108,10 +122,13 @@ export function registerPack(program: Command): void {
         try {
           built = await buildPackRun(loaded, options);
         } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          console.error(`✖ cannot build run: ${message}`);
-          process.exitCode = 1;
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              `cannot build run: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
           return;
         }
 
@@ -126,7 +143,8 @@ export function registerPack(program: Command): void {
             occurredAt: now,
             receivedAt: now,
             workspaceId: "default",
-            idempotencyKey: `pack:${built.input.runId}`,
+            idempotencyKey:
+              options.idempotencyKey ?? `pack:${built.input.runId}`,
             traceId: newId("trc"),
             payloadRef: "memory://pack",
           });
@@ -134,19 +152,19 @@ export function registerPack(program: Command): void {
 
           if (store.driver === "sqlite") {
             const result = await runPackWorkflowLocal(built.input, { store });
-            console.log(
-              JSON.stringify(
-                {
-                  pack: loaded.pack.metadata.name,
-                  workflow: built.workflow.id,
-                  runId: built.input.runId,
-                  engine: "local",
-                  result,
-                },
-                null,
-                2,
-              ),
-            );
+            const data = {
+              pack: loaded.pack.metadata.name,
+              workflow: built.workflow.id,
+              runId: built.input.runId,
+              engine: "local",
+              ...(options.idempotencyKey
+                ? { idempotencyKey: options.idempotencyKey }
+                : {}),
+              result,
+            };
+            emit(json, data, () => {
+              console.log(JSON.stringify(data, null, 2));
+            });
             return;
           }
 
@@ -159,23 +177,25 @@ export function registerPack(program: Command): void {
             });
             const result = await handle.result();
 
-            console.log(
-              JSON.stringify(
-                {
-                  pack: loaded.pack.metadata.name,
-                  workflow: built.workflow.id,
-                  runId: built.input.runId,
-                  engine: "temporal",
-                  workflowId: handle.workflowId,
-                  result,
-                },
-                null,
-                2,
-              ),
-            );
+            const data = {
+              pack: loaded.pack.metadata.name,
+              workflow: built.workflow.id,
+              runId: built.input.runId,
+              engine: "temporal",
+              workflowId: handle.workflowId,
+              ...(options.idempotencyKey
+                ? { idempotencyKey: options.idempotencyKey }
+                : {}),
+              result,
+            };
+            emit(json, data, () => {
+              console.log(JSON.stringify(data, null, 2));
+            });
           } finally {
             await connection.close();
           }
+        } catch (error) {
+          emitError(json, error);
         } finally {
           await store.close();
         }
@@ -186,39 +206,64 @@ export function registerPack(program: Command): void {
     .command("export <dir>")
     .description("Export a Team Pack as a zip with a hashed manifest")
     .option("--out <file>", "output zip path")
-    .action(async (dir: string, options: { out?: string }) => {
-      const loaded = await loadPack(dir);
-      if (!loaded.ok) {
-        console.error("✖ export failed");
-        for (const error of loaded.errors) {
-          console.error(`  - ${error}`);
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        dir: string,
+        options: { out?: string; idempotencyKey?: string; json?: boolean },
+      ) => {
+        const json = wantsJson(options);
+        const loaded = await loadPack(dir);
+        if (!loaded.ok) {
+          emitError(json, packLoadError("export failed", dir, loaded.errors));
+          return;
         }
-        process.exitCode = 1;
-        return;
-      }
 
-      const out =
-        options.out ??
-        `${loaded.pack.metadata.name}-${loaded.pack.metadata.version}.zip`;
+        const out =
+          options.out ??
+          `${loaded.pack.metadata.name}-${loaded.pack.metadata.version}.zip`;
 
-      try {
-        const result = await exportPack(loaded, out);
-        console.log(
-          JSON.stringify(
-            {
-              outFile: result.outFile,
-              files: result.files,
-              name: result.manifest.name,
-              version: result.manifest.version,
-            },
-            null,
-            2,
-          ),
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`✖ export failed: ${message}`);
-        process.exitCode = 1;
-      }
-    });
+        try {
+          const result = await exportPack(loaded, out);
+          const data = {
+            outFile: result.outFile,
+            files: result.files,
+            name: result.manifest.name,
+            version: result.manifest.version,
+            ...(options.idempotencyKey
+              ? { idempotencyKey: options.idempotencyKey }
+              : {}),
+          };
+          emit(json, data, () => {
+            console.log(JSON.stringify(data, null, 2));
+          });
+        } catch (error) {
+          emitError(
+            json,
+            new CliError(
+              "internal",
+              `export failed: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
+        }
+      },
+    );
+}
+
+function packLoadError(
+  prefix: string,
+  dir: string,
+  errors: string[],
+): CliError {
+  const missing = errors.some((error) => error.includes("team.yaml not found"));
+  return new CliError(missing ? "not_found" : "usage", `${prefix}: ${dir}`, {
+    hint: missing
+      ? "use the directory that contains team.yaml (try `kit init <dir>` first)"
+      : undefined,
+    details: { errors },
+  });
 }

@@ -25,6 +25,11 @@ export function registerIterate(program: Command): void {
       "--dedupe-key <key>",
       "stable key: attach to an existing run instead of starting a duplicate",
     )
+    .option(
+      "--idempotency-key <key>",
+      "alias for --dedupe-key (repeat submissions return the first run)",
+    )
+    .option("--json", "machine-readable output", false)
     .action(
       async (options: {
         goal: string;
@@ -39,6 +44,8 @@ export function registerIterate(program: Command): void {
         stub: boolean;
         budgetCny?: string;
         dedupeKey?: string;
+        idempotencyKey?: string;
+        json?: boolean;
       }) => {
         await startIterationFromCli({
           ...options,

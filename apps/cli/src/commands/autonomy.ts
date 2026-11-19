@@ -1,3 +1,4 @@
+import { CliError } from "@kit/core";
 import {
   type AutonomyPresetConfigInput,
   DEFAULT_WORKSPACE_ID,
@@ -9,6 +10,7 @@ import {
 } from "@kit/ops";
 import { initStore } from "@kit/store";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 
 interface StatusOptions {
   workspace?: string;
@@ -24,6 +26,7 @@ interface EnableOptions {
   actor?: string;
   reason?: string;
   workspace?: string;
+  idempotencyKey?: string;
   json?: boolean;
 }
 
@@ -31,6 +34,7 @@ interface RollbackOptions {
   actor?: string;
   reason?: string;
   workspace?: string;
+  idempotencyKey?: string;
   json?: boolean;
 }
 
@@ -47,52 +51,45 @@ export function registerAutonomy(program: Command): void {
     .option("--workspace <id>", "workspace id", DEFAULT_WORKSPACE_ID)
     .option("--json", "print JSON")
     .action(async (options: StatusOptions) => {
+      const json = wantsJson(options);
       const workspaceId = options.workspace ?? DEFAULT_WORKSPACE_ID;
-      await withStore(async (store) => {
+      await withStore(json, async (store) => {
         const preset = await getActiveAutonomyPreset(store, workspaceId);
         const gate = await getOpsGate(store, new Date(), workspaceId);
-        if (options.json) {
+        const data = {
+          level: preset ? preset.level : "manual",
+          preset,
+          gate,
+          liveAllowed: process.env.KIT_UI_ALLOW_LIVE === "1" || preset !== null,
+        };
+        emit(json, data, () => {
+          if (!preset) {
+            console.log("autonomy level: manual (factory default)");
+            console.log("preset: none");
+            console.log(
+              `LIVE gate: ${
+                process.env.KIT_UI_ALLOW_LIVE === "1"
+                  ? "open (KIT_UI_ALLOW_LIVE=1)"
+                  : "closed (run `kit autonomy enable` or set KIT_UI_ALLOW_LIVE=1)"
+              }`,
+            );
+            printGate(gate);
+            return;
+          }
+          console.log(`autonomy level: ${preset.level}`);
+          console.log(`preset: ${preset.presetId} (${preset.status})`);
+          console.log(`applied: ${preset.appliedAt} by ${preset.appliedBy}`);
+          console.log(`apply mode: ${preset.config.applyMode}`);
           console.log(
-            JSON.stringify(
-              {
-                level: preset ? preset.level : "manual",
-                preset,
-                gate,
-                liveAllowed:
-                  process.env.KIT_UI_ALLOW_LIVE === "1" || preset !== null,
-              },
-              null,
-              2,
-            ),
+            `budget: ${preset.config.dailyCostCny} CNY/day, ${preset.config.dailyRuns} runs/day`,
           );
-          return;
-        }
-        if (!preset) {
-          console.log("autonomy level: manual (factory default)");
-          console.log("preset: none");
+          console.log(`max tasks: ${preset.config.maxTasks}`);
           console.log(
-            `LIVE gate: ${
-              process.env.KIT_UI_ALLOW_LIVE === "1"
-                ? "open (KIT_UI_ALLOW_LIVE=1)"
-                : "closed (run `kit autonomy enable` or set KIT_UI_ALLOW_LIVE=1)"
-            }`,
+            `night exception: ${preset.config.allowNight ? "on" : "off"}`,
           );
+          console.log("LIVE gate: open (preset active)");
           printGate(gate);
-          return;
-        }
-        console.log(`autonomy level: ${preset.level}`);
-        console.log(`preset: ${preset.presetId} (${preset.status})`);
-        console.log(`applied: ${preset.appliedAt} by ${preset.appliedBy}`);
-        console.log(`apply mode: ${preset.config.applyMode}`);
-        console.log(
-          `budget: ${preset.config.dailyCostCny} CNY/day, ${preset.config.dailyRuns} runs/day`,
-        );
-        console.log(`max tasks: ${preset.config.maxTasks}`);
-        console.log(
-          `night exception: ${preset.config.allowNight ? "on" : "off"}`,
-        );
-        console.log("LIVE gate: open (preset active)");
-        printGate(gate);
+        });
       });
     });
 
@@ -109,28 +106,47 @@ export function registerAutonomy(program: Command): void {
     .option("--actor <actor>", "operator identity", "operator:cli")
     .option("--reason <reason>", "why the preset is enabled")
     .option("--workspace <id>", "workspace id", DEFAULT_WORKSPACE_ID)
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
     .option("--json", "print JSON")
     .action(async (options: EnableOptions) => {
-      const config = parseEnableOptions(options);
+      const json = wantsJson(options);
+      let config: AutonomyPresetConfigInput;
+      try {
+        config = parseEnableOptions(options);
+      } catch (error) {
+        emitError(json, new CliError("usage", classifyMessage(error)));
+        return;
+      }
       const workspaceId = options.workspace ?? DEFAULT_WORKSPACE_ID;
-      await withStore(async (store) => {
+      await withStore(json, async (store) => {
         const preset = await enableAutonomyPreset(store, {
           config,
           actor: options.actor,
           reason: options.reason,
           workspaceId,
         });
-        if (options.json) {
-          console.log(JSON.stringify({ level: preset.level, preset }, null, 2));
-          return;
-        }
-        console.log(
-          `enabled ${preset.presetId}: ${preset.level} · apply ${preset.config.applyMode} · ${preset.config.dailyCostCny} CNY/day`,
+        emit(
+          json,
+          {
+            level: preset.level,
+            preset,
+            ...(options.idempotencyKey
+              ? { idempotencyKey: options.idempotencyKey, idempotent: false }
+              : {}),
+          },
+          () => {
+            console.log(
+              `enabled ${preset.presetId}: ${preset.level} · apply ${preset.config.applyMode} · ${preset.config.dailyCostCny} CNY/day`,
+            );
+            console.log(
+              `night exception: ${preset.config.allowNight ? "on" : "off"} · audit: ops.autonomy.enabled`,
+            );
+            console.log("rollback: kit autonomy rollback");
+          },
         );
-        console.log(
-          `night exception: ${preset.config.allowNight ? "on" : "off"} · audit: ops.autonomy.enabled`,
-        );
-        console.log("rollback: kit autonomy rollback");
       });
     });
 
@@ -142,34 +158,42 @@ export function registerAutonomy(program: Command): void {
     .option("--actor <actor>", "operator identity", "operator:cli")
     .option("--reason <reason>", "why the preset is rolled back")
     .option("--workspace <id>", "workspace id", DEFAULT_WORKSPACE_ID)
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key (no ledger yet; echoed for traceability)",
+    )
     .option("--json", "print JSON")
     .action(async (options: RollbackOptions) => {
+      const json = wantsJson(options);
       const workspaceId = options.workspace ?? DEFAULT_WORKSPACE_ID;
-      await withStore(async (store) => {
+      await withStore(json, async (store) => {
         const preset = await rollbackAutonomyPreset(store, {
           actor: options.actor,
           reason: options.reason,
           workspaceId,
         });
-        if (options.json) {
-          console.log(
-            JSON.stringify(
-              { level: "manual", preset, rolledBack: preset !== null },
-              null,
-              2,
-            ),
-          );
-          return;
-        }
-        if (!preset) {
-          console.log("autonomy level already manual: no active preset");
-          return;
-        }
-        console.log(
-          `rolled back ${preset.presetId} at ${preset.rolledBackAt} by ${preset.rolledBackBy}`,
+        emit(
+          json,
+          {
+            level: "manual",
+            preset,
+            rolledBack: preset !== null,
+            ...(options.idempotencyKey
+              ? { idempotencyKey: options.idempotencyKey }
+              : {}),
+          },
+          () => {
+            if (!preset) {
+              console.log("autonomy level already manual: no active preset");
+              return;
+            }
+            console.log(
+              `rolled back ${preset.presetId} at ${preset.rolledBackAt} by ${preset.rolledBackBy}`,
+            );
+            console.log("autonomy level: manual (factory default)");
+            console.log("audit: ops.autonomy.rolled_back");
+          },
         );
-        console.log("autonomy level: manual (factory default)");
-        console.log("audit: ops.autonomy.rolled_back");
       });
     });
 }
@@ -206,27 +230,39 @@ function printGate(gate: Awaited<ReturnType<typeof getOpsGate>>): void {
 }
 
 async function withStore(
+  json: boolean,
   run: (store: Awaited<ReturnType<typeof initStore>>) => Promise<void>,
 ): Promise<void> {
   let store: Awaited<ReturnType<typeof initStore>>;
   try {
     store = await initStore();
   } catch (error) {
-    console.error("✖ cannot reach the kit database");
-    console.error(
-      `  ${error instanceof Error ? error.message : String(error)}`,
+    emitError(
+      json,
+      new CliError("dependency_unavailable", "cannot reach the kit database", {
+        hint: "start the stack with `kit up`, or point KIT_DB_URL at a running Postgres",
+        details: {
+          detail: error instanceof Error ? error.message : String(error),
+        },
+      }),
     );
-    process.exitCode = 1;
     return;
   }
   try {
     await run(store);
   } catch (error) {
-    console.error(
-      `✖ ${error instanceof Error ? error.message : String(error)}`,
+    emitError(
+      json,
+      new CliError(
+        "internal",
+        error instanceof Error ? error.message : String(error),
+      ),
     );
-    process.exitCode = 1;
   } finally {
     await store.close();
   }
+}
+
+function classifyMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

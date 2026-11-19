@@ -1,45 +1,53 @@
-﻿import { initStore } from "@kit/store";
+import { CliError } from "@kit/core";
+import { initStore } from "@kit/store";
 import type { Command } from "commander";
+import { emit, emitError, wantsJson } from "../output";
 
 export function registerStatus(program: Command): void {
   program
     .command("status [runId]")
     .description("Show runs, stages and artifacts")
-    .action(async (runId?: string) => {
+    .option("--json", "machine-readable output", false)
+    .action(async (runId: string | undefined, options: { json: boolean }) => {
+      const json = wantsJson(options);
       let store: Awaited<ReturnType<typeof initStore>>;
       try {
         store = await initStore();
       } catch (error) {
-        console.error("✖ cannot reach the kit database");
-        console.error(
-          `  ${error instanceof Error ? error.message : String(error)}`,
+        emitError(
+          json,
+          new CliError(
+            "dependency_unavailable",
+            "cannot reach the kit database",
+            {
+              hint: "start the stack with `kit up`, or point KIT_DB_URL at a running Postgres",
+              cause: error,
+            },
+          ),
         );
-        console.error(
-          "  start the stack with `kit up`, or point KIT_DB_URL at a running Postgres",
-        );
-        process.exitCode = 1;
         return;
       }
 
       try {
         if (!runId) {
           const runs = await store.runs.listRecent(10);
-          if (runs.length === 0) {
-            console.log("no runs");
-            return;
-          }
-          for (const run of runs) {
-            console.log(
-              `${run.runId}  ${run.status}  ${run.workspaceId}  ${run.createdAt}`,
-            );
-          }
+          emit(json, { runs }, () => {
+            if (runs.length === 0) {
+              console.log("no runs");
+              return;
+            }
+            for (const run of runs) {
+              console.log(
+                `${run.runId}  ${run.status}  ${run.workspaceId}  ${run.createdAt}`,
+              );
+            }
+          });
           return;
         }
 
         const run = await store.runs.get(runId);
         if (!run) {
-          console.error(`✖ run not found: ${runId}`);
-          process.exitCode = 1;
+          emitError(json, new CliError("not_found", `run not found: ${runId}`));
           return;
         }
 
@@ -52,9 +60,12 @@ export function registerStatus(program: Command): void {
           })),
         );
 
-        console.log(
-          JSON.stringify({ run, stages, artifacts: details }, null, 2),
-        );
+        const data = { run, stages, artifacts: details };
+        emit(json, data, () => {
+          console.log(JSON.stringify(data, null, 2));
+        });
+      } catch (error) {
+        emitError(json, error);
       } finally {
         await store.close();
       }

@@ -1,6 +1,6 @@
 ﻿import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { eventEnvelopeSchema, newId } from "@kit/core";
+import { CliError, eventEnvelopeSchema, newId } from "@kit/core";
 import { loadPack } from "@kit/pack";
 import { initStore } from "@kit/store";
 import { initTelemetry, shutdownTelemetry } from "@kit/telemetry";
@@ -8,10 +8,13 @@ import { createTemporalClient, taskQueue } from "@kit/workflow";
 import { trace } from "@opentelemetry/api";
 import type { Command } from "commander";
 import { parse } from "yaml";
+import { emit, emitError, wantsJson } from "../output";
 
 interface RunOptions {
   pack: string;
   dryRun: boolean;
+  idempotencyKey?: string;
+  json?: boolean;
 }
 
 export function registerRun(program: Command): void {
@@ -20,30 +23,35 @@ export function registerRun(program: Command): void {
     .description("Run a Team Pack through the Temporal loop (M0)")
     .requiredOption("--pack <dir>", "Team Pack directory")
     .option("--dry-run", "run without external side effects", false)
+    .option(
+      "--idempotency-key <key>",
+      "caller-supplied key; used as the event idempotency key",
+    )
+    .option("--json", "machine-readable output", false)
     .action(async (options: RunOptions) => {
+      const json = wantsJson(options);
       console.warn(
         "[deprecated] `kit run` uses the M0 demo workflow; use `kit pack run <dir> --dry-run` or `kit job start --kind pack-run --pack <dir>`.",
       );
       if (!options.dryRun) {
-        console.error("✖ M0 only supports --dry-run");
-        process.exitCode = 1;
+        emitError(json, new CliError("usage", "M0 only supports --dry-run"));
         return;
       }
 
       const packResult = await loadPack(options.pack);
       if (!packResult.ok) {
-        console.error("✖ cannot run: invalid Team Pack");
-        for (const error of packResult.errors) {
-          console.error(`  - ${error}`);
-        }
-        process.exitCode = 1;
+        emitError(
+          json,
+          new CliError("usage", "cannot run: invalid Team Pack", {
+            details: { errors: packResult.errors },
+          }),
+        );
         return;
       }
 
       const workflowFile = packResult.pack.workflows[0];
       if (!workflowFile) {
-        console.error("✖ pack has no workflow");
-        process.exitCode = 1;
+        emitError(json, new CliError("not_found", "pack has no workflow"));
         return;
       }
 
@@ -70,7 +78,7 @@ export function registerRun(program: Command): void {
           occurredAt: now,
           receivedAt: now,
           workspaceId: "default",
-          idempotencyKey: `cli:${runId}`,
+          idempotencyKey: options.idempotencyKey ?? `cli:${runId}`,
           traceId: newId("trc"),
           payloadRef: "memory://cli",
         });
@@ -96,20 +104,22 @@ export function registerRun(program: Command): void {
           (result as { artifacts?: string[] }).artifacts?.length ?? 0,
         );
 
-        console.log(
-          JSON.stringify(
-            {
-              mode: "DRY_RUN",
-              pack: packResult.pack.metadata.name,
-              runId,
-              workflowId: handle.workflowId,
-              eventId: event.eventId,
-              result,
-            },
-            null,
-            2,
-          ),
-        );
+        const data = {
+          mode: "DRY_RUN",
+          pack: packResult.pack.metadata.name,
+          runId,
+          workflowId: handle.workflowId,
+          eventId: event.eventId,
+          ...(options.idempotencyKey
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+          result,
+        };
+        emit(json, data, () => {
+          console.log(JSON.stringify(data, null, 2));
+        });
+      } catch (error) {
+        emitError(json, error);
       } finally {
         span.end();
         await connection.close();
