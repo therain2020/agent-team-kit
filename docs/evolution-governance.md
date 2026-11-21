@@ -189,10 +189,14 @@ snapshot. If the audit cannot be written, the access fails closed.
 
 ### Degradation
 
-Without a hidden suite the cycle runs on the visible rubric only and marks the
-gap: `manifest.hidden = { available: false }`, no `scores.hidden`, and
-`rationale` ends with `hidden coverage unavailable`. This keeps the cycle
-usable while making missing coverage visible in the records.
+For optional triggers (`kit evolve cycle`) without a hidden suite the cycle
+runs on the visible rubric only and marks the gap: `manifest.hidden` carries
+`available: false` and the resolution `reason`, no `scores.hidden` is written,
+and `rationale` ends with `hidden coverage unavailable`. The cycle record's
+`hidden` marker repeats the reason. Required triggers (web, autopilot) do not
+take this path: they skip the cycle before any snapshot or scoring, so a
+visible-only cycle can never be mistaken for one that was judged with hidden
+coverage.
 
 ## Outcome metrics (E3, 70 §3.4)
 
