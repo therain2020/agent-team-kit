@@ -454,9 +454,13 @@ export function WorkshopMarket({
               </p>
 
               {preview.manifest.kind === "pipeline" ? (
-                <label className="block space-y-1 text-[10px] text-zinc-500">
+                <label
+                  htmlFor="workshop-host-pack"
+                  className="block space-y-1 text-[10px] text-zinc-500"
+                >
                   <span>{t("hostPackLabel")}</span>
                   <Input
+                    id="workshop-host-pack"
                     value={hostPack}
                     onChange={(event) => setHostPack(event.target.value)}
                     placeholder={t("hostPackPlaceholder")}
