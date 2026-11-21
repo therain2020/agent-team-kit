@@ -51,7 +51,8 @@
     "web:build": "bun run --cwd apps/web build",
     "web:start": "bun run --cwd apps/web start",
     "web:prod": "bun run web:build && bun run web:start",
-    "bench:web": "bun run scripts/bench-web.ts"
+    "bench:web": "bun run scripts/bench-web.ts",
+    "bench:office": "bun run scripts/bench-office.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

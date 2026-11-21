@@ -100,6 +100,8 @@
   drill, measured RTO and the G6-compatible evidence record.
 - [compose-gate.md](./compose-gate.md) — C-0 check: new input surfaces declare
   a compose kind, deterministic fallback and review step.
+- [evidence/office-perf.md](./evidence/office-perf.md) — `/office` production
+  benchmark: first-paint/live p95, thresholds, gate design and report schema.
 - `packs/self-improve/` — Cyber and UX squads for this repo.
 - `examples/sources/` — publish a declarative source to the market.
 - `examples/workshop/` — publish a declarative workshop item.
