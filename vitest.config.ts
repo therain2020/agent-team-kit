@@ -26,6 +26,13 @@ export default defineConfig({
         replacement: path.join(root, "packages/core/src/fs-lock.ts"),
       },
       {
+        find: /^@kit\/core\/security-invariants$/,
+        replacement: path.join(
+          root,
+          "packages/core/src/security-invariants.ts",
+        ),
+      },
+      {
         find: /^@kit\/activity$/,
         replacement: path.join(root, "packages/activity/src/index.ts"),
       },

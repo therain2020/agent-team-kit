@@ -10,7 +10,8 @@
     "./fs-lock": "./src/fs-lock.ts",
     "./git-apply": "./src/git-apply.ts",
     "./kill-switch": "./src/kill-switch.ts",
-    "./quota": "./src/quota.ts"
+    "./quota": "./src/quota.ts",
+    "./security-invariants": "./src/security-invariants.ts"
   },
   "dependencies": {
     "ulid": "^2.3.0",

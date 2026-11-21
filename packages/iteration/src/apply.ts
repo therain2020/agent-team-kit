@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { commandOnPath, runProcess } from "@kit/coder";
 import type { IterationApplyMode, IterationRisk } from "@kit/core";
 import {
@@ -6,6 +7,11 @@ import {
   applyPatchToRepo,
   writeApplyPatch,
 } from "@kit/core/git-apply";
+import {
+  enforcePatchSecurity,
+  enforceWriteTargetsAllowed,
+  isSecurityInvariantError,
+} from "@kit/core/security-invariants";
 import type { Store } from "./progress";
 
 export type { IterationApplyMode, IterationRisk };
@@ -151,11 +157,81 @@ export interface ApplyDiffInput {
   changedFiles: string[];
   risk: IterationRisk;
   commitMessage: string;
+  /**
+   * External kit home for the security audit sink. Defaults to `KIT_HOME`;
+   * tests inject a temp home so they never touch the operator's real one.
+   */
+  kitHome?: string;
 }
 
 export interface ApplyDiffResult extends ApplyPatchResult {
   patchFile: string;
   backupDir: string;
+}
+
+interface PatchSummary {
+  files: string[];
+  contents: Record<string, string>;
+  deletedFiles: string[];
+}
+
+/** Extracts touched paths, added lines and deletions from a git diff. */
+export function summarizePatch(diff: string): PatchSummary {
+  const files: string[] = [];
+  const contents: Record<string, string> = {};
+  const deletedFiles: string[] = [];
+  let current: string | null = null;
+  // Only the two header lines directly after `diff --git` are headers; a body
+  // line that happens to start with `--- ` or `+++ ` must stay content.
+  let phase: "file" | "minus" | "body" = "body";
+
+  for (const raw of diff.split(/\r?\n/)) {
+    if (raw.startsWith("diff --git ")) {
+      current = null;
+      phase = "file";
+      continue;
+    }
+    if (phase === "file" && raw.startsWith("--- ")) {
+      const target = diffPath(raw.slice(4));
+      current = target === "/dev/null" ? null : target;
+      phase = "minus";
+      continue;
+    }
+    if (phase === "minus" && raw.startsWith("+++ ")) {
+      const target = diffPath(raw.slice(4));
+      phase = "body";
+      if (target === "/dev/null") {
+        if (current && !deletedFiles.includes(current)) {
+          deletedFiles.push(current);
+        }
+        current = null;
+        continue;
+      }
+      current = target;
+      if (!files.includes(current)) {
+        files.push(current);
+      }
+      contents[current] ??= "";
+      continue;
+    }
+    if (raw.startsWith("+") && current) {
+      contents[current] = `${contents[current] ?? ""}${raw.slice(1)}\n`;
+    }
+  }
+
+  return { files, contents, deletedFiles };
+}
+
+function diffPath(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "/dev/null") {
+    return trimmed;
+  }
+  return normalizePath(trimmed.replace(/^[ab]\//, ""));
+}
+
+function normalizePath(file: string): string {
+  return file.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
 export async function applyDiffToRepo(
@@ -167,6 +243,47 @@ export async function applyDiffToRepo(
     safe(input.taskId),
     input.diff,
   );
+
+  // Fail-closed security gate (70 §3.3/§5): the patch decision covers escaping
+  // paths, control-plane disables and audit/approval deletions; the target
+  // pass classifies each resolved destination against the recovery surface.
+  // A violation is audited by the helpers and converts to a blocked result.
+  const patch = summarizePatch(input.diff);
+  const files = [
+    ...new Set([...input.changedFiles.map(normalizePath), ...patch.files]),
+  ].filter((file) => file.length > 0);
+  const securityOptions = {
+    actor: `iterate:${input.iterationId}/${input.taskId}`,
+    ...(input.kitHome !== undefined ? { kitHome: input.kitHome } : {}),
+  };
+  try {
+    await enforcePatchSecurity(
+      {
+        files,
+        contents: patch.contents,
+        deletedFiles: patch.deletedFiles,
+        ...(input.kitHome !== undefined ? { kitHome: input.kitHome } : {}),
+      },
+      securityOptions,
+    );
+    await enforceWriteTargetsAllowed(
+      files.map((file) => path.resolve(input.repoRoot, file)),
+      { ...securityOptions, action: "agent-patch" },
+    );
+  } catch (error) {
+    if (!isSecurityInvariantError(error)) {
+      throw error;
+    }
+    return {
+      status: "blocked",
+      reason: `security invariant blocked the patch: ${error.message}`,
+      headBefore: "",
+      baseDrifted: false,
+      patchFile,
+      backupDir,
+    };
+  }
+
   const applied = await applyPatchToRepo({
     repoRoot: input.repoRoot,
     patchFile,

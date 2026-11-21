@@ -33,6 +33,8 @@ export interface LoadedAgent {
   spec: AgentSpec;
   frontmatter: AgentFrontmatter;
   role: AgentRole;
+  /** Instruction body after the frontmatter; scanned by security invariants. */
+  instructions: string;
 }
 
 export interface LoadedPack {
@@ -164,6 +166,7 @@ export async function loadPack(dirInput: string): Promise<LoadResult> {
       spec: agent,
       frontmatter: parsedAgent.data,
       role,
+      instructions: text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").trim(),
     });
   }
 

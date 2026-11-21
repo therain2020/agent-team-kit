@@ -3,6 +3,10 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { type EventEnvelope, priorityClassFor } from "@kit/core";
 import {
+  detectControlPlaneDisable,
+  recordSecurityViolation,
+} from "@kit/core/security-invariants";
+import {
   type CanaryState,
   type EvolutionRepository,
   selectRunVariant,
@@ -62,6 +66,11 @@ export interface RunVariantSelector {
   ): Promise<RunVariantSelection | null>;
 }
 
+export interface EventRouterSecurityOptions {
+  /** External kit home for the audit sink; defaults to KIT_HOME. */
+  kitHome?: string;
+}
+
 export class EvolutionRunVariantSelector implements RunVariantSelector {
   private cached?: { at: number; state: CanaryState | null };
 
@@ -116,6 +125,7 @@ export class EventRouter {
     private readonly workspaceId = "default",
     /** Injectable clock keeps night-mode gates deterministic in tests. */
     private readonly now: () => Date = () => new Date(),
+    private readonly security: EventRouterSecurityOptions = {},
   ) {}
 
   async route(event: EventEnvelope, payload: unknown): Promise<RouteResult> {
@@ -270,12 +280,50 @@ export class EventRouter {
         continue;
       }
       const loaded = await loadPack(dir);
-      if (loaded.ok) {
-        packs.push(loaded);
+      if (!loaded.ok) {
+        continue;
       }
+      // Fail-closed control path: a pack whose agent instructions disable
+      // audit or approval never becomes runnable traffic (SEC-INV-02).
+      if (await this.disablesControlPlane(loaded)) {
+        continue;
+      }
+      packs.push(loaded);
     }
     this.cache = { at: Date.now(), packs };
     return packs;
+  }
+
+  private async disablesControlPlane(pack: LoadedPack): Promise<boolean> {
+    const reasons: string[] = [];
+    for (const agent of pack.agents.values()) {
+      for (const finding of detectControlPlaneDisable(agent.instructions)) {
+        reasons.push(
+          `${agent.spec.file}:${finding.line} disables the control plane (${finding.rule})`,
+        );
+      }
+    }
+    if (reasons.length === 0) {
+      return false;
+    }
+    await recordSecurityViolation(
+      {
+        invariant: "SEC-INV-02",
+        action: "runtime-pack",
+        target: pack.dir,
+        reasons,
+        actor: "runtime:event-router",
+      },
+      {
+        ...(this.security.kitHome !== undefined
+          ? { kitHome: this.security.kitHome }
+          : {}),
+      },
+    );
+    console.error(
+      `[runtime] blocked pack ${pack.pack.metadata.name}: ${reasons.join("; ")}`,
+    );
+    return true;
   }
 }
 

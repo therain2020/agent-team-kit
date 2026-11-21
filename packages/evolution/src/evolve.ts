@@ -44,6 +44,10 @@ import {
   resolveVariantKind,
 } from "./promotion";
 import type { EvolutionRepository } from "./repository";
+import {
+  assertFrozenSnapshotIntact,
+  enforceInstructionWrite,
+} from "./security-invariants";
 import { readEvalSnapshotManifest, verifyEvalSnapshot } from "./snapshot";
 
 export const DEFAULT_ARCHIVE = "variants/archive.jsonl";
@@ -71,6 +75,8 @@ export interface VariantWriteOptions {
   kind?: VariantKind;
   /** Workspace that owns the new variant. */
   workspaceId?: string;
+  /** External kit home for the security audit sink; defaults to KIT_HOME. */
+  kitHome?: string;
 }
 
 export interface EvolutionRecord {
@@ -164,6 +170,16 @@ export async function proposeVariant(
 
   const updated = `---\n${stringify({ ...frontmatter, model: nextModel })}---\n\n${body}\n`;
 
+  // Fail-closed: a proposal that writes into the recovery surface or disables
+  // the control plane in the agent instructions never becomes a variant.
+  await enforceInstructionWrite({
+    target: path.join(outDir, agent.spec.file),
+    content: body,
+    actor: `evolve:propose:${agentId}`,
+    action: "evolution-propose",
+    ...(options.kitHome !== undefined ? { kitHome: options.kitHome } : {}),
+  });
+
   await mkdir(path.dirname(path.resolve(outDir)), { recursive: true });
   await cp(loaded.dir, outDir, { recursive: true });
   await writeFile(path.join(outDir, agent.spec.file), updated, "utf8");
@@ -235,11 +251,7 @@ export async function scoreVariant(
   let evalDir: string | undefined;
   if (options.evalDir) {
     const verification = await verifyEvalSnapshot(options.evalDir);
-    if (!verification.ok) {
-      throw new Error(
-        `frozen eval snapshot failed verification: ${verification.mismatches.join(", ")}`,
-      );
-    }
+    assertFrozenSnapshotIntact(verification, options.evalDir);
     evalDir = path.resolve(options.evalDir);
     rubricRoot = evalDir;
   }
@@ -431,6 +443,8 @@ export interface PromoteVariantOptions {
   actor?: string;
   /** Skips the gate decision record; defaults to writing through the repo. */
   recordDecision?: boolean;
+  /** External kit home for the security audit sink; defaults to KIT_HOME. */
+  kitHome?: string;
 }
 
 /**
@@ -531,13 +545,25 @@ export async function promoteVariant(
         for (const relative of meta.changedFiles) {
           const source = path.join(sourceDir, relative);
           const destination = path.join(target.dir, relative);
+          const content = await readFile(source);
+          // Fail-closed before touching the target pack (70 §5): the target
+          // must stay outside the recovery surface and the promoted content
+          // must not disable audit or approval.
+          await enforceInstructionWrite({
+            target: destination,
+            content: content.toString("utf8"),
+            actor: `evolve:promote:${meta.id}`,
+            action: "evolution-promote",
+            ...(options.kitHome !== undefined
+              ? { kitHome: options.kitHome }
+              : {}),
+          });
           const existed = existsSync(destination);
           const backup = path.join(backupDir, relative);
           if (existed) {
             await mkdir(path.dirname(backup), { recursive: true });
             await writeFile(backup, await readFile(destination));
           }
-          const content = await readFile(source);
           await mkdir(path.dirname(destination), { recursive: true });
           const temp = `${destination}.${process.pid}.tmp`;
           await writeFile(temp, content);
