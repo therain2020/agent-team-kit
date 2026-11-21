@@ -231,6 +231,12 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   eval_snapshot_hash TEXT,
   evaluator_hash TEXT,
   evaluator_approval_ref TEXT,
+  outcome_score DOUBLE PRECISION,
+  outcome_pass BOOLEAN,
+  outcome_source TEXT,
+  outcome_ref TEXT,
+  divergence JSONB,
+  drift JSONB,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -305,6 +311,18 @@ ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS budget_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS budget_reconciliation JSONB;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS outcome_score DOUBLE PRECISION;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS outcome_pass BOOLEAN;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS outcome_source TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS outcome_ref TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS divergence JSONB;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS drift JSONB;
 ALTER TABLE evolution_state
   ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
@@ -1140,6 +1158,12 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   eval_snapshot_hash TEXT,
   evaluator_hash TEXT,
   evaluator_approval_ref TEXT,
+  outcome_score REAL,
+  outcome_pass INTEGER,
+  outcome_source TEXT,
+  outcome_ref TEXT,
+  divergence TEXT,
+  drift TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -1547,6 +1571,12 @@ ALTER TABLE evolution_cycles ADD COLUMN signal_sources TEXT NOT NULL DEFAULT '[]
 ALTER TABLE evolution_cycles ADD COLUMN budget_status TEXT NOT NULL DEFAULT 'unledgered';
 ALTER TABLE evolution_cycles ADD COLUMN budget_refs TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE evolution_cycles ADD COLUMN budget_reconciliation TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN outcome_score REAL;
+ALTER TABLE evolution_cycles ADD COLUMN outcome_pass INTEGER;
+ALTER TABLE evolution_cycles ADD COLUMN outcome_source TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN outcome_ref TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN divergence TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN drift TEXT;
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS budgets (

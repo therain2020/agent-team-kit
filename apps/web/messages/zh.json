@@ -801,6 +801,38 @@
     "cycleCount": "{count} 个周期",
     "noCycles": "还没有周期。跑一次会生成提案、评分与归档记录。",
     "signals": "信号",
+    "goodhartTitle": "Goodhart 监控与漂移",
+    "goodhartBody": "流程分不等于真实结果。分数上升而验收或人工复核持平/变差时暂停演化；输入分布、评估器一致率或 provider pin 变化时，对 champion 做全量复评。",
+    "goodhartNote": "结果信号来自 kit evolve outcome record（产物验收或人工复核）。文件是适配层，持久依据保存在周期与冻结状态中。",
+    "divergenceAlert": "背离",
+    "divergenceSteady": "稳定",
+    "divergenceStreak": "连续背离 {streak}/{window} 个已复核周期",
+    "divergenceNone": "暂无从复核周期发现“分数升、结果平或变差”。",
+    "outcomesLabel": "结果样本",
+    "outcomePassRate": "验收通过",
+    "outcomeAvgScore": "结果均分",
+    "agreementLabel": "评估-人工",
+    "outcomeBadge": "结果 {score}",
+    "driftTitle": "漂移",
+    "driftReevaluate": "champion 全量复评",
+    "driftBadge": "发现漂移",
+    "driftNone": "最近周期未发现漂移。",
+    "driftKind": {
+      "input_distribution": "输入分布",
+      "evaluator_agreement": "评估器一致率",
+      "model_pin": "模型 pin"
+    },
+    "governanceTitle": "背离与漂移事件",
+    "governanceNone": "暂无背离或漂移事件。",
+    "governanceKind": {
+      "divergence": "背离",
+      "drift": "漂移"
+    },
+    "governanceAction": {
+      "paused": "已暂停",
+      "alert": "告警",
+      "reevaluate": "待复评"
+    },
     "decision": {
       "promoted": "已晋升",
       "canary": "灰度中",
