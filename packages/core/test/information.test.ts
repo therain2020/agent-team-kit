@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_INTEREST_PROFILE,
   buildInformationEvent,
   computeDedupeKey,
   informationEventSchema,
+  interestProfileSchema,
+  signalBlockSchema,
 } from "../src/information";
 
 const base = {
@@ -111,5 +114,62 @@ describe("InformationEvent contract", () => {
       itemRefs: ["hn:2", "hn:1"],
     });
     expect(event.itemRefs).toEqual(["hn:1", "hn:2"]);
+  });
+});
+
+describe("InterestProfile and SignalBlock contract (#128)", () => {
+  it("ships a labeled default profile at version 0", () => {
+    expect(DEFAULT_INTEREST_PROFILE.version).toBe(0);
+    expect(DEFAULT_INTEREST_PROFILE.topics).toEqual([]);
+    expect(DEFAULT_INTEREST_PROFILE.thresholds).toEqual({
+      relevance: 0.5,
+      novelty: 0.4,
+      urgency: 0.5,
+    });
+    expect(
+      interestProfileSchema.safeParse(DEFAULT_INTEREST_PROFILE).success,
+    ).toBe(true);
+  });
+
+  it("rejects thresholds outside 0..1 and an empty rationale", () => {
+    expect(
+      interestProfileSchema.safeParse({
+        ...DEFAULT_INTEREST_PROFILE,
+        thresholds: { relevance: 1.2, novelty: 0.5, urgency: 0.5 },
+      }).success,
+    ).toBe(false);
+    expect(
+      interestProfileSchema.safeParse({
+        ...DEFAULT_INTEREST_PROFILE,
+        rationale: "",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires readable reasons and labels the scoring model", () => {
+    const withReasons = signalBlockSchema.safeParse({
+      relevance: 0.8,
+      novelty: 0.7,
+      urgency: 0.6,
+      risk: 0.1,
+      confidence: 0.7,
+      reasons: ["relevance 0.80: topics 1/1 (ai)"],
+    });
+    expect(withReasons.success).toBe(true);
+    if (withReasons.success) {
+      expect(withReasons.data.model).toBe("heuristic");
+      expect(withReasons.data.flags).toEqual([]);
+    }
+
+    expect(
+      signalBlockSchema.safeParse({
+        relevance: 0.8,
+        novelty: 0.7,
+        urgency: 0.6,
+        risk: 0.1,
+        confidence: 0.7,
+        reasons: [],
+      }).success,
+    ).toBe(false);
   });
 });

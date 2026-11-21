@@ -8,6 +8,7 @@ import { CostLedger } from "./cost-ledger";
 import { createDb } from "./db";
 import { SqlEventSpoolStore } from "./event-spool";
 import { InformationService } from "./information-service";
+import { InterestProfileService } from "./interest-profile-service";
 import { LastKnownGoodService } from "./lkg-service";
 import { ensureSchema } from "./migrate";
 import {
@@ -114,6 +115,8 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     }),
     /** Information plane store (98 I-1): raw captures, events and health. */
     information: new InformationService({ sql: handle.sql }),
+    /** InterestProfile versions, profile audit and signal audit (98 I-2). */
+    interestProfiles: new InterestProfileService({ sql: handle.sql }),
     approvals: new ApprovalService({
       sql: handle.sql,
       driver: handle.driver,

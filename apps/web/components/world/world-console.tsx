@@ -30,6 +30,7 @@ import {
   CheckCircle2,
   CircleDashed,
   Inbox,
+  Newspaper,
   Play,
   Sun,
 } from "lucide-react";
@@ -165,6 +166,12 @@ export function WorldConsole({
         }
         actions={
           <>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/world?tab=information">
+                <Newspaper className="size-3.5" />
+                {t("openInformation")}
+              </Link>
+            </Button>
             <Button variant="outline" size="sm" asChild>
               <Link href="/world?tab=activity">
                 <Activity className="size-3.5" />

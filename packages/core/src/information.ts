@@ -83,19 +83,105 @@ export type InformationFact = z.infer<typeof informationFactSchema>;
 export type InformationFactInput = z.input<typeof informationFactSchema>;
 
 /**
- * Signal block (98 §2 / §3.2). Defined here as part of the event contract, but
- * computed in I-2 (#128); the collector leaves it undefined.
+ * Signal block (98 §2 / §3.2, issue #128).
+ *
+ * Every dimension is a 0–1 score plus human-readable `reasons`. The block also
+ * records *how* it was produced (`model`, `profileVersion`, `thresholds`,
+ * `passes`, `flags`, `scoredAt`) so a later audit can tell which profile and
+ * scorer applied at ingest time. Historical scores are immutable: the collector
+ * writes the block once into the event payload and never rewrites it when the
+ * profile changes — new thresholds only affect new events.
  */
+export const signalScoringModelSchema = z.enum(["heuristic", "model"]);
+
+export type SignalScoringModel = z.infer<typeof signalScoringModelSchema>;
+
+/** Labels for content that needs the 10/50 handling path (conflict, injection). */
+export const signalFlagSchema = z.enum([
+  "conflict",
+  "injection-suspected",
+  "excluded",
+  "duplicate",
+]);
+
+export type SignalFlag = z.infer<typeof signalFlagSchema>;
+
+export const signalThresholdsSchema = z.object({
+  relevance: z.number().min(0).max(1),
+  novelty: z.number().min(0).max(1),
+  urgency: z.number().min(0).max(1),
+});
+
+export type SignalThresholds = z.infer<typeof signalThresholdsSchema>;
+
 export const signalBlockSchema = z.object({
   relevance: z.number().min(0).max(1),
   novelty: z.number().min(0).max(1),
   urgency: z.number().min(0).max(1),
   risk: z.number().min(0).max(1),
   confidence: z.number().min(0).max(1),
-  reasons: z.array(z.string()).default([]),
+  /** At least one readable reason; empty reasons fail the contract. */
+  reasons: z.array(z.string().min(1)).min(1),
+  model: signalScoringModelSchema.default("heuristic"),
+  /** Profile version whose thresholds were applied when scoring. */
+  profileVersion: z.number().int().nonnegative().default(0),
+  /** Snapshot of the thresholds in force at scoring time. */
+  thresholds: signalThresholdsSchema.optional(),
+  /** Whether relevance/novelty/urgency all clear their thresholds. */
+  passes: z.boolean().optional(),
+  flags: z.array(signalFlagSchema).default([]),
+  scoredAt: z.string().datetime().optional(),
 });
 
 export type SignalBlock = z.infer<typeof signalBlockSchema>;
+
+/**
+ * Interest profile (98 §2): what the team cares about. A human edits it, an AI
+ * may only propose a draft (D-64). Every change creates a new immutable version
+ * plus an audit record in the store; the profile with the highest `version` is
+ * current.
+ */
+export const interestUpdatedBySchema = z.enum(["human", "ai"]);
+
+export type InterestUpdatedBy = z.infer<typeof interestUpdatedBySchema>;
+
+export const interestProfileSchema = z.object({
+  profileId: z.string().min(1),
+  workspaceId: z.string().min(1).default("default"),
+  topics: z.array(z.string().min(1)).default([]),
+  entities: z.array(z.string().min(1)).default([]),
+  exclusions: z.array(z.string().min(1)).default([]),
+  thresholds: signalThresholdsSchema,
+  /** Daily information-spend cap in CNY; 0 means "not set". */
+  dailyBudgetCny: z.number().min(0).finite().default(0),
+  version: z.number().int().nonnegative(),
+  updatedBy: interestUpdatedBySchema,
+  /** One sentence explaining why this profile changed (D-64). */
+  rationale: z.string().min(1),
+  updatedAt: z.string().datetime().optional(),
+});
+
+export type InterestProfile = z.infer<typeof interestProfileSchema>;
+
+/**
+ * The implicit profile used before anyone edits one. It scores with neutral
+ * relevance so the first pass still yields readable, auditable signals; it is
+ * never persisted (`version: 0`).
+ */
+export const DEFAULT_INTEREST_PROFILE: InterestProfile =
+  interestProfileSchema.parse({
+    profileId: "interest_default",
+    workspaceId: "default",
+    topics: [],
+    entities: [],
+    exclusions: [],
+    thresholds: { relevance: 0.5, novelty: 0.4, urgency: 0.5 },
+    dailyBudgetCny: 0,
+    version: 0,
+    updatedBy: "human",
+    rationale:
+      "Default profile: no explicit topics yet, so every item is scored with neutral relevance.",
+  });
 
 export const informationEventSchema = eventEnvelopeSchema.extend({
   type: informationEventTypeSchema,

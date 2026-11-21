@@ -4,6 +4,7 @@ import { CliError } from "@kit/core";
 import {
   SOURCE_TOPIC,
   collectOnce,
+  draftInterestProfile,
   fetchEvidence,
   installSource,
   listInstalledSources,
@@ -153,6 +154,282 @@ export function registerSource(program: Command): void {
         });
       } catch (error) {
         report("health", error, json);
+      } finally {
+        await store.close();
+      }
+    });
+
+  const profile = source
+    .command("profile")
+    .description(
+      "Show the current InterestProfile (topics, entities, thresholds, version)",
+    )
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { json?: boolean }) => {
+      const json = wantsJson(options);
+      const store = await initStore();
+      try {
+        const [current, audit] = await Promise.all([
+          store.interestProfiles.getCurrent(),
+          store.interestProfiles.listAudit("default", 5),
+        ]);
+        const effective =
+          current ?? (await store.interestProfiles.getCurrentOrDefault());
+        emit(
+          json,
+          { profile: effective, persisted: current !== null, audit },
+          () => {
+            console.log(
+              `profile ${effective.profileId} v${effective.version} (${effective.updatedBy})`,
+            );
+            console.log(`  topics: ${effective.topics.join(", ") || "—"}`);
+            console.log(`  entities: ${effective.entities.join(", ") || "—"}`);
+            console.log(
+              `  exclusions: ${effective.exclusions.join(", ") || "—"}`,
+            );
+            const t = effective.thresholds;
+            console.log(
+              `  thresholds: relevance ${t.relevance} · novelty ${t.novelty} · urgency ${t.urgency}`,
+            );
+            console.log(`  daily budget: ${effective.dailyBudgetCny} CNY`);
+            console.log(`  rationale: ${effective.rationale}`);
+            if (audit.length > 0) {
+              console.log("  history:");
+              for (const entry of audit) {
+                console.log(
+                  `    v${entry.version} ${entry.action} by ${entry.actor} — ${entry.rationale}`,
+                );
+              }
+            }
+          },
+        );
+      } catch (error) {
+        report("profile", error, json);
+      } finally {
+        await store.close();
+      }
+    });
+
+  profile
+    .command("propose")
+    .description(
+      "Turn one sentence of intent into a heuristic InterestProfile draft (no side effects)",
+    )
+    .requiredOption(
+      "--intent <text>",
+      "what the team cares about, in one sentence",
+    )
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { intent: string; json?: boolean }) => {
+      const json = wantsJson(options);
+      const store = await initStore();
+      try {
+        const base = await store.interestProfiles.getCurrent();
+        const draft = draftInterestProfile(options.intent, base);
+        emit(json, draft, () => {
+          console.log(JSON.stringify(draft, null, 2));
+          console.log(
+            "\nDraft only; nothing was saved. Review it, then run `kit source profile set ... --rationale <sentence>`.",
+          );
+        });
+      } catch (error) {
+        report("profile propose", error, json);
+      } finally {
+        await store.close();
+      }
+    });
+
+  profile
+    .command("set")
+    .description("Write a new interest profile version plus an audit record")
+    .option("--topics <list>", "comma-separated topics")
+    .option("--entities <list>", "comma-separated entities")
+    .option("--exclusions <list>", "comma-separated excluded terms")
+    .option("--relevance <n>", "relevance threshold 0..1")
+    .option("--novelty <n>", "novelty threshold 0..1")
+    .option("--urgency <n>", "urgency threshold 0..1")
+    .option("--budget <cny>", "daily information budget in CNY")
+    .option("--updated-by <who>", "human|ai", "human")
+    .option("--expected-version <n>", "reject if the current version differs")
+    .requiredOption("--rationale <text>", "one sentence explaining the change")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        topics?: string;
+        entities?: string;
+        exclusions?: string;
+        relevance?: string;
+        novelty?: string;
+        urgency?: string;
+        budget?: string;
+        updatedBy: string;
+        expectedVersion?: string;
+        rationale: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        const store = await initStore();
+        try {
+          const current = await store.interestProfiles.getCurrentOrDefault();
+          const thresholds = {
+            relevance: parseRatio(
+              options.relevance,
+              current.thresholds.relevance,
+            ),
+            novelty: parseRatio(options.novelty, current.thresholds.novelty),
+            urgency: parseRatio(options.urgency, current.thresholds.urgency),
+          };
+          const updatedBy =
+            options.updatedBy === "ai" || options.updatedBy === "human"
+              ? options.updatedBy
+              : undefined;
+          if (!updatedBy) {
+            emitError(
+              json,
+              new CliError("usage", "--updated-by must be human or ai"),
+            );
+            return;
+          }
+          const expectedVersion = parseOptionalInt(options.expectedVersion);
+          const saved = await store.interestProfiles.saveProfile({
+            topics: parseList(options.topics) ?? current.topics,
+            entities: parseList(options.entities) ?? current.entities,
+            exclusions: parseList(options.exclusions) ?? current.exclusions,
+            thresholds,
+            dailyBudgetCny:
+              options.budget === undefined
+                ? current.dailyBudgetCny
+                : parseNonNegative(options.budget, "--budget"),
+            updatedBy,
+            actor: "cli",
+            rationale: options.rationale,
+            ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+          });
+          emit(json, { profile: saved }, () => {
+            console.log(
+              `✔ interest profile v${saved.version} saved (${saved.updatedBy})`,
+            );
+            console.log(`  topics: ${saved.topics.join(", ") || "—"}`);
+            console.log(`  rationale: ${saved.rationale}`);
+            console.log(
+              "New events are scored with these thresholds; historical scores are unchanged.",
+            );
+          });
+        } catch (error) {
+          report("profile set", error, json);
+        } finally {
+          await store.close();
+        }
+      },
+    );
+
+  source
+    .command("events")
+    .description("List recent information events with their signal scores")
+    .option("--limit <n>", "max events", "20")
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { limit: string; json?: boolean }) => {
+      const json = wantsJson(options);
+      const limit = Number(options.limit);
+      if (!Number.isInteger(limit) || limit <= 0) {
+        emitError(
+          json,
+          new CliError("usage", "--limit must be a positive integer"),
+        );
+        return;
+      }
+      const store = await initStore();
+      try {
+        const events = await store.information.listEvents({ limit });
+        const rows = events.map((event) => ({
+          eventId: event.eventId,
+          title: event.title,
+          sourceId: event.sourceId,
+          occurredAt: event.occurredAt,
+          signals: event.payload.signals ?? null,
+        }));
+        emit(json, { events: rows }, () => {
+          if (rows.length === 0) {
+            console.log("No information events yet.");
+            return;
+          }
+          for (const row of rows) {
+            const s = row.signals;
+            console.log(
+              `${row.sourceId}  ${row.title || row.eventId}${
+                s
+                  ? `  rel=${s.relevance} nov=${s.novelty} urg=${s.urgency} risk=${s.risk} conf=${s.confidence} [${s.model}]`
+                  : "  [unscored]"
+              }`,
+            );
+            for (const reason of s?.reasons ?? []) {
+              console.log(`    · ${reason}`);
+            }
+            if (s && s.flags.length > 0) {
+              console.log(`    flags: ${s.flags.join(", ")}`);
+            }
+          }
+        });
+      } catch (error) {
+        report("events", error, json);
+      } finally {
+        await store.close();
+      }
+    });
+
+  source
+    .command("audit")
+    .description(
+      "Sample stored signal audits and verify every event has reasons",
+    )
+    .option("--size <n>", "sample size", "10")
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { size: string; json?: boolean }) => {
+      const json = wantsJson(options);
+      const size = Number(options.size);
+      if (!Number.isInteger(size) || size <= 0) {
+        emitError(
+          json,
+          new CliError("usage", "--size must be a positive integer"),
+        );
+        return;
+      }
+      const store = await initStore();
+      try {
+        const rows = await store.interestProfiles.sampleSignals(
+          "default",
+          size,
+        );
+        const ok =
+          rows.length > 0 &&
+          rows.every(
+            (row) =>
+              row.reasons.length > 0 &&
+              ["heuristic", "model"].includes(row.model) &&
+              row.relevance >= 0 &&
+              row.relevance <= 1,
+          );
+        emit(json, { ok, sampled: rows.length, signals: rows }, () => {
+          if (rows.length === 0) {
+            console.log("No signal audits yet. Run: kit source collect");
+          } else {
+            for (const row of rows) {
+              console.log(
+                `${row.eventId}  v${row.profileVersion} ${row.model}  rel=${row.relevance} nov=${row.novelty} urg=${row.urgency} risk=${row.risk} conf=${row.confidence}  reasons=${row.reasons.length}`,
+              );
+            }
+          }
+          console.log(
+            ok
+              ? `✔ sampling audit passed (${rows.length} event(s))`
+              : "× sampling audit failed: missing scores or reasons",
+          );
+          if (!ok) {
+            process.exitCode = 1;
+          }
+        });
+      } catch (error) {
+        report("audit", error, json);
       } finally {
         await store.close();
       }
@@ -353,6 +630,50 @@ export function registerSource(program: Command): void {
         }
       },
     );
+}
+
+function parseList(value: string | undefined): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : [];
+}
+
+function parseRatio(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    throw new CliError("usage", "thresholds must be a number between 0 and 1");
+  }
+  return parsed;
+}
+
+function parseNonNegative(value: string, label: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new CliError("usage", `${label} must be a non-negative number`);
+  }
+  return parsed;
+}
+
+function parseOptionalInt(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new CliError(
+      "usage",
+      "--expected-version must be a non-negative integer",
+    );
+  }
+  return parsed;
 }
 
 function report(command: string, error: unknown, json: boolean): void {
