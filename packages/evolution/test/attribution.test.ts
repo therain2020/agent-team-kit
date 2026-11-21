@@ -39,17 +39,18 @@ async function makeRoot(): Promise<string> {
 function signal(
   overrides: Partial<IterationSignal> & { taskId: string },
 ): IterationSignal {
+  const { taskId, ...rest } = overrides;
   return {
     at: "2026-11-20T00:00:00.000Z",
-    iterationId: `it_${overrides.taskId}`,
-    taskId: overrides.taskId,
+    iterationId: `it_${taskId}`,
+    taskId,
     domain: "web",
     coder: "dsh",
     verified: true,
     applied: true,
     risk: "low",
     tokens: 100,
-    ...overrides,
+    ...rest,
   };
 }
 
