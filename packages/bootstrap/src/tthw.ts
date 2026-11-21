@@ -234,12 +234,13 @@ function computeTthw(record: ColdStartTthwRecord): void {
   const profile = record.milestones.profile;
   const chosen = demo ?? profile ?? null;
   record.readyAt = chosen?.at ?? null;
-  record.measure = demo ? "demo" : profile ? "profile" : null;
   record.modelLatencyMs = profile?.modelLatencyMs ?? 0;
   if (!record.startedAt || !chosen) {
+    record.measure = null;
     record.tthwMinutes = null;
     return;
   }
+  record.measure = demo ? "demo" : "profile";
   const elapsedMs =
     Date.parse(chosen.at) -
     Date.parse(record.startedAt) -
