@@ -182,7 +182,8 @@ export function selectAttributionWindows(
 
 /**
  * Pass/apply rates reuse `summarizeSignals` so attribution, the signal
- * summary and the propose heuristic cannot drift apart; the extra live
+ * summary and the propose heuristic cannot drift apart; values are rounded to
+ * the same 4 decimals the rest of the evolution plane records. The extra live
  * signals (cost, risk mix, incidents) are added here.
  */
 export function fitnessWindowOf(
@@ -198,8 +199,8 @@ export function fitnessWindowOf(
   return {
     tasks,
     iterations: new Set(signals.map((signal) => signal.iterationId)).size,
-    passRate: summary.passRate,
-    applyRate: summary.applyRate,
+    passRate: round(summary.passRate),
+    applyRate: round(summary.applyRate),
     avgTokens: tasks > 0 ? Math.round(tokens / tasks) : 0,
     highRiskShare: ratio(highRisk, tasks),
     incidentRate: ratio(incidents, tasks),
