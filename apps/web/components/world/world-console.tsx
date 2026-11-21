@@ -172,7 +172,7 @@ export function WorldConsole({
               </Link>
             </Button>
             <Button size="sm" asChild>
-              <Link href="/workshop?tab=packs">
+              <Link href="/packs">
                 <Play className="size-3.5" />
                 {common("startRun")}
               </Link>

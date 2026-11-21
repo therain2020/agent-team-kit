@@ -219,7 +219,7 @@ export function AutopilotConsole({
                 <div className="mt-2">
                   <Link
                     className="text-emerald-300 hover:underline"
-                    href="/workshop?tab=packs"
+                    href="/packs"
                   >
                     {t("browsePacks")}
                   </Link>
