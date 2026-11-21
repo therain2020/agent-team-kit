@@ -7,6 +7,7 @@
       "@kit/core/avatar": ["./packages/core/src/avatar.ts"],
       "@kit/activity": ["./packages/activity/src/index.ts"],
       "@kit/core/cron": ["./packages/core/src/cron.ts"],
+      "@kit/core/quota": ["./packages/core/src/quota.ts"],
       "@kit/bootstrap": ["./packages/bootstrap/src/index.ts"],
       "@kit/change": ["./packages/change/src/index.ts"],
       "@kit/coder": ["./packages/coder/src/index.ts"],

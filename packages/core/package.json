@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./avatar": "./src/avatar.ts",
     "./cron": "./src/cron.ts",
+    "./quota": "./src/quota.ts",
     "./kill-switch": "./src/kill-switch.ts"
   },
   "dependencies": {
