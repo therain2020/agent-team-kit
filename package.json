@@ -43,6 +43,7 @@
     "runbook:drill": "tsx scripts/runbook-drill.ts",
     "recovery:drill": "tsx scripts/recovery-drill.ts",
     "cold-start:check": "tsx scripts/cold-start-check.ts",
+    "gates:report": "tsx scripts/gate-report.ts",
     "web:dev": "bun run --cwd apps/web dev",
     "web:build": "bun run --cwd apps/web build",
     "web:start": "bun run --cwd apps/web start",
