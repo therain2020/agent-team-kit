@@ -79,7 +79,8 @@ export interface ShadowIterationInput {
 
 /**
  * Mirrors an iteration report onto change proposals. Returns the proposal ids
- * written (empty when the pipeline is off). Never throws.
+ * written. With the pipeline off only high-risk tasks are recorded (so their
+ * required approval has a subject); never throws.
  */
 export async function recordShadowIterationProposals(
   store: Store,
