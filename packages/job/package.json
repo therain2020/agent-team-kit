@@ -15,6 +15,7 @@
     "@kit/ops": "workspace:*",
     "@kit/pack": "workspace:*",
     "@kit/store": "workspace:*",
-    "@kit/workflow": "workspace:*"
+    "@kit/workflow": "workspace:*",
+    "yaml": "^2.6.1"
   }
 }
