@@ -1,4 +1,5 @@
 import type { RunMode, RunStatus, StageStatus } from "@kit/core";
+import type { WorldSnapshot } from "@kit/store";
 
 export type FactoryRisk = "low" | "medium" | "high";
 
@@ -24,6 +25,10 @@ export interface FactoryItem {
   stageName?: string;
   requestType?: FactoryRequestType;
   stationId?: FactoryStationId;
+  /** Set when the approval guards a ChangeProposal rather than a run stage. */
+  changeId?: string | null;
+  /** ChangeProposal substrate label source (code/prompt/workflow/skill). */
+  substrate?: string | null;
   riskClass: FactoryRisk;
   summary: string;
   costCny: number;
@@ -31,6 +36,29 @@ export interface FactoryItem {
   expiresAt?: string;
   artifactCount?: number;
   requestedBy?: string;
+  /**
+   * Producer resolved from the draft (or newest) artifact manifest (97 §3.5).
+   * Absent means "unknown": the UI falls back to the generic sprite and never
+   * guesses an owner.
+   */
+  producerAgentId?: string;
+}
+
+/** Door plate summary the office reads from the factory snapshot (97 §3.5). */
+export interface FactoryLinkItem {
+  requestId?: string;
+  runId: string;
+  summary: string;
+  riskClass: FactoryRisk;
+  producerAgentId?: string;
+}
+
+export interface FactoryLink {
+  /** Queued approvals; the office factory door plate shows this number. */
+  pendingCount: number;
+  /** First few queued approvals, in gate order, for the door tooltip. */
+  topItems: FactoryLinkItem[];
+  generatedAt: string;
 }
 
 export interface FactoryStation {
@@ -229,6 +257,139 @@ export function orderGateItems(items: FactoryItem[]): FactoryItem[] {
 
 export function lowRiskItems(items: FactoryItem[]): FactoryItem[] {
   return orderGateItems(items).filter((item) => item.riskClass === "low");
+}
+
+/**
+ * Gate count: approval workpieces only, failed runs are not approvals. This is
+ * the one aggregation shared by the factory gate strip, the office door plate
+ * and the `/api/office` snapshot (97 §3.5).
+ */
+export function pendingCountOf(items: readonly FactoryItem[]): number {
+  return items.reduce(
+    (count, item) => (item.kind === "approval" ? count + 1 : count),
+    0,
+  );
+}
+
+const FACTORY_LINK_TOP_ITEMS = 3;
+
+/** Projects a factory snapshot onto the office door plate payload. */
+export function factoryLinkFrom(
+  snapshot: FactorySnapshot,
+  limit = FACTORY_LINK_TOP_ITEMS,
+): FactoryLink {
+  const gate = orderGateItems(snapshot.items);
+  return {
+    pendingCount: pendingCountOf(snapshot.items),
+    topItems: gate.slice(0, Math.max(0, limit)).map((item) => ({
+      ...(item.requestId ? { requestId: item.requestId } : {}),
+      runId: item.runId,
+      summary: item.summary,
+      riskClass: item.riskClass,
+      ...(item.producerAgentId
+        ? { producerAgentId: item.producerAgentId }
+        : {}),
+    })),
+    generatedAt: snapshot.generatedAt,
+  };
+}
+
+/**
+ * Live door plate count (97 §3.5): once the world projection is available it
+ * wins over the snapshot, so an `approval.requested/decided` delta moves the
+ * office plate and the factory gate within the same batch window. Top items
+ * that no longer belong to a paused run are dropped; unknown runs stay.
+ */
+export function reconcileFactoryLink(
+  link: FactoryLink,
+  world: WorldSnapshot | null,
+): FactoryLink {
+  if (!world) {
+    return link;
+  }
+  const byRun = new Map(world.runs.map((run) => [run.runId, run]));
+  let changed = false;
+  let pendingCount = 0;
+  for (const run of world.runs) {
+    if (run.status === "paused") {
+      pendingCount += 1;
+    }
+  }
+  const topItems = link.topItems.filter((item) => {
+    const run = byRun.get(item.runId);
+    if (!run || run.status === "paused") {
+      return true;
+    }
+    changed = true;
+    return false;
+  });
+  if (pendingCount === link.pendingCount && !changed) {
+    return link;
+  }
+  return { ...link, pendingCount, topItems };
+}
+
+/**
+ * Paused runs the line does not know about yet. `approval.requested` reaches
+ * the client through the world stream before a new workpieces snapshot does,
+ * so the caller refetches `/api/factory` when this is non-empty (97 §3.5).
+ */
+export function missingPausedRunIds(
+  items: readonly FactoryItem[],
+  world: WorldSnapshot | null,
+): string[] {
+  if (!world) {
+    return [];
+  }
+  const known = new Set(items.map((item) => item.runId));
+  return world.runs
+    .filter((run) => run.status === "paused" && !known.has(run.runId))
+    .map((run) => run.runId);
+}
+
+export interface ProducerArtifactRef {
+  artifactId: string;
+  createdAt: string;
+  producerAgentId: string | null | undefined;
+}
+
+/**
+ * Resolves the producer of an approval workpiece (97 §3.5): the draft artifact
+ * first, otherwise the newest artifact that recorded a producer. Synthetic
+ * `workflow` actors and blank ids are not agents, so they resolve to `null`
+ * and the UI falls back instead of inventing an owner.
+ */
+export function producerAgentIdFromArtifacts(
+  artifacts: readonly ProducerArtifactRef[],
+  draftArtifactId?: string | null,
+): string | null {
+  if (draftArtifactId) {
+    const draft = artifacts.find(
+      (artifact) => artifact.artifactId === draftArtifactId,
+    );
+    const fromDraft = normalizeProducer(draft?.producerAgentId);
+    if (fromDraft) {
+      return fromDraft;
+    }
+  }
+  let newest: ProducerArtifactRef | null = null;
+  for (const artifact of artifacts) {
+    if (!normalizeProducer(artifact.producerAgentId)) {
+      continue;
+    }
+    if (!newest || artifact.createdAt.localeCompare(newest.createdAt) > 0) {
+      newest = artifact;
+    }
+  }
+  return normalizeProducer(newest?.producerAgentId);
+}
+
+function normalizeProducer(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "workflow") {
+    return null;
+  }
+  return trimmed;
 }
 
 export function batchTargetsFor(items: FactoryItem[]): BatchTarget[] {

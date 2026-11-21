@@ -20,6 +20,10 @@ export interface ApprovalEntityView {
   assignee?: string | null;
   version: number;
   runStatus: string | null;
+  /** ChangeProposal substrate, when the request guards a change. */
+  substrate?: string | null;
+  /** ChangeProposal id, when the request guards a change. */
+  changeId?: string | null;
 }
 
 export type ApprovalPayloadView = Record<string, unknown> | null;
@@ -41,6 +45,8 @@ export interface ApprovalApiItem {
   version: number;
   slaDueAt: string | null;
   runStatus: string | null;
+  substrate: string | null;
+  changeId: string | null;
 }
 
 const REQUEST_TYPES = new Set([
@@ -60,9 +66,12 @@ export function toApiApprovalItem(
     requestId: entity.approvalId,
     stageId: entity.stageId ?? stringField(payload, "stageId"),
     stageName: entity.stageName ?? stringField(payload, "stageName"),
-    requestType: REQUEST_TYPES.has(entity.kind)
-      ? entity.kind
-      : (normalizeRequestType(payload?.requestType) ?? "gate_failure"),
+    requestType:
+      entity.kind === "change_proposal"
+        ? "change_proposal"
+        : REQUEST_TYPES.has(entity.kind)
+          ? entity.kind
+          : (normalizeRequestType(payload?.requestType) ?? "gate_failure"),
     riskClass: normalizeRiskClass(payload?.riskClass),
     summary: stringField(payload, "summary"),
     options: normalizeOptions(payload?.options),
@@ -73,6 +82,8 @@ export function toApiApprovalItem(
     version: entity.version,
     slaDueAt: entity.slaDueAt,
     runStatus: entity.runStatus,
+    substrate: entity.substrate ?? null,
+    changeId: entity.changeId ?? null,
   };
 }
 

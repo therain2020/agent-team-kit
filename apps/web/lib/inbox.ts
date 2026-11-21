@@ -65,7 +65,14 @@ export const loadApprovalTower = cache(async function loadApprovalTower(
   );
 
   const cards = await mapLimit(page.items, 12, async (item) => {
-    const payload = await readPayload(client, item.payloadRef);
+    // Change-scoped approvals have no run; their evidence is the proposal row
+    // (hypothesis, risk, revertRef, eval plan), not an artifact payload.
+    const proposal = item.changeId
+      ? await client.changeProposals.get(item.changeId).catch(() => null)
+      : null;
+    const payload = proposal
+      ? null
+      : await readPayload(client, item.payloadRef);
     const draftArtifactId = stringValue(payload?.draftArtifactId);
     const draftVersion = numberValue(payload?.draftVersion) ?? 1;
     const gateRefs = gateRefsFrom(payload);
@@ -81,13 +88,20 @@ export const loadApprovalTower = cache(async function loadApprovalTower(
     return {
       requestId: item.approvalId,
       runId: item.runId,
+      changeId: item.changeId,
+      substrate: proposal?.substrate ?? item.substrate ?? null,
+      revertRef: proposal?.revertRef ?? null,
       workflowId: item.workflowId ?? "",
       stageId: item.stageId ?? "",
       stageName: item.stageName ?? "",
       kind: item.kind,
-      requestType: requestTypeFrom(item.kind, payload),
-      riskClass: riskClassFrom(payload),
-      summary: stringValue(payload?.summary) ?? "",
+      requestType: item.changeId
+        ? "change_proposal"
+        : requestTypeFrom(item.kind, payload),
+      riskClass: proposal
+        ? riskClassFrom({ riskClass: proposal.risk })
+        : riskClassFrom(payload),
+      summary: proposal?.hypothesis ?? stringValue(payload?.summary) ?? "",
       requester:
         stringValue(payload?.requestedBy) ?? item.requester ?? "manager",
       assignee: item.assignee ?? null,

@@ -35,6 +35,40 @@ export async function decideApproval(input: {
 }): Promise<DecisionOutcome> {
   await ensureStoreSchema();
   const store = await getStore();
+
+  // Change-scoped approvals have no run; decide them through the unified
+  // change bridge so the same CAS, expiry and self-approval rules apply and
+  // the proposal resumes or terminates (85.3.5.5).
+  const record = await store.approvals.get(input.requestId);
+  if (record?.changeId) {
+    const result = await store.changeApprovals.decide({
+      approvalId: input.requestId,
+      status: input.decision === "approve" ? "approved" : "rejected",
+      decisionBy: input.actor,
+      reason: input.note || input.decision,
+      origin: "web",
+    });
+    if (!result.ok) {
+      return {
+        ok: false,
+        status:
+          result.code === "not_found"
+            ? 404
+            : result.code === "self_approval"
+              ? 403
+              : 409,
+        error: result.message,
+      };
+    }
+    return {
+      ok: true,
+      requestId: input.requestId,
+      decision: input.decision,
+      duplicate: result.duplicate,
+      batchId: input.batchId ?? newId("batch"),
+    };
+  }
+
   const run = await store.runs.get(input.runId);
   if (!run) {
     return { ok: false, status: 404, error: "run not found" };

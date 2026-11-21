@@ -1,10 +1,14 @@
 "use client";
 
 import {
+  PixelAgent,
+  PixelDoor,
   PixelMotionProvider,
   PixelMotionToggle,
-  PixelRoom,
   PixelWorkpiece,
+  PixelWorld,
+  WorldHud,
+  agentSeed,
   usePixelMotion,
 } from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
@@ -14,16 +18,19 @@ import {
   type FactoryStationId,
   stationsFor,
 } from "@/lib/factory";
+import { officeAgentHref } from "@/lib/office-deeplink";
 import { cn, formatCny, timeAgo } from "@/lib/utils";
 import {
   CheckCircle2,
   CircleAlert,
+  Gamepad2,
   RefreshCw,
   ScrollText,
   ShieldAlert,
   XCircle,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
+import Link from "next/link";
 import { useMemo } from "react";
 
 const STATION_I18N: Record<
@@ -49,6 +56,8 @@ interface FactoryViewProps {
   pending: boolean;
   refreshing: boolean;
   shift: { approved: number; rejected: number };
+  /** Factory → office door, preselected on the active producer when known. */
+  officeHref: string;
   onActivate: (requestId: string) => void;
   onOpen: (item: FactoryItem) => void;
   onApprove: (item: FactoryItem) => void;
@@ -81,6 +90,7 @@ function FactoryViewBody({
   pending,
   refreshing,
   shift,
+  officeHref,
   onActivate,
   onOpen,
   onApprove,
@@ -98,6 +108,7 @@ function FactoryViewBody({
   );
   const stations = useMemo(() => stationsFor(items), [items]);
   const selected = gate.find((item) => item.requestId === activeId) ?? gate[0];
+  const gateCost = gate.reduce((sum, item) => sum + item.costCny, 0);
 
   return (
     <div className="space-y-5">
@@ -155,9 +166,48 @@ function FactoryViewBody({
         ))}
       </div>
 
-      <PixelRoom className="border-zinc-700 bg-[#0d1117] p-3 shadow-[4px_4px_0_#000]">
-        <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-zinc-500">
-          <span>{t("conveyor")}</span>
+      <PixelWorld
+        title={t("title")}
+        subtitle={t("conveyor")}
+        hud={
+          <WorldHud
+            items={[
+              {
+                key: "pending",
+                label: t("pendingLabel"),
+                value: gate.length,
+                tone: gate.length > 0 ? "warn" : "default",
+              },
+              {
+                key: "approved",
+                label: t("approvedCount"),
+                value: shift.approved,
+                tone: "good",
+              },
+              {
+                key: "rejected",
+                label: t("rejectedCount"),
+                value: shift.rejected,
+                tone: "bad",
+              },
+              {
+                key: "cost",
+                label: t("cost"),
+                value: formatCny(gateCost),
+              },
+            ]}
+          />
+        }
+        doors={
+          <PixelDoor
+            href={officeHref}
+            label={t("backOffice")}
+            icon={<Gamepad2 className="size-3.5" aria-hidden="true" />}
+            shortcut="O"
+          />
+        }
+      >
+        <div className="mb-2 flex items-center justify-end font-mono text-[10px] uppercase tracking-widest text-zinc-500">
           <span>
             {t("gatekeeper")} · {gate.length}
           </span>
@@ -179,50 +229,52 @@ function FactoryViewBody({
             gate.map((item) => {
               const active = selected?.requestId === item.requestId;
               return (
-                <button
-                  key={item.requestId}
-                  type="button"
-                  onClick={() => {
-                    if (item.requestId) {
-                      onActivate(item.requestId);
-                    }
-                    onOpen(item);
-                  }}
-                  className={cn(
-                    "min-w-52 border-2 px-3 py-2 text-left font-mono transition-colors",
-                    active
-                      ? "border-emerald-400 bg-emerald-500/10"
-                      : "border-zinc-700 bg-zinc-900 hover:border-zinc-500",
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex min-w-0 items-center gap-2 text-[11px] text-zinc-200">
-                      <PixelWorkpiece item={item} size={24} />
-                      <span className="truncate">
-                        {item.stageName ?? item.workflowId ?? item.runId}
-                      </span>
-                    </span>
-                    <Badge
-                      variant={
-                        item.riskClass === "high"
-                          ? "danger"
-                          : item.riskClass === "medium"
-                            ? "warning"
-                            : "outline"
+                <div key={item.requestId} className="flex min-w-52 flex-col">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (item.requestId) {
+                        onActivate(item.requestId);
                       }
-                      className="rounded-none text-[9px] uppercase"
-                    >
-                      {riskT(item.riskClass)}
-                    </Badge>
-                  </div>
-                  <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-zinc-400">
-                    {item.summary}
-                  </p>
-                  <div className="mt-2 flex items-center justify-between text-[9px] text-zinc-600">
-                    <span>{formatCny(item.costCny)}</span>
-                    <span>{timeAgo(item.updatedAt, locale)}</span>
-                  </div>
-                </button>
+                      onOpen(item);
+                    }}
+                    className={cn(
+                      "flex-1 border-2 px-3 py-2 text-left font-mono transition-colors",
+                      active
+                        ? "border-emerald-400 bg-emerald-500/10"
+                        : "border-zinc-700 bg-zinc-900 hover:border-zinc-500",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-2 text-[11px] text-zinc-200">
+                        <ProducerSprite item={item} />
+                        <span className="truncate">
+                          {item.stageName ?? item.workflowId ?? item.runId}
+                        </span>
+                      </span>
+                      <Badge
+                        variant={
+                          item.riskClass === "high"
+                            ? "danger"
+                            : item.riskClass === "medium"
+                              ? "warning"
+                              : "outline"
+                        }
+                        className="rounded-none text-[9px] uppercase"
+                      >
+                        {riskT(item.riskClass)}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-zinc-400">
+                      {item.summary}
+                    </p>
+                    <div className="mt-2 flex items-center justify-between text-[9px] text-zinc-600">
+                      <span>{formatCny(item.costCny)}</span>
+                      <span>{timeAgo(item.updatedAt, locale)}</span>
+                    </div>
+                  </button>
+                  <ProducerOfficeLink item={item} />
+                </div>
               );
             })
           )}
@@ -255,7 +307,7 @@ function FactoryViewBody({
                   }}
                   className="flex w-full items-start gap-2 text-left"
                 >
-                  <PixelWorkpiece item={item} size={28} />
+                  <ProducerSprite item={item} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center justify-between gap-2 font-mono text-[11px] text-zinc-200">
                       <span className="truncate">
@@ -304,6 +356,7 @@ function FactoryViewBody({
                     {t("abort")}
                   </Button>
                 </div>
+                <ProducerOfficeLink item={item} />
               </div>
             ))
           )}
@@ -351,7 +404,7 @@ function FactoryViewBody({
             <span className="text-xs text-zinc-600">{t("empty")}</span>
           )}
         </div>
-      </PixelRoom>
+      </PixelWorld>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="border-2 border-zinc-800 bg-[#0d1117] p-3">
@@ -371,7 +424,7 @@ function FactoryViewBody({
                   className="block w-full border border-red-500/20 bg-red-500/5 px-3 py-2 text-left font-mono text-[11px] text-zinc-400 transition-colors hover:border-red-500/40"
                 >
                   <span className="flex items-center gap-2">
-                    <PixelWorkpiece item={item} size={20} />
+                    <ProducerSprite item={item} />
                     <span className="text-zinc-200">{item.summary}</span>
                   </span>
                   <span className="mt-1 flex justify-between text-[9px] text-zinc-600">
@@ -403,5 +456,44 @@ function FactoryViewBody({
         </section>
       </div>
     </div>
+  );
+}
+
+/**
+ * Producer portrait (97 §3.5): the same shared sprite the office draws, with
+ * the same id seed, so a person looks identical in both rooms. Unknown owners
+ * fall back to the generic workpiece crate — never an inferred avatar.
+ */
+function ProducerSprite({ item }: { item: FactoryItem }) {
+  if (!item.producerAgentId) {
+    return <PixelWorkpiece item={item} size={24} />;
+  }
+  return (
+    <span
+      className="inline-flex shrink-0 items-end"
+      title={item.producerAgentId}
+    >
+      <PixelAgent
+        seed={agentSeed(item.producerAgentId)}
+        state="idle"
+        scale={0.5}
+      />
+    </span>
+  );
+}
+
+/** "View office" jumps to the producer's station through the office deep link. */
+function ProducerOfficeLink({ item }: { item: FactoryItem }) {
+  const t = useTranslations("factory");
+  if (!item.producerAgentId) {
+    return null;
+  }
+  return (
+    <Link
+      href={officeAgentHref(item.producerAgentId)}
+      className="mt-1 block border border-zinc-800 px-2 py-1 font-mono text-[9px] text-zinc-500 transition-colors hover:border-emerald-500/40 hover:text-emerald-300"
+    >
+      {t("viewOffice")} · {item.producerAgentId}
+    </Link>
   );
 }

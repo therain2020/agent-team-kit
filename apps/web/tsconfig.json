@@ -30,6 +30,7 @@
       "@kit/evolution": ["../../packages/evolution/src/index.ts"],
       "@kit/telemetry": ["../../packages/telemetry/src/index.ts"],
       "@kit/source": ["../../packages/source/src/index.ts"],
+      "@kit/tools": ["../../packages/tools/src/index.ts"],
       "@kit/workshop": ["../../packages/workshop/src/index.ts"],
       "@kit/market": ["../../packages/market/src/index.ts"]
     }

@@ -44,6 +44,13 @@ export interface ApprovalRecord {
   /** Operator who took over the approval (`null` while unassigned). */
   assignee: string | null;
   assignedAt: string | null;
+  /**
+   * ChangeProposal substrate when this request guards a pipeline change
+   * (85.3.5.5); null for stage/run approvals.
+   */
+  substrate: string | null;
+  /** ChangeProposal id this request decides; null for stage/run approvals. */
+  changeId: string | null;
   version: number;
   createdAt: string;
 }
@@ -66,6 +73,10 @@ export interface EnqueueApprovalInput {
   payloadRef?: string | null;
   slaDueAt?: string | null;
   expiresAt?: string | null;
+  /** ChangeProposal substrate (code/prompt/workflow/skill), when applicable. */
+  substrate?: string | null;
+  /** ChangeProposal id this approval decides, when applicable. */
+  changeId?: string | null;
   createdAt?: string;
 }
 
@@ -74,7 +85,13 @@ export interface ApprovalQuery {
   status?: ApprovalStatus;
   /** Narrow to one job/run; the job hub lists every approval of a job. */
   runId?: string;
-  /** Filter on the joined run status, e.g. `paused` for the legacy inbox. */
+  /** Narrow to one change proposal. */
+  changeId?: string;
+  /**
+   * Filter on the joined run status, e.g. `paused` for the legacy inbox.
+   * Change-scoped approvals have no run and are always kept, otherwise the
+   * unified inbox would silently drop every code/instruction change.
+   */
   runStatus?: string;
   sort?: "due" | "created";
   cursor?: string | null;
@@ -131,6 +148,8 @@ interface ApprovalRow {
   decision_reason: string | null;
   assignee: string | null;
   assigned_at: string | Date | null;
+  substrate: string | null;
+  change_id: string | null;
   version: number | string | bigint;
   created_at: string | Date;
 }
@@ -167,13 +186,14 @@ export class ApprovalService {
       INSERT INTO approvals (
         approval_id, workspace_id, run_id, stage_id, kind, status, requester,
         required_role, payload_ref, sla_due_at, expires_at, decision_by,
-        decision_at, decision_reason, version, created_at
+        decision_at, decision_reason, substrate, change_id, version, created_at
       ) VALUES (
         ${input.approvalId}, ${input.workspaceId}, ${input.runId},
         ${input.stageId ?? null}, ${input.kind}, ${"queued"},
         ${input.requester ?? "manager"}, ${input.requiredRole ?? null},
         ${input.payloadRef ?? null}, ${input.slaDueAt ?? null},
-        ${input.expiresAt ?? null}, ${null}, ${null}, ${null}, ${1},
+        ${input.expiresAt ?? null}, ${null}, ${null}, ${null},
+        ${input.substrate ?? null}, ${input.changeId ?? null}, ${1},
         ${createdAt}
       )
       ON CONFLICT (approval_id) DO NOTHING
@@ -228,8 +248,15 @@ export class ApprovalService {
     const runIdFilter = query.runId
       ? this.store.sql`AND a.run_id = ${query.runId}`
       : this.store.sql``;
+    const changeIdFilter = query.changeId
+      ? this.store.sql`AND a.change_id = ${query.changeId}`
+      : this.store.sql``;
+    // Change-scoped approvals are keyed to a proposal, not a run. When the
+    // caller filters by run status (the legacy inbox wants `paused` runs),
+    // keep every change approval so both substrates share one inbox.
     const runFilter = query.runStatus
-      ? this.store.sql`AND r.status = ${query.runStatus}`
+      ? this.store
+          .sql`AND (r.status = ${query.runStatus} OR a.change_id IS NOT NULL)`
       : this.store.sql``;
 
     let rows: ApprovalListRow[];
@@ -248,6 +275,7 @@ export class ApprovalService {
           ${workspaceFilter}
           ${statusFilter}
           ${runIdFilter}
+          ${changeIdFilter}
           ${runFilter}
           ${cursorFilter}
         ORDER BY COALESCE(a.sla_due_at, a.expires_at, a.created_at) ASC,
@@ -269,6 +297,7 @@ export class ApprovalService {
           ${workspaceFilter}
           ${statusFilter}
           ${runIdFilter}
+          ${changeIdFilter}
           ${runFilter}
           ${cursorFilter}
         ORDER BY a.created_at DESC, a.approval_id DESC
@@ -462,6 +491,8 @@ function mapRow(row: ApprovalRow): ApprovalRecord {
     decisionReason: row.decision_reason,
     assignee: row.assignee ?? null,
     assignedAt: toIso(row.assigned_at),
+    substrate: row.substrate ?? null,
+    changeId: row.change_id ?? null,
     version: Number(row.version),
     createdAt: toIso(row.created_at) ?? new Date(0).toISOString(),
   };
