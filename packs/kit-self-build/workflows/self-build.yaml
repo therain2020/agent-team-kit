@@ -1,0 +1,90 @@
+id: self-build
+version: 1.0
+trigger:
+  event: self.build.requested
+stages:
+  - id: intake
+    type: workflow
+    inputs: [request]
+    outputs: [scope]
+    timeout: 2m
+  # scout (#130) slots in here: intake -> scout -> architect. Omitted from the
+  # executable graph until the scout agent lands, so this pack validates today.
+  - id: architect
+    type: agent
+    agent: architect
+    inputs: [scope]
+    outputs: [architecture]
+    includeInitialInput: true
+    timeout: 30m
+    retry:
+      max: 1
+      backoff: fixed
+  - id: frontend-design
+    type: agent
+    agent: frontend-designer
+    inputs: [architecture]
+    outputs: [frontend_spec]
+    inputsFrom: [architect]
+    includeInitialInput: true
+    timeout: 30m
+  - id: backend-design
+    type: agent
+    agent: backend-designer
+    inputs: [architecture]
+    outputs: [backend_spec]
+    inputsFrom: [architect]
+    includeInitialInput: true
+    timeout: 30m
+  # Seller gate: the critic rubric scores the incoming design before the critic
+  # runs. A design that cannot clear the rubric after architect revisions is a
+  # hard stop, so build/verify/observe can never proceed on a rejected design.
+  - id: critic
+    type: agent
+    agent: critic
+    inputs: [frontend_spec, backend_spec]
+    outputs: [critique, acceptance]
+    inputsFrom: [frontend-design, backend-design]
+    includeInitialInput: true
+    gate: evals/self-build-rubrics.yaml#critic
+    revisionAgent: architect
+    timeout: 15m
+    approval:
+      mode: never
+      position: after
+      riskClass: high
+      ttl: 1h
+  - id: build
+    type: coder
+    coder: dsh
+    goal: Implement the accepted architecture as a minimal, reversible change in the sandbox, covering every Critic acceptance criterion.
+    acceptance: The patch stays inside the architecture scope, adds or updates regression tests, and passes typecheck, lint and the relevant tests.
+    inputs: [architecture, critique]
+    outputs: [patch]
+    inputsFrom: [architect, critic]
+    includeInitialInput: true
+    timeout: 40m
+    retry:
+      max: 1
+      backoff: fixed
+  - id: verify
+    type: agent
+    agent: verifier
+    inputs: [patch]
+    outputs: [verification]
+    inputsFrom: [build]
+    includeInitialInput: true
+    timeout: 25m
+  # Observe/apply: the manager reports and the operator decides. Applying the
+  # patch is never done here; it goes through the iteration risk/apply path in
+  # packages/iteration (low/medium auto-merge, high approval, forbidden blocked).
+  - id: observe
+    type: agent
+    agent: manager
+    inputs: [critique, verification]
+    outputs: [report]
+    inputsFrom: [critic, verify]
+    includeInitialInput: true
+    timeout: 10m
+delivery:
+  channel: local_file

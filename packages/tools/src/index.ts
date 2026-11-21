@@ -15,11 +15,13 @@ import {
   securityScanDependenciesTool,
 } from "./security-tools";
 import type { Tool } from "./types";
-import { browserInspectTool, httpFetchTool } from "./web-tools";
+import { browserInspectTool, httpFetchTool, webSearchTool } from "./web-tools";
 
 export * from "./declarative";
 export { resetMcpSessions } from "./mcp";
 export * from "./types";
+export type { WebSearchHit } from "./web-tools";
+export { webSearchTool } from "./web-tools";
 export {
   repoReadTool,
   repoSearchTool,
@@ -42,6 +44,7 @@ const TOOLS: Tool[] = [
   securityScanDependenciesTool,
   httpFetchTool,
   browserInspectTool,
+  webSearchTool,
 ];
 
 const BY_NAME = new Map(TOOLS.map((tool) => [tool.definition.name, tool]));

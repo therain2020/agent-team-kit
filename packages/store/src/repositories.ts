@@ -327,6 +327,8 @@ export interface TriggerRunRecord {
   launchedAt: string;
   estimateCny: number;
   payloadRef: string | null;
+  /** Reaction rule that produced this firing (98 I-3); null for other kinds. */
+  reactionRuleId?: string | null;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
@@ -336,6 +338,9 @@ export interface TriggerRunListOptions {
   triggerId?: string;
   status?: string;
   since?: string;
+  /** Event payload reference; `information:<eventId>` for reactions. */
+  payloadRef?: string;
+  reactionRuleId?: string;
   limit?: number;
 }
 
@@ -447,6 +452,7 @@ export function toRunRow(run: Run) {
     originKind: run.originKind ?? null,
     triggerId: run.triggerId ?? null,
     triggerRunId: run.triggerRunId ?? null,
+    reactionRuleId: run.reactionRuleId ?? null,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };
@@ -466,6 +472,7 @@ export function fromRunRow(row: typeof runs.$inferSelect): Run {
     originKind: (row.originKind as RunOriginKind | null) ?? "unknown",
     ...(row.triggerId ? { triggerId: row.triggerId } : {}),
     ...(row.triggerRunId ? { triggerRunId: row.triggerRunId } : {}),
+    ...(row.reactionRuleId ? { reactionRuleId: row.reactionRuleId } : {}),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -1445,6 +1452,7 @@ export function toTriggerRunRow(record: TriggerRunRecord) {
     launchedAt: record.launchedAt,
     estimateCny: String(record.estimateCny),
     payloadRef: record.payloadRef,
+    reactionRuleId: record.reactionRuleId ?? null,
     lastError: record.lastError,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -1464,6 +1472,7 @@ interface TriggerRunRowLike {
   launchedAt: string;
   estimateCny: string | number;
   payloadRef: string | null;
+  reactionRuleId: string | null;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
@@ -1483,6 +1492,7 @@ export function fromTriggerRunRow(row: TriggerRunRowLike): TriggerRunRecord {
     launchedAt: row.launchedAt,
     estimateCny: Number(row.estimateCny ?? 0),
     payloadRef: row.payloadRef ?? null,
+    reactionRuleId: row.reactionRuleId ?? null,
     lastError: row.lastError ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -1711,6 +1721,12 @@ export class PostgresTriggerRunStore implements TriggerRunStore {
     }
     if (options.status) {
       conditions.push(eq(triggerRuns.status, options.status));
+    }
+    if (options.payloadRef) {
+      conditions.push(eq(triggerRuns.payloadRef, options.payloadRef));
+    }
+    if (options.reactionRuleId) {
+      conditions.push(eq(triggerRuns.reactionRuleId, options.reactionRuleId));
     }
     if (options.since) {
       conditions.push(sql`${triggerRuns.launchedAt} >= ${options.since}`);

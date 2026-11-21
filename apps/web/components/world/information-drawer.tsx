@@ -1,7 +1,9 @@
 import { ProfileEditor } from "@/components/information/profile-editor";
+import { ScoutPanel } from "@/components/information/scout-panel";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { loadInformationView } from "@/lib/information";
+import { scoutNetworkAllowed } from "@/lib/scout";
 import { timeAgo } from "@/lib/utils";
 import { Activity, Globe2, ShieldAlert, Sparkles, X } from "lucide-react";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -98,6 +100,8 @@ export async function InformationDrawer({
           initialProfile={view.profile}
           persisted={view.persisted}
         />
+
+        <ScoutPanel networkEnabled={scoutNetworkAllowed()} />
 
         <Card>
           <CardHeader className="flex-row items-center justify-between">

@@ -8,14 +8,19 @@ import {
   PixelAgent,
   PixelCrate,
   PixelDesk,
+  PixelDoor,
   PixelPlant,
-  PixelRoom,
+  PixelWorld,
   StampEffect,
   ToolBubble,
+  WorldHud,
+  agentSeed,
   useConveyorReverse,
   usePixelMotion,
 } from "@/components/pixel";
 import { SinceLabel } from "@/components/world/world-status";
+import type { FactoryLinkItem } from "@/lib/factory";
+import { FACTORY_ROOM_HREF } from "@/lib/office-deeplink";
 import type { LiveAgent } from "@/lib/office-live";
 import {
   type PixelAgentState,
@@ -26,7 +31,15 @@ import type { Ticker } from "@/lib/use-ticker";
 import { cn, formatCny, formatNumber } from "@/lib/utils";
 import type { WorldCrate } from "@/lib/world-cues";
 import { shortStage } from "@/lib/world-state";
-import { Coffee, Gamepad2, Lock, Monitor, Package, Wifi } from "lucide-react";
+import {
+  Coffee,
+  Factory,
+  Gamepad2,
+  Lock,
+  Monitor,
+  Package,
+  Wifi,
+} from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -59,6 +72,8 @@ export interface FloorFlow {
  */
 export function FactoryFloor({
   packName,
+  pendingCount,
+  pendingItems,
   manager,
   employees,
   agents,
@@ -80,6 +95,10 @@ export function FactoryFloor({
   onEscape,
 }: {
   packName: string;
+  /** Door plate count, kept in sync with the factory gate (97 §3.5). */
+  pendingCount: number;
+  /** First pending workpieces, shown in the door plate tooltip. */
+  pendingItems: readonly FactoryLinkItem[];
   manager?: LiveAgent;
   employees: LiveAgent[];
   agents: LiveAgent[];
@@ -216,37 +235,52 @@ export function FactoryFloor({
   };
 
   return (
-    <PixelRoom>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="flex size-7 items-center justify-center rounded-none border border-px-line2 bg-px-panel3 font-mono text-[10px] text-px-accent">
-            KIT
+    <PixelWorld
+      title={`${packName} · ${t("room")}`}
+      subtitle={`${t("floor")} · ${t("gameMode")}`}
+      hud={
+        <WorldHud
+          items={[
+            {
+              key: "pending",
+              label: t("pendingApprovals"),
+              value: pendingCount,
+              tone: pendingCount > 0 ? "warn" : "default",
+            },
+            {
+              key: "cost",
+              label: t("flowCostLabel"),
+              value: formatCny(flow.costCny),
+            },
+          ]}
+        />
+      }
+      doors={
+        <PixelDoor
+          href={FACTORY_ROOM_HREF}
+          label={t("factoryDoor")}
+          count={pendingCount}
+          icon={<Factory className="size-3.5" aria-hidden="true" />}
+          shortcut="F"
+          title={pendingItems.map((item) => item.summary).join("\n")}
+        />
+      }
+    >
+      <div className="mb-2 flex items-center justify-end gap-2 font-mono text-[9px] text-px-faint">
+        {locked && selected ? (
+          <span className="flex items-center gap-1 border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200">
+            <Lock className="size-3" />
+            {t("lockedCamera", { agent: selected.id })}
           </span>
-          <div>
-            <p className="text-[11px] font-medium text-px-text">
-              {packName} · {t("room")}
-            </p>
-            <p className="font-mono text-[9px] text-px-faint">
-              {t("floor")} · {t("gameMode")}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 font-mono text-[9px] text-px-faint">
-          {locked && selected ? (
-            <span className="flex items-center gap-1 border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200">
-              <Lock className="size-3" />
-              {t("lockedCamera", { agent: selected.id })}
-            </span>
-          ) : null}
-          <span className="flex items-center gap-1">
-            <Wifi className="size-3 text-emerald-400" />
-            {t("local")}
-          </span>
-          <span className="flex items-center gap-1">
-            <Coffee className="size-3 text-amber-300" />
-            {t("coffee")}
-          </span>
-        </div>
+        ) : null}
+        <span className="flex items-center gap-1">
+          <Wifi className="size-3 text-emerald-400" />
+          {t("local")}
+        </span>
+        <span className="flex items-center gap-1">
+          <Coffee className="size-3 text-amber-300" />
+          {t("coffee")}
+        </span>
       </div>
 
       <HoverHud agent={hovered ?? selected} locked={locked} />
@@ -299,7 +333,6 @@ export function FactoryFloor({
             renderItem={(agent, api) => (
               <Station
                 agent={agent}
-                index={agent.isManager ? 0 : employees.indexOf(agent)}
                 spriteState={
                   spriteStates[agent.id]?.state ??
                   pixelStateFromStatus(agent.status)
@@ -396,7 +429,7 @@ export function FactoryFloor({
         onOpen={onOpen}
         className="mt-3 md:hidden"
       />
-    </PixelRoom>
+    </PixelWorld>
   );
 }
 
@@ -478,7 +511,6 @@ function Station({
   locked,
   hovered,
   manager = false,
-  index = 0,
   tabIndex,
   registerRef,
   onHover,
@@ -494,7 +526,6 @@ function Station({
   locked: boolean;
   hovered: boolean;
   manager?: boolean;
-  index?: number;
   /** Roving tabindex supplied by `StationGrid`. */
   tabIndex: 0 | -1;
   registerRef: (node: HTMLButtonElement | null) => void;
@@ -546,7 +577,7 @@ function Station({
       </span>
       <span className="relative mb-1">
         <PixelAgent
-          seed={index + (manager ? 7 : 0)}
+          seed={agentSeed(agent.id)}
           manager={manager}
           state={spriteState}
           tick={tick}

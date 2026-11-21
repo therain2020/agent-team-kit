@@ -120,7 +120,7 @@ export async function listJobs(
     const rows = filter.status
       ? await store.sql<IterationJobRow[]>`
           SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
-                 origin_kind, trigger_id, trigger_run_id,
+                 origin_kind, trigger_id, trigger_run_id, reaction_rule_id,
                  started_at, updated_at, finished_at
           FROM iteration_runs
           WHERE status = ${filter.status}
@@ -129,7 +129,7 @@ export async function listJobs(
         `
       : await store.sql<IterationJobRow[]>`
           SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
-                 origin_kind, trigger_id, trigger_run_id,
+                 origin_kind, trigger_id, trigger_run_id, reaction_rule_id,
                  started_at, updated_at, finished_at
           FROM iteration_runs
           ORDER BY updated_at DESC
@@ -156,7 +156,7 @@ export async function listJobs(
     const rows = filter.status
       ? await store.sql<RunJobRow[]>`
           SELECT run_id, workflow_id, run_mode, status, origin_kind, trigger_id,
-                 trigger_run_id, created_at, updated_at
+                 trigger_run_id, reaction_rule_id, created_at, updated_at
           FROM runs
           WHERE status = ${filter.status}
           ORDER BY updated_at DESC
@@ -164,7 +164,7 @@ export async function listJobs(
         `
       : await store.sql<RunJobRow[]>`
           SELECT run_id, workflow_id, run_mode, status, origin_kind, trigger_id,
-                 trigger_run_id, created_at, updated_at
+                 trigger_run_id, reaction_rule_id, created_at, updated_at
           FROM runs
           ORDER BY updated_at DESC
           LIMIT ${limit}
@@ -199,7 +199,7 @@ export async function getJob(
   if (kind === "iteration") {
     const rows = await store.sql<IterationJobRow[]>`
       SELECT iteration_id, goal, status, phase, run_mode, workflow_id,
-             origin_kind, trigger_id, trigger_run_id,
+             origin_kind, trigger_id, trigger_run_id, reaction_rule_id,
              started_at, updated_at, finished_at
       FROM iteration_runs WHERE iteration_id = ${jobId} LIMIT 1
     `;
@@ -224,7 +224,7 @@ export async function getJob(
 
   const rows = await store.sql<RunJobRow[]>`
     SELECT run_id, workflow_id, run_mode, status, origin_kind, trigger_id,
-           trigger_run_id, created_at, updated_at
+           trigger_run_id, reaction_rule_id, created_at, updated_at
     FROM runs WHERE run_id = ${jobId} LIMIT 1
   `;
   const row = rows[0];
@@ -580,19 +580,29 @@ async function startIterationJob(
     ...(budget ? { budget } : {}),
     ...(dedupeKey ? { dedupeKey } : {}),
     origin: toRunOrigin(origin),
+    // The event router only routes to a canary variant; champion traffic has
+    // no change to attribute. A promoted change is recorded when its caller
+    // supplies the change explicitly (the pack itself carries no provenance).
+    ...(input.variant?.role === "canary"
+      ? { changeId: input.variant.variantId, changeStage: "canary" as const }
+      : {}),
   };
 
   const now = new Date().toISOString();
   await store.sql`
     INSERT INTO iteration_runs (
       iteration_id, workflow_id, workspace_id, repo_root, origin_kind,
-      trigger_id, trigger_run_id, goal, acceptance,
-      run_mode, apply_mode, status, phase, started_at, updated_at
+      trigger_id, trigger_run_id, reaction_rule_id, goal, acceptance,
+      run_mode, apply_mode, status, phase, change_id, change_stage,
+      started_at, updated_at
     ) VALUES (
       ${iterationId}, ${workflowId}, ${workspaceId}, ${project.path},
       ${origin.kind}, ${origin.triggerId ?? null}, ${origin.triggerRunId ?? null},
+      ${origin.reactionRuleId ?? null},
       ${iterationInput.goal}, ${iterationInput.acceptance ?? null},
-      ${runMode}, ${applyMode}, 'running', 'queued', ${now}, ${now}
+      ${runMode}, ${applyMode}, 'running', 'queued',
+      ${iterationInput.changeId ?? null}, ${iterationInput.changeStage ?? null},
+      ${now}, ${now}
     )
     ON CONFLICT (iteration_id) DO NOTHING
   `;
@@ -896,6 +906,7 @@ function toRunOrigin(origin: JobOriginRecord): RunOrigin {
     kind: origin.kind,
     ...(origin.triggerId ? { triggerId: origin.triggerId } : {}),
     ...(origin.triggerRunId ? { triggerRunId: origin.triggerRunId } : {}),
+    ...(origin.reactionRuleId ? { reactionRuleId: origin.reactionRuleId } : {}),
   };
 }
 
@@ -1015,6 +1026,7 @@ interface OriginJobRow {
   origin_kind: string | null;
   trigger_id: string | null;
   trigger_run_id: string | null;
+  reaction_rule_id: string | null;
 }
 
 interface IterationJobRow extends OriginJobRow {
@@ -1043,10 +1055,12 @@ function originSummary(row: OriginJobRow): {
   originKind: RunOriginKind;
   triggerId: string | null;
   triggerRunId: string | null;
+  reactionRuleId: string | null;
 } {
   return {
     originKind: (row.origin_kind as RunOriginKind | null) ?? "unknown",
     triggerId: row.trigger_id ?? null,
     triggerRunId: row.trigger_run_id ?? null,
+    reactionRuleId: row.reaction_rule_id ?? null,
   };
 }

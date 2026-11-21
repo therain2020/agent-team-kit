@@ -3,18 +3,24 @@ import path from "node:path";
 import { recordShadowEvolutionCycle } from "@kit/change";
 import { CliError } from "@kit/core";
 import {
+  type ChangeStage,
   DEFAULT_CONVERGENCE_WINDOW,
   DEFAULT_DIVERGENCE_WINDOW,
   type EvolutionFreezeKind,
   type OutcomeSource,
   StoreEvolutionRepository,
+  appendAttributionRecord,
+  applyAttributionOutcome,
+  buildAttributionRecord,
   buildDivergencePoints,
   canaryStatus,
   compareVariants,
   convergenceGuard,
+  defaultAttributionPath,
   defaultCyclesRoot,
   defaultGovernancePath,
   defaultHiddenEvalsDir,
+  defaultIterationsPath,
   defaultOutcomesPath,
   divergenceGuard,
   evaluateCanary,
@@ -22,11 +28,13 @@ import {
   evolutionCostReport,
   freezeEvolution,
   initVariant,
+  loadAttributionRecords,
   loadEvolutionCycles,
   loadFreezeState,
   loadGovernanceEvents,
   promoteVariant,
   proposeVariant,
+  readIterationSignals,
   readOutcomeObservations,
   recordOutcome,
   rollbackCanary,
@@ -763,6 +771,128 @@ export function registerEvolve(program: Command): void {
           outcomes: file.outcomes.slice(-limit),
         };
         emitResult(json, data);
+      },
+    );
+
+  evolve
+    .command("attribute <changeId>")
+    .description(
+      "Compare live fitness before/after a change; pause and auto-revert a divergence",
+    )
+    .option(
+      "--offline-delta <n>",
+      "offline evaluation score delta for the change",
+      "0",
+    )
+    .option("--stage <stage>", "canary | promoted")
+    .option(
+      "--signals-root <dir>",
+      "directory holding iterations.jsonl (default KIT_SIGNALS_ROOT or ~/.agent-team-kit/signals)",
+    )
+    .option("--file <path>", "attribution record log", defaultAttributionPath())
+    .option("--proposal <id>", "unified change proposal to revert")
+    .option("--no-rollback", "record the divergence without reverting")
+    .option("--min-tasks <n>", "minimum tasks per window", "3")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        changeId: string,
+        options: {
+          offlineDelta: string;
+          stage?: string;
+          signalsRoot?: string;
+          file: string;
+          proposal?: string;
+          rollback?: boolean;
+          minTasks: string;
+          json?: boolean;
+        },
+      ) => {
+        const json = wantsJson(options);
+        const offlineScoreDelta = Number(options.offlineDelta);
+        const minTasks = Number(options.minTasks);
+        if (!Number.isFinite(offlineScoreDelta)) {
+          emitError(
+            json,
+            new CliError("usage", "offline-delta must be a finite number"),
+          );
+          return;
+        }
+        if (!Number.isInteger(minTasks) || minTasks < 1) {
+          emitError(
+            json,
+            new CliError("usage", "min-tasks must be a positive integer"),
+          );
+          return;
+        }
+        const stage =
+          options.stage === "canary" || options.stage === "promoted"
+            ? (options.stage as ChangeStage)
+            : undefined;
+        if (options.stage && !stage) {
+          emitError(
+            json,
+            new CliError("usage", "stage must be canary or promoted"),
+          );
+          return;
+        }
+        try {
+          const variantsRoot = path.resolve("variants");
+          const record = await withEvolutionRepo(async (repo, store) => {
+            const signalFile = await readIterationSignals(
+              defaultIterationsPath(options.signalsRoot),
+            );
+            const built = buildAttributionRecord({
+              workspaceId: repo.workspaceId,
+              changeId,
+              ...(stage ? { stage } : {}),
+              signals: signalFile.signals,
+              offlineScoreDelta,
+              thresholds: { minTasks },
+            });
+            if (!built.divergent) {
+              return built;
+            }
+            const state = await canaryStatus({ repo });
+            const canaryActive =
+              state?.canary?.variantId === changeId &&
+              (state.canary.status === "canary" ||
+                state.canary.status === "shadow");
+            return await applyAttributionOutcome({
+              record: built,
+              freeze: { repo },
+              governancePath: defaultGovernancePath(variantsRoot),
+              ...(options.rollback === false
+                ? {}
+                : {
+                    revert: {
+                      service: store.changeProposals,
+                      proposalId: options.proposal ?? null,
+                      ...(canaryActive ? { canary: { repo } } : {}),
+                    },
+                  }),
+            });
+          });
+          await appendAttributionRecord(record, options.file);
+          emitResult(json, record);
+        } catch (error) {
+          reportError("attribute", error, json);
+        }
+      },
+    );
+
+  evolve
+    .command("attributions")
+    .description("List attribution records (newest first)")
+    .option("--limit <n>", "number of records", "20")
+    .option("--file <path>", "attribution record log", defaultAttributionPath())
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: { limit: string; file: string; json?: boolean }) => {
+        const json = wantsJson(options);
+        const limit = Math.max(1, Number(options.limit) || 20);
+        const records = await loadAttributionRecords(options.file, limit);
+        emitResult(json, { file: options.file, records });
       },
     );
 

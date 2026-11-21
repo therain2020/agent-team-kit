@@ -32,6 +32,7 @@ import { registerModel } from "../src/commands/model";
 import { registerPack } from "../src/commands/pack";
 import { registerPatch } from "../src/commands/patch";
 import { registerPublish } from "../src/commands/publish";
+import { registerReaction } from "../src/commands/reaction";
 import { registerRun } from "../src/commands/run";
 import { registerSignals } from "../src/commands/signals";
 import { registerSource } from "../src/commands/source";
@@ -160,6 +161,7 @@ function buildProgram(): Command {
   registerEvent(program);
   registerUp(program);
   registerJob(program);
+  registerReaction(program);
   registerKillSwitch(program);
   registerIterate(program);
   registerSignals(program);

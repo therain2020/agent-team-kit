@@ -30,6 +30,12 @@ export interface IterationInput {
   origin?: RunOrigin;
   /** Queue priority (60 §2); derived from the triggering event when absent. */
   priority?: PriorityClass;
+  /**
+   * Effective change this iteration runs under (a canary variant), recorded on
+   * the run and its tasks so live fitness can be attributed to it (85 §3.5).
+   */
+  changeId?: string;
+  changeStage?: "canary" | "promoted";
 }
 
 export interface PlannedIteration {

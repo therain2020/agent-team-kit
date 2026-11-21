@@ -16,6 +16,8 @@ export interface JobOriginRecord {
   kind: JobOriginKind;
   triggerId?: string;
   triggerRunId?: string;
+  /** Set when `kind` is `information` (98 I-3). */
+  reactionRuleId?: string;
   actor: string;
 }
 
@@ -36,6 +38,7 @@ export function normalizeJobOrigin(origin?: StartJobOrigin): JobOriginRecord {
     kind: origin.kind,
     ...(origin.triggerId ? { triggerId: origin.triggerId } : {}),
     ...(origin.triggerRunId ? { triggerRunId: origin.triggerRunId } : {}),
+    ...(origin.reactionRuleId ? { reactionRuleId: origin.reactionRuleId } : {}),
     actor: origin.actor,
   };
 }
@@ -125,6 +128,8 @@ export interface JobSummary {
   originKind: RunOriginKind;
   triggerId: string | null;
   triggerRunId: string | null;
+  /** Reaction rule id for `origin_kind = information` (98 I-3). */
+  reactionRuleId: string | null;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;

@@ -44,6 +44,8 @@ export const runOriginSchema = z.object({
   kind: runOriginKindSchema,
   triggerId: z.string().min(1).optional(),
   triggerRunId: z.string().min(1).optional(),
+  /** Set when `kind` is `information` (98 I-3). */
+  reactionRuleId: z.string().min(1).optional(),
 });
 
 export type RunOrigin = z.infer<typeof runOriginSchema>;
@@ -59,6 +61,7 @@ export const runSchema = z.object({
   originKind: runOriginKindSchema.optional(),
   triggerId: z.string().optional(),
   triggerRunId: z.string().optional(),
+  reactionRuleId: z.string().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

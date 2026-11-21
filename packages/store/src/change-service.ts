@@ -3,6 +3,7 @@ import {
   type Blob,
   type ChangeProducer,
   type ChangeProposal,
+  type ChangeRevertRef,
   type ChangeState,
   type ChangeTransition,
   ChangeTransitionError,
@@ -74,6 +75,24 @@ export type TransitionChangeProposalResult =
       current: ChangeProposal | null;
     };
 
+export interface SetChangeRevertInput {
+  proposalId: string;
+  /** Structured, executable revert record; null clears it. */
+  revert: ChangeRevertRef | null;
+  /** Compact display pointer; omit to keep the existing `revertRef`. */
+  revertRef?: string | null;
+  expectedVersion?: number;
+  at?: string;
+}
+
+export type SetChangeRevertResult =
+  | { ok: true; proposal: ChangeProposal }
+  | {
+      ok: false;
+      code: "not_found" | "version_conflict";
+      current: ChangeProposal | null;
+    };
+
 interface ChangeProposalRow {
   proposal_id: string;
   workspace_id: string;
@@ -87,6 +106,7 @@ interface ChangeProposalRow {
   eval_plan: unknown;
   source_ref: unknown;
   revert_ref: string | null;
+  revert: unknown;
   budget_ref: string | null;
   approval_ref: string | null;
   outcome: unknown;
@@ -137,7 +157,7 @@ export class ChangeProposalService {
       INSERT INTO change_proposals (
         proposal_id, workspace_id, substrate, producer, state, risk,
         hypothesis, acceptance, signal_refs, eval_plan, source_ref,
-        revert_ref, budget_ref, approval_ref, outcome, content_ref,
+        revert_ref, revert, budget_ref, approval_ref, outcome, content_ref,
         created_at, updated_at, version
       ) VALUES (
         ${parsed.id}, ${parsed.workspaceId}, ${parsed.substrate},
@@ -146,7 +166,9 @@ export class ChangeProposalService {
         ${this.store.sql.json(parsed.signalRefs)},
         ${this.store.sql.json(parsed.evalPlan)},
         ${parsed.sourceRef === null ? null : this.store.sql.json(parsed.sourceRef)},
-        ${parsed.revertRef}, ${parsed.budgetRef}, ${parsed.approvalRef},
+        ${parsed.revertRef},
+        ${parsed.revert === null ? null : this.store.sql.json(parsed.revert)},
+        ${parsed.budgetRef}, ${parsed.approvalRef},
         ${parsed.outcome === null ? null : this.store.sql.json(parsed.outcome)},
         ${contentRef}, ${parsed.createdAt}, ${parsed.updatedAt},
         ${parsed.version}
@@ -294,6 +316,67 @@ export class ChangeProposalService {
     };
   }
 
+  /**
+   * Links the approval that cleared a high-risk proposal. Idempotent and
+   * deliberately does not bump `version`: linking an approval is evidence, not
+   * a state transition, so a retried decision cannot invalidate a concurrent
+   * transition's CAS.
+   */
+  async setApprovalRef(
+    proposalId: string,
+    approvalRef: string,
+    at?: string,
+  ): Promise<ChangeProposal | null> {
+    const now = at ?? new Date().toISOString();
+    await this.store.sql`
+      UPDATE change_proposals
+      SET approval_ref = ${approvalRef},
+          updated_at = ${now}
+      WHERE proposal_id = ${proposalId}
+        AND (approval_ref IS NULL OR approval_ref = ${approvalRef})
+    `;
+    return await this.get(proposalId);
+  }
+
+  /**
+   * Attaches (or replaces) the structured revert record and its display
+   * pointer. Compare-and-set on `version`, so a concurrent transition loses
+   * instead of overwriting the newer row. This is metadata only: it never
+   * changes state or applies anything.
+   */
+  async setRevert(input: SetChangeRevertInput): Promise<SetChangeRevertResult> {
+    const current = await this.get(input.proposalId);
+    if (!current) {
+      return { ok: false, code: "not_found", current: null };
+    }
+    if (
+      input.expectedVersion !== undefined &&
+      current.version !== input.expectedVersion
+    ) {
+      return { ok: false, code: "version_conflict", current };
+    }
+    const revertRef =
+      input.revertRef === undefined ? current.revertRef : input.revertRef;
+    const at = input.at ?? new Date().toISOString();
+    const updated = await this.store.sql<ChangeProposalRow[]>`
+      UPDATE change_proposals
+      SET revert = ${input.revert === null ? null : this.store.sql.json(input.revert)},
+          revert_ref = ${revertRef},
+          updated_at = ${at},
+          version = version + 1
+      WHERE proposal_id = ${input.proposalId}
+        AND version = ${current.version}
+      RETURNING *
+    `;
+    const row = updated[0];
+    if (!row) {
+      const latest = await this.get(input.proposalId);
+      return { ok: false, code: "version_conflict", current: latest };
+    }
+    const history = await this.listTransitions(input.proposalId);
+    return { ok: true, proposal: mapProposalRow(row, history) };
+  }
+
   /** Reads a proposal payload previously stored via {@link create}. */
   async readContent(proposalId: string): Promise<Uint8Array | null> {
     const proposal = await this.get(proposalId);
@@ -390,6 +473,7 @@ function mapProposalRow(
     }),
     sourceRef: parseJson<unknown>(row.source_ref, null),
     revertRef: row.revert_ref,
+    revert: parseJson<unknown>(row.revert, null),
     budgetRef: row.budget_ref,
     approvalRef: row.approval_ref,
     outcome: parseJson<unknown>(row.outcome, null),

@@ -21,8 +21,9 @@ const TEMPORARY = false;
 export const LEGACY_REDIRECTS: LegacyRedirect[] = [
   // Command Center folded into the World surface.
   { source: "/", destination: "/world", permanent: TEMPORARY },
-  // Runs + Iterations + Activity are tabs/drawers of /world now.
-  { source: "/runs", destination: "/world?tab=runs", permanent: TEMPORARY },
+  // Lists folded into the unified `/jobs` observation surface (96 §5.5);
+  // individual jobs still drill into the `/world` hub.
+  { source: "/runs", destination: "/jobs", permanent: TEMPORARY },
   {
     source: "/runs/:runId",
     destination: "/world?run=:runId",
@@ -30,7 +31,7 @@ export const LEGACY_REDIRECTS: LegacyRedirect[] = [
   },
   {
     source: "/iterations",
-    destination: "/world?tab=iterations",
+    destination: "/jobs?kind=iteration",
     permanent: TEMPORARY,
   },
   {
@@ -74,10 +75,11 @@ export const LEGACY_REDIRECTS: LegacyRedirect[] = [
     destination: "/packs?pack=:dirName",
     permanent: TEMPORARY,
   },
-  // Ops + Degradation + Budgets + Kill switch + Autopilot are /ops sections.
+  // Autopilot's control surface moved to `/triggers` (96 §5.5); the rest are
+  // still `/ops` sections.
   {
     source: "/autopilot",
-    destination: "/ops?section=control",
+    destination: "/triggers",
     permanent: TEMPORARY,
   },
   {

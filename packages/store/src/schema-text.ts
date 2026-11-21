@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS runs (
   origin_kind TEXT,
   trigger_id TEXT,
   trigger_run_id TEXT,
+  reaction_rule_id TEXT,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
@@ -122,6 +123,7 @@ CREATE TABLE IF NOT EXISTS trigger_runs (
   launched_at TIMESTAMPTZ NOT NULL,
   estimate_cny NUMERIC NOT NULL DEFAULT 0,
   payload_ref TEXT,
+  reaction_rule_id TEXT,
   last_error TEXT,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
@@ -170,9 +172,16 @@ ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS repo_root TEXT;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS origin_kind TEXT;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS trigger_id TEXT;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS trigger_run_id TEXT;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS reaction_rule_id TEXT;
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS origin_kind TEXT;
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS trigger_id TEXT;
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS trigger_run_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS change_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS change_stage TEXT;
+ALTER TABLE iteration_tasks ADD COLUMN IF NOT EXISTS change_id TEXT;
+ALTER TABLE iteration_tasks ADD COLUMN IF NOT EXISTS change_stage TEXT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS reaction_rule_id TEXT;
+ALTER TABLE trigger_runs ADD COLUMN IF NOT EXISTS reaction_rule_id TEXT;
 
 CREATE TABLE IF NOT EXISTS kill_switches (
   switch_id TEXT PRIMARY KEY,
@@ -387,6 +396,8 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   plan_artifact_id TEXT,
   report_artifact_id TEXT,
   error TEXT,
+  change_id TEXT,
+  change_stage TEXT,
   last_heartbeat_at TIMESTAMPTZ,
   last_event_id BIGINT,
   turn_count INTEGER NOT NULL DEFAULT 0,
@@ -413,6 +424,8 @@ CREATE TABLE IF NOT EXISTS iteration_tasks (
   apply_status TEXT,
   commit_sha TEXT,
   error TEXT,
+  change_id TEXT,
+  change_stage TEXT,
   diff_artifact_id TEXT,
   transcript_artifact_id TEXT,
   result_artifact_id TEXT,
@@ -774,6 +787,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_reason TEXT,
   assignee TEXT,
   assigned_at TIMESTAMPTZ,
+  substrate TEXT,
+  change_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL
 );
@@ -784,6 +799,10 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS substrate TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS change_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_approvals_change
+  ON approvals(change_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS cost_records (
   record_id TEXT PRIMARY KEY,
@@ -966,6 +985,42 @@ CREATE TABLE IF NOT EXISTS information_signal_audits (
 CREATE INDEX IF NOT EXISTS idx_information_signal_audits_ws
   ON information_signal_audits(workspace_id, scored_at DESC);
 
+CREATE TABLE IF NOT EXISTS reaction_rules (
+  rule_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  version INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  match_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  target_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  mission_template TEXT,
+  run_mode TEXT NOT NULL DEFAULT 'DRY_RUN',
+  budget JSONB,
+  approval JSONB NOT NULL DEFAULT '{}'::jsonb,
+  priority INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'human',
+  rationale TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, rule_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_reaction_rules_version
+  ON reaction_rules(workspace_id, rule_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS reaction_rule_audits (
+  audit_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  rule_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  before JSONB,
+  after JSONB NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reaction_rule_audits_ws
+  ON reaction_rule_audits(workspace_id, occurred_at DESC);
+
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -1055,6 +1110,7 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   eval_plan JSONB NOT NULL DEFAULT '{}'::jsonb,
   source_ref JSONB,
   revert_ref TEXT,
+  revert JSONB,
   budget_ref TEXT,
   approval_ref TEXT,
   outcome JSONB,
@@ -1063,6 +1119,8 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   updated_at TIMESTAMPTZ NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE change_proposals ADD COLUMN IF NOT EXISTS revert JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
   ON change_proposals(workspace_id, created_at DESC);
@@ -1111,6 +1169,7 @@ CREATE TABLE IF NOT EXISTS runs (
   origin_kind TEXT,
   trigger_id TEXT,
   trigger_run_id TEXT,
+  reaction_rule_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
@@ -1212,6 +1271,7 @@ CREATE TABLE IF NOT EXISTS trigger_runs (
   launched_at TEXT NOT NULL,
   estimate_cny REAL NOT NULL DEFAULT 0,
   payload_ref TEXT,
+  reaction_rule_id TEXT,
   last_error TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -1424,6 +1484,8 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   plan_artifact_id TEXT,
   report_artifact_id TEXT,
   error TEXT,
+  change_id TEXT,
+  change_stage TEXT,
   last_heartbeat_at TEXT,
   last_event_id INTEGER,
   turn_count INTEGER NOT NULL DEFAULT 0,
@@ -1450,6 +1512,8 @@ CREATE TABLE IF NOT EXISTS iteration_tasks (
   apply_status TEXT,
   commit_sha TEXT,
   error TEXT,
+  change_id TEXT,
+  change_stage TEXT,
   diff_artifact_id TEXT,
   transcript_artifact_id TEXT,
   result_artifact_id TEXT,
@@ -1729,9 +1793,16 @@ ALTER TABLE iteration_runs ADD COLUMN repo_root TEXT;
 ALTER TABLE runs ADD COLUMN origin_kind TEXT;
 ALTER TABLE runs ADD COLUMN trigger_id TEXT;
 ALTER TABLE runs ADD COLUMN trigger_run_id TEXT;
+ALTER TABLE runs ADD COLUMN reaction_rule_id TEXT;
 ALTER TABLE iteration_runs ADD COLUMN origin_kind TEXT;
 ALTER TABLE iteration_runs ADD COLUMN trigger_id TEXT;
 ALTER TABLE iteration_runs ADD COLUMN trigger_run_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN change_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN change_stage TEXT;
+ALTER TABLE iteration_tasks ADD COLUMN change_id TEXT;
+ALTER TABLE iteration_tasks ADD COLUMN change_stage TEXT;
+ALTER TABLE iteration_runs ADD COLUMN reaction_rule_id TEXT;
+ALTER TABLE trigger_runs ADD COLUMN reaction_rule_id TEXT;
 
 ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_path TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN eval_snapshot_hash TEXT;
@@ -1847,6 +1918,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_reason TEXT,
   assignee TEXT,
   assigned_at TEXT,
+  substrate TEXT,
+  change_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
@@ -1857,6 +1930,10 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN assignee TEXT;
 ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
+ALTER TABLE approvals ADD COLUMN substrate TEXT;
+ALTER TABLE approvals ADD COLUMN change_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_approvals_change
+  ON approvals(change_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS cost_records (
   record_id TEXT PRIMARY KEY,
@@ -2039,6 +2116,42 @@ CREATE TABLE IF NOT EXISTS information_signal_audits (
 CREATE INDEX IF NOT EXISTS idx_information_signal_audits_ws
   ON information_signal_audits(workspace_id, scored_at DESC);
 
+CREATE TABLE IF NOT EXISTS reaction_rules (
+  rule_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  version INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  match_json TEXT NOT NULL DEFAULT '{}',
+  target_json TEXT NOT NULL DEFAULT '{}',
+  mission_template TEXT,
+  run_mode TEXT NOT NULL DEFAULT 'DRY_RUN',
+  budget TEXT,
+  approval TEXT NOT NULL DEFAULT '{}',
+  priority INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'human',
+  rationale TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, rule_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_reaction_rules_version
+  ON reaction_rules(workspace_id, rule_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS reaction_rule_audits (
+  audit_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  rule_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  before TEXT,
+  after TEXT NOT NULL,
+  occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reaction_rule_audits_ws
+  ON reaction_rule_audits(workspace_id, occurred_at DESC);
+
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -2128,6 +2241,7 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   eval_plan TEXT NOT NULL DEFAULT '{}',
   source_ref TEXT,
   revert_ref TEXT,
+  revert TEXT,
   budget_ref TEXT,
   approval_ref TEXT,
   outcome TEXT,
@@ -2136,6 +2250,8 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE change_proposals ADD COLUMN revert TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
   ON change_proposals(workspace_id, created_at DESC);
