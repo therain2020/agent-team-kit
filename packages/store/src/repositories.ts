@@ -12,6 +12,7 @@ import type {
   KillSwitch,
   LastKnownGood,
   Manifest,
+  PriorityClass,
   QualityFloor,
   RecoveryDrill,
   Run,
@@ -24,7 +25,7 @@ import type {
   Stage,
   StageStatus,
 } from "@kit/core";
-import { newId, switchLastKnownGood } from "@kit/core";
+import { newId, normalizePriority, switchLastKnownGood } from "@kit/core";
 import {
   type SQL,
   and,
@@ -218,14 +219,44 @@ export interface AutopilotStateRecord {
 /** Discriminates which pipeline a queued local request belongs to. */
 export type RunRequestKind = "pack_run" | "iteration";
 
-export interface RunRequestRecord {
+export type RunRequestStatus =
+  | "queued"
+  | "claimed"
+  | "done"
+  | "failed"
+  | "cancelled"
+  /** Rejected by the admission gate under pressure (60 §3.4). */
+  | "dropped";
+
+/** Fields accepted when enqueuing; priority defaults to P2 at the store edge. */
+export interface RunRequestEnqueueRecord {
   requestId: string;
   runId: string;
   workspaceId: string;
   workflowId: string;
   kind: RunRequestKind;
   payload: string;
-  status: "queued" | "claimed" | "done" | "failed" | "cancelled";
+  createdAt: string;
+  updatedAt: string;
+  /** Admission priority class; legacy callers may omit it (P2). */
+  priority?: PriorityClass;
+  /** `dropped` records an admission rejection for audit instead of queueing. */
+  status?: "queued" | "dropped";
+  admissionReason?: string | null;
+}
+
+export interface RunRequestRecord {
+  requestId: string;
+  runId: string;
+  workspaceId: string;
+  workflowId: string;
+  kind: RunRequestKind;
+  /** Effective priority class; legacy rows derive it from the payload. */
+  priority: PriorityClass;
+  /** Why the admission gate dropped or merged this request. */
+  admissionReason: string | null;
+  payload: string;
+  status: RunRequestStatus;
   claimedBy: string | null;
   claimedAt: string | null;
   heartbeatAt: string | null;
@@ -255,19 +286,34 @@ export interface KillSwitchStore {
 }
 
 export interface RunRequestStore {
-  enqueue(
-    record: Pick<
-      RunRequestRecord,
-      | "requestId"
-      | "runId"
-      | "workspaceId"
-      | "workflowId"
-      | "kind"
-      | "payload"
-      | "createdAt"
-      | "updatedAt"
-    >,
-  ): Promise<void>;
+  enqueue(record: RunRequestEnqueueRecord): Promise<void>;
+  /**
+   * Claimable requests (queued, plus stale claims) ordered by `created_at`.
+   * This is the data the fair-claim scheduler ranks; callers must go through
+   * `claim` for the atomic state transition.
+   */
+  listClaimable(
+    now: Date,
+    staleMs: number,
+    limit?: number,
+  ): Promise<RunRequestRecord[]>;
+  /**
+   * Atomically claims one request if it is still claimable. Returns null when
+   * another worker won the race or the request is no longer claimable.
+   */
+  claim(
+    requestId: string,
+    owner: string,
+    now: Date,
+    staleMs: number,
+  ): Promise<RunRequestRecord | null>;
+  /** Backlog depth used by the admission gate (queued rows only). */
+  countQueued(): Promise<number>;
+  /**
+   * Legacy FIFO claim. The local runner uses the fair scheduler instead (60.6);
+   * this remains as the store-level compatibility path and keeps its
+   * created_at ordering.
+   */
   claimNext(
     owner: string,
     now: Date,
@@ -1825,6 +1871,28 @@ export class PostgresManagerSessionStore implements ManagerSessionStore {
   }
 }
 
+/**
+ * Effective priority of a queued request. Rows written before 60.6 have no
+ * `priority` column value, so their class is recovered from the payload
+ * (`enqueueLocalRun` has stamped `payload.priority` since #21); unknown or
+ * missing values fall back to P2, the normal business default.
+ */
+export function resolveRunRequestPriority(
+  priority: string | null | undefined,
+  payload: string,
+): PriorityClass {
+  const stored = normalizePriority(priority);
+  if (stored) {
+    return stored;
+  }
+  try {
+    const parsed = JSON.parse(payload) as { priority?: unknown };
+    return normalizePriority(parsed.priority) ?? "P2";
+  } catch {
+    return "P2";
+  }
+}
+
 export function fromRunRequestRow(
   row: typeof runRequests.$inferSelect,
 ): RunRequestRecord {
@@ -1834,6 +1902,8 @@ export function fromRunRequestRow(
     workspaceId: row.workspaceId,
     workflowId: row.workflowId,
     kind: row.kind as RunRequestRecord["kind"],
+    priority: resolveRunRequestPriority(row.priority, row.payload),
+    admissionReason: row.admissionReason ?? null,
     payload: row.payload,
     status: row.status as RunRequestRecord["status"],
     claimedBy: row.claimedBy ?? null,
@@ -1863,8 +1933,10 @@ export class PostgresRunRequestStore implements RunRequestStore {
         workspaceId: record.workspaceId,
         workflowId: record.workflowId,
         kind: record.kind,
+        priority: record.priority ?? null,
+        admissionReason: record.admissionReason ?? null,
         payload: record.payload,
-        status: "queued",
+        status: record.status ?? "queued",
         claimedBy: null,
         claimedAt: null,
         heartbeatAt: null,
@@ -1876,44 +1948,81 @@ export class PostgresRunRequestStore implements RunRequestStore {
       .onConflictDoNothing();
   }
 
-  async claimNext(
+  async listClaimable(
+    now: Date,
+    staleMs: number,
+    limit = 500,
+  ): Promise<RunRequestRecord[]> {
+    const staleIso = new Date(now.getTime() - staleMs).toISOString();
+    const claimable = or(
+      eq(runRequests.status, "queued"),
+      and(
+        eq(runRequests.status, "claimed"),
+        lt(runRequests.heartbeatAt, staleIso),
+      ),
+    );
+    const rows = await this.db
+      .select()
+      .from(runRequests)
+      .where(claimable)
+      .orderBy(asc(runRequests.createdAt))
+      .limit(limit);
+    return rows.map(fromRunRequestRow);
+  }
+
+  async claim(
+    requestId: string,
     owner: string,
     now: Date,
     staleMs: number,
   ): Promise<RunRequestRecord | null> {
     const staleIso = new Date(now.getTime() - staleMs).toISOString();
     const nowIso = now.toISOString();
-    const claimable = () =>
-      or(
-        eq(runRequests.status, "queued"),
-        and(
-          eq(runRequests.status, "claimed"),
-          lt(runRequests.heartbeatAt, staleIso),
-        ),
-      );
+    const claimable = or(
+      eq(runRequests.status, "queued"),
+      and(
+        eq(runRequests.status, "claimed"),
+        lt(runRequests.heartbeatAt, staleIso),
+      ),
+    );
+    const [row] = await this.db
+      .update(runRequests)
+      .set({
+        status: "claimed",
+        claimedBy: owner,
+        claimedAt: nowIso,
+        heartbeatAt: nowIso,
+        leaseVersion: sql`${runRequests.leaseVersion} + 1`,
+        updatedAt: nowIso,
+      })
+      .where(and(eq(runRequests.requestId, requestId), claimable))
+      .returning();
+    return row ? fromRunRequestRow(row) : null;
+  }
 
-    const candidates = await this.db
-      .select({ requestId: runRequests.requestId })
+  async countQueued(): Promise<number> {
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)` })
       .from(runRequests)
-      .where(claimable())
-      .orderBy(asc(runRequests.createdAt))
-      .limit(5);
+      .where(eq(runRequests.status, "queued"));
+    return Number(row?.count ?? 0);
+  }
 
+  async claimNext(
+    owner: string,
+    now: Date,
+    staleMs: number,
+  ): Promise<RunRequestRecord | null> {
+    const candidates = await this.listClaimable(now, staleMs, 5);
     for (const candidate of candidates) {
-      const [row] = await this.db
-        .update(runRequests)
-        .set({
-          status: "claimed",
-          claimedBy: owner,
-          claimedAt: nowIso,
-          heartbeatAt: nowIso,
-          leaseVersion: sql`${runRequests.leaseVersion} + 1`,
-          updatedAt: nowIso,
-        })
-        .where(and(eq(runRequests.requestId, candidate.requestId), claimable()))
-        .returning();
-      if (row) {
-        return fromRunRequestRow(row);
+      const claimed = await this.claim(
+        candidate.requestId,
+        owner,
+        now,
+        staleMs,
+      );
+      if (claimed) {
+        return claimed;
       }
     }
     return null;

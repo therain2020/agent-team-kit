@@ -153,6 +153,10 @@ describe("local pack runner", () => {
       expect(payload.workspaceId).toBe("alpha");
       // DRY_RUN is background work, so the derived class is P3.
       expect(payload.priority).toBe("P3");
+      // The claim column mirrors the payload so the fair scheduler and the
+      // admission gate can rank the row without parsing JSON.
+      expect(record?.priority).toBe("P3");
+      expect(second.admission).toBe("merge");
     } finally {
       await store.close();
     }
