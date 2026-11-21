@@ -83,6 +83,10 @@ export interface ListInformationEventsQuery {
   workspaceId?: string;
   sourceId?: string;
   eventType?: string;
+  /** Only events created strictly after this ISO timestamp (sweep cursor). */
+  createdAfter?: string;
+  /** Newest-first by default; `asc` is the replay-friendly order for sweeps. */
+  order?: "asc" | "desc";
   limit?: number;
 }
 
@@ -281,14 +285,28 @@ export class InformationService {
     const typeFilter = query.eventType
       ? this.sql`AND event_type = ${query.eventType}`
       : this.sql``;
+    const afterFilter = query.createdAfter
+      ? this.sql`AND created_at > ${query.createdAfter}`
+      : this.sql``;
 
-    const rows = await this.sql<EventRow[]>`
-      SELECT * FROM information_events
-      WHERE workspace_id = ${workspaceId}
-        ${sourceFilter} ${typeFilter}
-      ORDER BY created_at DESC, event_id DESC
-      LIMIT ${limit}
-    `;
+    // Direction is a closed enum, so the two branches are the only shapes the
+    // query builder ever sees (no user string reaches the ORDER BY clause).
+    const rows =
+      query.order === "asc"
+        ? await this.sql<EventRow[]>`
+          SELECT * FROM information_events
+          WHERE workspace_id = ${workspaceId}
+            ${sourceFilter} ${typeFilter} ${afterFilter}
+          ORDER BY created_at ASC, event_id ASC
+          LIMIT ${limit}
+        `
+        : await this.sql<EventRow[]>`
+          SELECT * FROM information_events
+          WHERE workspace_id = ${workspaceId}
+            ${sourceFilter} ${typeFilter} ${afterFilter}
+          ORDER BY created_at DESC, event_id DESC
+          LIMIT ${limit}
+        `;
     return rows.map(mapEvent);
   }
 

@@ -1,3 +1,4 @@
+export * from "./auto-dispatch";
 export * from "./config";
 export * from "./dispatch";
 export * from "./reaction";

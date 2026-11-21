@@ -2298,7 +2298,7 @@
     "usageLine": "today · {runs}/{dailyRuns} runs · {cost}/{dailyCost} CNY",
     "reactionsTitle": "Recent reactions",
     "reactionCount": "{count} firings",
-    "noReactions": "No reaction has fired yet. Run: kit reaction run --event <id>",
+    "noReactions": "No reaction has fired yet. New events dispatch automatically; replay one with: kit reaction run --event <id>",
     "auditTitle": "Rule audit trail",
     "noHistory": "No rule edits yet.",
     "dispatchHint": "Dispatch uses the single fireTrigger entry: kill switch → degraded → dedupe → trigger budget → budget ledger → start.",

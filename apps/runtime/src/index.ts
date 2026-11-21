@@ -2,6 +2,11 @@
 import { StoreEvolutionRepository } from "@kit/evolution";
 import { NatsEventQueue } from "@kit/queue";
 import { initStore } from "@kit/store";
+import {
+  type AutoDispatchLoop,
+  type AutoDispatchPassSummary,
+  startInformationAutoDispatch,
+} from "@kit/trigger";
 import { createTemporalClient } from "@kit/workflow";
 import { type CollectionLoop, startCollectionLoop } from "./collector";
 import { EventIngestor } from "./ingestor";
@@ -74,6 +79,18 @@ console.log(
   `[runtime] consuming ${natsUrl} stream=${stream} subject=${subject}`,
 );
 
+// Automatic information → reaction dispatch (98 §5.2 G1, D-70). Default ON:
+// the main 1.0 gate forbids requiring an operator to start reactions. Set
+// KIT_REACTION_AUTO_DISPATCH=0 to turn only this edge off; manual replay
+// (`kit reaction run`) keeps working and cannot double-fire thanks to the
+// TriggerRun dedupe key.
+const dispatcher = startReactionAutoDispatch();
+if (!dispatcher) {
+  console.log(
+    "[runtime] reaction auto-dispatch disabled (KIT_REACTION_AUTO_DISPATCH=0)",
+  );
+}
+
 // Continuous passive collection (98 I-1) is opt-in: enabling it means the
 // runtime actually pulls external sources on an interval, so it never starts
 // unless KIT_INFORMATION_COLLECT names the sources to watch.
@@ -91,6 +108,7 @@ async function shutdown(): Promise<void> {
   }
   stopping = true;
   console.log("[runtime] shutting down");
+  dispatcher?.stop();
   collector?.stop();
   await stop();
   await queue.close();
@@ -120,6 +138,20 @@ function startInformationCollector(): CollectionLoop | null {
       console.log(
         `[runtime] information ${summary.eventsCreated} new / ${summary.duplicates} duplicate across ${summary.sources.length} sources`,
       );
+      // Dispatch immediately after a pass; the timer is the safety net for
+      // events written by other producers (scout, CLI, console).
+      if (dispatcher && summary.eventsCreated > 0) {
+        void dispatcher
+          .runOnce()
+          .then(reportDispatch)
+          .catch((error: unknown) => {
+            console.error(
+              `[runtime] reaction auto-dispatch failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          });
+      }
     },
     onError: (error) => {
       console.error(
@@ -130,6 +162,42 @@ function startInformationCollector(): CollectionLoop | null {
     },
   });
   return loop;
+}
+
+function startReactionAutoDispatch(): AutoDispatchLoop | null {
+  const intervalMs = Number(
+    process.env.KIT_REACTION_DISPATCH_INTERVAL_MS ?? "",
+  );
+  return startInformationAutoDispatch(store, {
+    repoRoot,
+    workspaceId,
+    env: process.env,
+    ...(Number.isFinite(intervalMs) && intervalMs > 0 ? { intervalMs } : {}),
+    onPass: reportDispatch,
+    onError: (error) => {
+      console.error(
+        `[runtime] reaction auto-dispatch error: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    },
+  });
+}
+
+function reportDispatch(summary: AutoDispatchPassSummary): void {
+  if (
+    summary.events === 0 &&
+    summary.retried === 0 &&
+    summary.errors.length === 0
+  ) {
+    return;
+  }
+  console.log(
+    `[runtime] information dispatch ${summary.fired} fired / ${summary.existing} existing / ${summary.skipped} skipped / ${summary.failed} failed / ${summary.deferred} retry pending (${summary.events} new, ${summary.retried} retried)`,
+  );
+  for (const error of summary.errors) {
+    console.error(`[runtime] dispatch error: ${error}`);
+  }
 }
 
 function resolveRepoRoot(): string {
