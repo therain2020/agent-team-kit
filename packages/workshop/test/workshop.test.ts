@@ -205,7 +205,7 @@ describe("workshop", () => {
     roots.push(root);
     const installed = await installWorkshop({
       repo: "acme/demo",
-      root,
+      componentsRoot: root,
       acceptThirdParty: true,
       acceptUnsigned: true,
       acceptHighRisk: true,
@@ -229,7 +229,7 @@ describe("workshop", () => {
     await expect(
       installWorkshop({
         repo: "acme/demo",
-        root,
+        componentsRoot: root,
         acceptThirdParty: true,
         acceptUnsigned: true,
         acceptHighRisk: true,
@@ -253,7 +253,7 @@ describe("workshop", () => {
     roots.push(root);
     const installed = await installWorkshop({
       repo: "acme/demo",
-      root,
+      componentsRoot: root,
       acceptThirdParty: true,
       acceptUnsigned: true,
       acceptHighRisk: true,
@@ -270,7 +270,7 @@ describe("workshop", () => {
     roots.push(root);
     const installed = await installWorkshop({
       repo: "acme/demo",
-      root,
+      componentsRoot: root,
       acceptThirdParty: true,
       acceptUnsigned: true,
       acceptHighRisk: true,
@@ -288,7 +288,7 @@ describe("workshop", () => {
     await expect(
       installWorkshop({
         repo: "acme/demo",
-        root,
+        componentsRoot: root,
         acceptThirdParty: true,
         acceptUnsigned: true,
         acceptHighRisk: true,
@@ -306,7 +306,7 @@ describe("workshop", () => {
     await expect(
       installWorkshop({
         repo: "acme/demo",
-        root,
+        componentsRoot: root,
         acceptThirdParty: true,
         acceptUnsigned: true,
         acceptHighRisk: true,
@@ -323,7 +323,7 @@ describe("workshop", () => {
     roots.push(root);
     const installed = await installWorkshop({
       repo: "acme/demo",
-      root,
+      componentsRoot: root,
       acceptThirdParty: true,
       acceptUnsigned: true,
       acceptHighRisk: true,
@@ -339,7 +339,7 @@ describe("workshop", () => {
     await expect(
       installWorkshop({
         repo: "acme/demo",
-        root,
+        componentsRoot: root,
         acceptThirdParty: true,
         acceptUnsigned: true,
         acceptHighRisk: true,
@@ -361,7 +361,7 @@ describe("workshop", () => {
     await expect(
       installWorkshop({
         repo: "acme/demo",
-        root,
+        componentsRoot: root,
         acceptThirdParty: true,
         acceptUnsigned: true,
         acceptHighRisk: true,

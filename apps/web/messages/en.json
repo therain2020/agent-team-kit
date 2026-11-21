@@ -1555,10 +1555,14 @@
     "installFailed": "Install failed",
     "installed": "{name} installed",
     "installedPack": "{name} installed into packs/. Opening the pack library…",
-    "installedStaged": "{name} stored in workshop/{dir} staging",
+    "installedStaged": "{name} installed into its local library",
     "noResultsKind": "No {kind} items found. Try another keyword or asset type.",
     "destinationPack": "Installs into {path} and appears in the pack library.",
-    "destinationStaged": "Install target: {path}. This asset type stays staged until its local library ships."
+    "destinationStaged": "Install target: {path}. This asset type stays staged until its local library ships.",
+    "destinationLibrary": "Installs into {path}, then appears in its local library.",
+    "hostPackLabel": "Host pack",
+    "hostPackPlaceholder": "e.g. minimal-team",
+    "hostPackHint": "Pipelines install into the pack's workflows/ and are registered in its team.yaml."
   },
   "workshopSurface": {
     "newPack": "New pack",

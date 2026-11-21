@@ -1,8 +1,10 @@
+import { readdir, readFile } from "node:fs/promises";
+import path from "node:path";
 import { listTemplates } from "@kit/pack";
 import { BUILTIN_SOURCES } from "@kit/source";
 import { type WorkshopInstallRecord, listComponents } from "@kit/workshop";
 import { listPacks } from "./packs";
-import { getComponentsRoot } from "./paths";
+import { getComponentsRoot, getPacksRoot } from "./paths";
 import { loadInstalledSources } from "./sources";
 import { loadInstalledWorkshop } from "./workshop";
 import {
@@ -37,6 +39,10 @@ export async function loadWorkshopDiscovery(): Promise<WorkshopDiscoveryData> {
     listTemplates(),
   ]);
 
+  const pipelines = await loadInstalledPipelines(
+    packs.map((pack) => pack.dirName),
+  );
+
   const packDirs = new Set(packs.flatMap((pack) => [pack.dirName, pack.name]));
   const legacy = staged.filter(
     (record) =>
@@ -64,6 +70,8 @@ export async function loadWorkshopDiscovery(): Promise<WorkshopDiscoveryData> {
       href: `/packs?pack=${encodeURIComponent(pack.dirName)}`,
     });
   }
+
+  installed.push(...pipelines);
 
   for (const source of sources) {
     installed.push({
@@ -125,12 +133,62 @@ export async function loadWorkshopDiscovery(): Promise<WorkshopDiscoveryData> {
     installed,
     counts: {
       pack: packs.length,
-      pipeline: stagedPipelines.length,
+      pipeline: pipelines.length + stagedPipelines.length,
       source: sources.length + BUILTIN_SOURCES.length,
       component: components.length + stagedComponents.length,
       template: templates.length + stagedTemplates.length,
     },
   };
+}
+
+/**
+ * Pipelines install into a host pack's `workflows/` (plan 88 §3.4) and leave a
+ * sidecar `<id>.workshop.json` record. They belong to the pack library, so the
+ * discovery center reports them against their host pack.
+ */
+async function loadInstalledPipelines(
+  packDirs: string[],
+): Promise<WorkshopInstalledItem[]> {
+  const packsRoot = getPacksRoot();
+  const items: WorkshopInstalledItem[] = [];
+  for (const packDir of packDirs) {
+    const workflows = path.join(packsRoot, packDir, "workflows");
+    let entries: string[];
+    try {
+      entries = await readdir(workflows);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.endsWith(".workshop.json")) {
+        continue;
+      }
+      let record: Record<string, unknown>;
+      try {
+        record = JSON.parse(
+          await readFile(path.join(workflows, entry), "utf8"),
+        ) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      if (record.kind !== "pipeline" || typeof record.id !== "string") {
+        continue;
+      }
+      items.push({
+        key: `pipelines:${packDir}/${record.id}`,
+        id: record.id,
+        name: typeof record.name === "string" ? record.name : record.id,
+        version: typeof record.version === "string" ? record.version : "",
+        manifestKind: "pipeline",
+        kind: "pipeline",
+        repo: typeof record.repo === "string" ? record.repo : "",
+        commit: typeof record.commit === "string" ? record.commit : "",
+        library: "packs",
+        href: `/packs?pack=${encodeURIComponent(packDir)}`,
+      });
+    }
+  }
+  return items;
 }
 
 function stagedItem(

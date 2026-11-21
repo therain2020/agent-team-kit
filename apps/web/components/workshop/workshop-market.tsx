@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import {
   type WorkshopAssetKind,
   installDestination,
+  manifestAssetKind,
   matchesAssetKind,
 } from "@/lib/workshop-library";
 import type {
@@ -96,6 +97,7 @@ export function WorkshopMarket({
   const [allowCode, setAllowCode] = useState(false);
   const [acceptUnsigned, setAcceptUnsigned] = useState(false);
   const [acceptHighRisk, setAcceptHighRisk] = useState(false);
+  const [hostPack, setHostPack] = useState("");
   const [installing, setInstalling] = useState(false);
 
   const trustLabels: Record<WorkshopTrust["level"], string> = {
@@ -204,6 +206,9 @@ export function WorkshopMarket({
     if (preview.permissions.highRisk.length > 0 && !acceptHighRisk) {
       return;
     }
+    if (preview.manifest.kind === "pipeline" && !hostPack.trim()) {
+      return;
+    }
     setInstalling(true);
     try {
       const response = await fetch("/api/workshop", {
@@ -216,6 +221,7 @@ export function WorkshopMarket({
           allowCode,
           acceptUnsigned,
           acceptHighRisk,
+          ...(hostPack.trim() ? { hostPack: hostPack.trim() } : {}),
         }),
       });
       const payload = (await response.json()) as {
@@ -437,14 +443,28 @@ export function WorkshopMarket({
               </div>
               <p>{preview.manifest.description || "—"}</p>
               <p className="text-[10px] text-zinc-500">
-                {kind === "pack"
-                  ? t("destinationPack", {
-                      path: installDestination("pack", preview.manifest.id),
-                    })
-                  : t("destinationStaged", {
-                      path: `workshop/${preview.manifest.id}`,
-                    })}
+                {t("destinationLibrary", {
+                  path: installDestination(
+                    manifestAssetKind(preview.manifest.kind) ?? kind,
+                    preview.manifest.id,
+                    preview.manifest.kind,
+                    hostPack.trim(),
+                  ),
+                })}
               </p>
+
+              {preview.manifest.kind === "pipeline" ? (
+                <label className="block space-y-1 text-[10px] text-zinc-500">
+                  <span>{t("hostPackLabel")}</span>
+                  <Input
+                    value={hostPack}
+                    onChange={(event) => setHostPack(event.target.value)}
+                    placeholder={t("hostPackPlaceholder")}
+                    className="h-7 font-mono text-[11px]"
+                  />
+                  <span>{t("hostPackHint")}</span>
+                </label>
+              ) : null}
 
               <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[10px]">
                 <span className="text-zinc-500">{t("entry")}</span>
@@ -608,7 +628,8 @@ export function WorkshopMarket({
                 codeBlocked ||
                 secretBlocked ||
                 unsignedBlocked ||
-                highRiskBlocked
+                highRiskBlocked ||
+                (preview?.manifest.kind === "pipeline" && !hostPack.trim())
               }
             >
               {installing ? t("installing") : t("installButton")}

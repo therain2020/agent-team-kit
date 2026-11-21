@@ -1555,10 +1555,14 @@
     "installFailed": "安装失败",
     "installed": "{name} 已安装",
     "installedPack": "{name} 已安装到 packs/，正在打开模具库…",
-    "installedStaged": "{name} 已存入 workshop/{dir} 暂存",
+    "installedStaged": "{name} 已安装到对应本地库",
     "noResultsKind": "没有找到匹配的{kind}条目。换个关键词或换一种资产类型。",
     "destinationPack": "安装到 {path}，随后出现在模具库。",
-    "destinationStaged": "安装目标：{path}。该资产类型在本地库就位前先暂存于 workshop/。"
+    "destinationStaged": "安装目标：{path}。该资产类型在本地库就位前先暂存于 workshop/。",
+    "destinationLibrary": "安装到 {path}，随后出现在对应本地库。",
+    "hostPackLabel": "宿主模具",
+    "hostPackPlaceholder": "例如 minimal-team",
+    "hostPackHint": "流水线安装到该模具的 workflows/，并注册进 team.yaml。"
   },
   "workshopSurface": {
     "newPack": "新建模具",
