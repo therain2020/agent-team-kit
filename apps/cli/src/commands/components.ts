@@ -281,15 +281,11 @@ export function registerComponents(program: Command): void {
             );
             return;
           }
-          emit(
-            json,
-            { ...installed, component: loaded.component },
-            () => {
-              console.log(
-                `✓ ${kind}/${loaded.component.id} (${loaded.component.version ?? "unversioned"}) → ${installed.dir}`,
-              );
-            },
-          );
+          emit(json, { ...installed, component: loaded.component }, () => {
+            console.log(
+              `✓ ${kind}/${loaded.component.id} (${loaded.component.version ?? "unversioned"}) → ${installed.dir}`,
+            );
+          });
         } catch (error) {
           emitError(json, error);
         }

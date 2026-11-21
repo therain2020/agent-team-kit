@@ -799,10 +799,7 @@ async function installPipelineTarget(input: {
 
   const workflow = pipelineWorkflow(parsed.data);
   const workflowPath = target.dir;
-  const relative = path
-    .relative(host, workflowPath)
-    .split(path.sep)
-    .join("/");
+  const relative = path.relative(host, workflowPath).split(path.sep).join("/");
   if (existsSync(workflowPath) && !input.overwrite) {
     throw new Error(
       `install target already exists: ${relative}; pass overwrite to replace it`,
@@ -914,13 +911,12 @@ function pipelineWorkflow(spec: PipelineSpec): WorkflowDefinition {
       stage.coder = "dsh";
     } else if (node.type === "human") {
       stage.type = "workflow";
-      stage.approval =
-        node.approval ?? {
-          mode: "required",
-          position: "before",
-          riskClass: "medium",
-          ttl: "7d",
-        };
+      stage.approval = node.approval ?? {
+        mode: "required",
+        position: "before",
+        riskClass: "medium",
+        ttl: "7d",
+      };
     } else {
       stage.type = "workflow";
     }

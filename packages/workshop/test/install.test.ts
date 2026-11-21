@@ -354,9 +354,7 @@ describe("workshop install destination by manifest kind", () => {
     );
     expect(source.scope).toBe("sources");
     expect(source.format).toBe("file");
-    expect(source.dir).toBe(
-      path.join(options.sourcesRoot, "demo-source.yaml"),
-    );
+    expect(source.dir).toBe(path.join(options.sourcesRoot, "demo-source.yaml"));
 
     const template = resolveInstallTarget(
       { id: "demo-template", kind: "template" },
@@ -449,9 +447,7 @@ describe("workshop install destination by manifest kind", () => {
 
     expect(installed.scope).toBe("templates");
     expect(installed.dir).toBe(path.join(dirs.templates, "demo-template"));
-    expect(
-      existsSync(path.join(installed.dir, "template.yaml")),
-    ).toBe(true);
+    expect(existsSync(path.join(installed.dir, "template.yaml"))).toBe(true);
     expect(existsSync(path.join(installed.dir, ".workshop.json"))).toBe(true);
   });
 
@@ -605,9 +601,9 @@ describe("workshop install rollback", () => {
       /unknown agent|register/i,
     );
 
-    expect(
-      existsSync(path.join(host, "workflows", "demo-pipeline.yaml")),
-    ).toBe(false);
+    expect(existsSync(path.join(host, "workflows", "demo-pipeline.yaml"))).toBe(
+      false,
+    );
     expect(await readFile(path.join(host, "team.yaml"), "utf8")).toBe(before);
   });
 
