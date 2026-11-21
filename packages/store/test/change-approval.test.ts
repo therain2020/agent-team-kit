@@ -137,6 +137,8 @@ describe("change approvals (sqlite)", () => {
       "chg_code",
       "chg_prompt",
     ]);
+    // The proposal's classified risk lands on the approval row for G5.
+    expect(page.items.map((item) => item.riskClass)).toEqual(["high", "high"]);
     expect(code.approvalId).toBe(changeApprovalIdFor("chg_code"));
     expect(code.runId).toBe(changeApprovalRunId("chg_code"));
     // Change approvals survive the legacy `paused run` inbox filter.

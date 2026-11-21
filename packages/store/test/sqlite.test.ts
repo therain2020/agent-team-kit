@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { EventEnvelope, Run, Stage } from "@kit/core";
+import SqliteClient from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadStoreConfig } from "../src/config";
 import { initStore } from "../src/store";
@@ -275,5 +276,84 @@ describe("sqlite embedded store", () => {
     closers.push(() => second.close());
     const runs = await second.runs.list({ limit: 5 });
     expect(runs.map((item) => item.runId)).toEqual(["run_local_1"]);
+  }, 60_000);
+
+  it("adds the approvals risk column to an existing sqlite store", async () => {
+    const config = await localConfig();
+    await mkdir(path.dirname(config.localDbPath), { recursive: true });
+
+    // Pre-risk approvals table: every column of the current schema except
+    // risk_class, plus one decided row that must survive the migration.
+    const legacy = new SqliteClient(config.localDbPath);
+    legacy.exec(`
+      CREATE TABLE approvals (
+        approval_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        stage_id TEXT,
+        kind TEXT NOT NULL,
+        status TEXT NOT NULL,
+        requester TEXT NOT NULL,
+        required_role TEXT,
+        payload_ref TEXT,
+        sla_due_at TEXT,
+        expires_at TEXT,
+        decision_by TEXT,
+        decision_at TEXT,
+        decision_reason TEXT,
+        assignee TEXT,
+        assigned_at TEXT,
+        subject_ref TEXT,
+        substrate TEXT,
+        change_id TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+      );
+    `);
+    legacy
+      .prepare(
+        `INSERT INTO approvals (
+          approval_id, workspace_id, run_id, kind, status, requester,
+          decision_by, decision_at, decision_reason, version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "apr_legacy",
+        "default",
+        "run_legacy",
+        "stage_before",
+        "approved",
+        "manager",
+        "operator",
+        "2026-11-15T01:00:00.000Z",
+        "looked fine",
+        2,
+        "2026-11-15T00:00:00.000Z",
+      );
+    legacy.close();
+
+    const store = await initStore(config);
+    closers.push(() => store.close());
+
+    const preserved = await store.approvals.get("apr_legacy");
+    expect(preserved?.status).toBe("approved");
+    // The old row has no evidence of a risk class; it must stay unlabelled.
+    expect(preserved?.riskClass).toBeNull();
+
+    const typed = await store.approvals.enqueue({
+      approvalId: "apr_new",
+      workspaceId: "default",
+      runId: "run_legacy",
+      kind: "stage_before",
+      riskClass: "high",
+    });
+    expect(typed.riskClass).toBe("high");
+    await store.close();
+
+    // Re-running the migration is idempotent.
+    const again = await initStore(config);
+    closers.push(() => again.close());
+    expect((await again.approvals.get("apr_new"))?.riskClass).toBe("high");
+    expect((await again.approvals.get("apr_legacy"))?.riskClass).toBeNull();
   }, 60_000);
 });

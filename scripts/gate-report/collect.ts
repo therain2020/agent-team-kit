@@ -79,6 +79,7 @@ interface KitdRecord {
 
 interface RecoveryReport {
   mode?: unknown;
+  script?: unknown;
   outcome?: unknown;
   finishedAt?: unknown;
   recoverySeconds?: unknown;
@@ -368,7 +369,8 @@ async function collectStore(
       "approvals",
       () =>
         db.sql<ApprovalRow[]>`
-        SELECT approval_id, kind, status, decision_by, decision_at, decision_reason
+        SELECT approval_id, kind, status, decision_by, decision_at,
+               decision_reason, risk_class
         FROM approvals
         WHERE decision_at IS NOT NULL
           AND decision_at >= ${start} AND decision_at <= ${end}
@@ -483,7 +485,7 @@ async function collectStore(
         kind: `approval:${row.kind}`,
         category: "high-risk-approval" as const,
         reason: stringOrNull(row.decision_reason),
-        risk: null,
+        risk: riskClassOrNull(row.risk_class),
       })),
       ...auditRows
         .filter((row) => stringOr(row.actor, "") !== "ai")
@@ -674,7 +676,10 @@ async function collectRecoveryReports(
   try {
     const entries = await readdir(auditDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isFile() || !/^recovery-drill-.*\.json$/i.test(entry.name)) {
+      if (
+        !entry.isFile() ||
+        !/^(?:recovery|rollback)-drill-.*\.json$/i.test(entry.name)
+      ) {
         continue;
       }
       const file = path.join(auditDir, entry.name);
@@ -701,7 +706,11 @@ async function collectRecoveryReports(
           measuredRtoMinutes: seconds === null ? null : Math.ceil(seconds / 60),
           integrityPass:
             checks.length > 0 && checks.every((check) => check.pass === true),
-          script: `scripts/recovery-drill.ps1:${stringOr(parsed.mode, "unknown")}`,
+          // Drill reports name their own script; older PS1 reports omit it.
+          script: stringOr(
+            parsed.script,
+            `scripts/recovery-drill.ps1:${stringOr(parsed.mode, "unknown")}`,
+          ),
         });
       } catch {
         corrupt += 1;
@@ -1443,7 +1452,9 @@ function isoOrNull(value: unknown): string | null {
 }
 
 function stampToIso(fileName: string): string | null {
-  const match = /recovery-drill-(\d{8})-(\d{6})\.json$/i.exec(fileName);
+  const match = /^(?:recovery|rollback)-drill-(\d{8})-(\d{6})\.json$/i.exec(
+    fileName,
+  );
   if (!match) {
     return null;
   }
@@ -1461,6 +1472,16 @@ function stringOr(value: unknown, fallback: string): string {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/**
+ * Approval risk class read from the store. Missing/unknown values stay null so
+ * the observer gate reports them as unlabelled evidence instead of guessing.
+ */
+function riskClassOrNull(value: unknown): "low" | "medium" | "high" | null {
+  return value === "low" || value === "medium" || value === "high"
+    ? value
+    : null;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -1530,6 +1551,8 @@ interface ApprovalRow {
   decision_by: string | null;
   decision_at: string;
   decision_reason: string | null;
+  /** Null on rows written before risk classes were recorded. */
+  risk_class: string | null;
 }
 interface KillRow {
   switch_id: string;

@@ -134,6 +134,13 @@ powershell -File scripts\kitd.ps1 list
 The audit sink sits outside the repository, alongside the recovery kernel, so
 agent code cannot rewrite rollback history (D-48).
 
+## Rollback drill
+
+`bun run drill:rollback --execute` exercises this same executor for one code
+change and one instruction change in temporary repositories and a temporary
+SQLite store, measures both rollbacks and records the worst case against the G6
+RTO target. See [rollback-drill.md](./rollback-drill.md).
+
 ## Bypass guard
 
 `packages/change/test/pipeline-guard.test.ts` scans the monorepo and fails when

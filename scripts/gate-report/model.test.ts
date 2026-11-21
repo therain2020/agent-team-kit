@@ -451,6 +451,26 @@ describe("buildGateReport", () => {
     expect(report.gaps).toContain("G5.actor-recorded");
   });
 
+  it("gaps approvals that carry no risk class instead of assuming one", () => {
+    const bundle = fullBundle();
+    bundle.interventions = bundle.interventions.map((item) =>
+      item.category === "high-risk-approval" ? { ...item, risk: null } : item,
+    );
+    const report = buildGateReport(bundle);
+    expect(report.gaps).toContain("G5.approval-risk-recorded");
+    expect(gate(report, "G5").metrics).toMatchObject({
+      approvals: 1,
+      highRiskApprovals: 0,
+      untypedApprovals: 1,
+    });
+  });
+
+  it("passes approval risk when every decision carries a class", () => {
+    const bundle = fullBundle();
+    const report = buildGateReport(bundle);
+    expect(report.gaps).not.toContain("G5.approval-risk-recorded");
+  });
+
   it("gaps recovery when RTO exceeds 10 minutes or integrity fails", () => {
     const bundle = fullBundle();
     bundle.recoveryDrills = [

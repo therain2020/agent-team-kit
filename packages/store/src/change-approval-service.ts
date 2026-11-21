@@ -135,6 +135,9 @@ export class ChangeApprovalService {
         options.expiresAt ?? new Date(base + DEFAULT_TTL_MS).toISOString(),
       substrate: proposal.substrate,
       changeId,
+      // The proposal already carries the classified risk (85 §3.4); the
+      // approval row mirrors it so the observer gate can count it.
+      riskClass: proposal.risk,
       createdAt: now,
     });
   }

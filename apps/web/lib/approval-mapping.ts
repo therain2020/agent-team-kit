@@ -24,6 +24,8 @@ export interface ApprovalEntityView {
   substrate?: string | null;
   /** ChangeProposal id, when the request guards a change. */
   changeId?: string | null;
+  /** Risk class recorded on the approval row; null on legacy rows. */
+  riskClass?: ApprovalRiskClass | null;
 }
 
 export type ApprovalPayloadView = Record<string, unknown> | null;
@@ -72,7 +74,9 @@ export function toApiApprovalItem(
         : REQUEST_TYPES.has(entity.kind)
           ? entity.kind
           : (normalizeRequestType(payload?.requestType) ?? "gate_failure"),
-    riskClass: normalizeRiskClass(payload?.riskClass),
+    // The entity column is the durable record; legacy rows fall back to the
+    // approval-request payload, which is where the class lived before.
+    riskClass: entity.riskClass ?? normalizeRiskClass(payload?.riskClass),
     summary: stringField(payload, "summary"),
     options: normalizeOptions(payload?.options),
     expiresAt: entity.expiresAt ?? stringField(payload, "expiresAt"),

@@ -254,6 +254,60 @@ describe("collectEvidence production sources", () => {
     expect(report.gaps).toContain("G2.signals-observed");
   });
 
+  it("reads recorded approval risk and gaps unlabelled legacy decisions", async () => {
+    const home = await tempDir("kit-collect-risk-home-");
+    const repoRoot = await tempDir("kit-collect-risk-repo-");
+    const dbPath = path.join(home, "data", "kit.db");
+    await mkdir(path.dirname(dbPath), { recursive: true });
+    const store = await initStore(
+      loadStoreConfig({
+        KIT_RUNTIME_MODE: "local",
+        KIT_HOME: home,
+        KIT_BLOB_ROOT: path.join(home, "blobs"),
+      }),
+    );
+    for (const [approvalId, riskClass, at] of [
+      ["apr_high", "high", "2026-11-19T09:10:00.000Z"],
+      ["apr_legacy", null, "2026-11-19T09:20:00.000Z"],
+    ] as const) {
+      await store.approvals.enqueue({
+        approvalId,
+        workspaceId: "default",
+        runId: "run_approval",
+        kind: "stage_before",
+        requester: "manager",
+        ...(riskClass ? { riskClass } : {}),
+        createdAt: "2026-11-19T09:00:00.000Z",
+      });
+      await store.approvals.decide({
+        approvalId,
+        expectedVersion: 1,
+        status: "approved",
+        decisionBy: "operator",
+        decisionReason: "reviewed",
+        at,
+      });
+    }
+    await store.close();
+
+    const bundle = await collectEvidence({
+      home,
+      repoRoot,
+      now: NOW,
+      days: 7,
+      dbPath,
+    });
+
+    const approvals = bundle.interventions
+      .filter((item) => item.category === "high-risk-approval")
+      .map((item) => ({ id: item.id, risk: item.risk }));
+    expect(approvals).toEqual([
+      { id: "approval:apr_high", risk: "high" },
+      { id: "approval:apr_legacy", risk: null },
+    ]);
+    expect(buildGateReport(bundle).gaps).toContain("G5.approval-risk-recorded");
+  });
+
   it("leaves empty sources as GAPs instead of synthetic values", async () => {
     const home = await tempDir("kit-collect-empty-home-");
     const repoRoot = await tempDir("kit-collect-empty-repo-");

@@ -42,6 +42,7 @@
     "drill:event-spool": "tsx scripts/event-spool-drill.ts",
     "runbook:drill": "tsx scripts/runbook-drill.ts",
     "recovery:drill": "tsx scripts/recovery-drill.ts",
+    "drill:rollback": "tsx scripts/rollback-drill.ts",
     "drill:degradation": "tsx scripts/degradation-drill.ts",
     "cold-start:check": "tsx scripts/cold-start-check.ts",
     "compose:gate": "bun run scripts/compose-gate.ts",

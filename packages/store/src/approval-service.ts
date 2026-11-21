@@ -13,6 +13,13 @@ import type { SqlClient, StoreDriverName } from "./db";
 
 export type ApprovalStatus = "queued" | "approved" | "rejected" | "expired";
 
+/**
+ * Risk class of the action an approval guards. Recorded at creation so the G5
+ * observer gate can count real high-risk confirmations instead of guessing
+ * (98 §5.2). Legacy rows written before the column existed stay null.
+ */
+export type ApprovalRiskClass = "low" | "medium" | "high";
+
 export type ApprovalKind =
   | "stage_before"
   | "stage_after"
@@ -58,6 +65,12 @@ export interface ApprovalRecord {
   substrate: string | null;
   /** ChangeProposal id this request decides; null for stage/run approvals. */
   changeId: string | null;
+  /**
+   * Risk class of the guarded action, recorded when the approval was queued.
+   * Null on rows written before the column existed; the observer gate reports
+   * those as missing evidence instead of assuming a class.
+   */
+  riskClass: ApprovalRiskClass | null;
   version: number;
   createdAt: string;
 }
@@ -86,6 +99,12 @@ export interface EnqueueApprovalInput {
   substrate?: string | null;
   /** ChangeProposal id this approval decides, when applicable. */
   changeId?: string | null;
+  /**
+   * Risk class of the guarded action. Callers omit it only when the risk is
+   * genuinely unknown (legacy re-materialization); the gate then treats the
+   * decision as unlabelled evidence rather than a high-risk confirmation.
+   */
+  riskClass?: ApprovalRiskClass | null;
   createdAt?: string;
 }
 
@@ -164,6 +183,7 @@ interface ApprovalRow {
   subject_ref: string | null;
   substrate: string | null;
   change_id: string | null;
+  risk_class: string | null;
   version: number | string | bigint;
   created_at: string | Date;
 }
@@ -201,7 +221,7 @@ export class ApprovalService {
         approval_id, workspace_id, run_id, stage_id, kind, status, requester,
         required_role, payload_ref, subject_ref, sla_due_at, expires_at,
         decision_by, decision_at, decision_reason, substrate, change_id,
-        version, created_at
+        risk_class, version, created_at
       ) VALUES (
         ${input.approvalId}, ${input.workspaceId}, ${input.runId},
         ${input.stageId ?? null}, ${input.kind}, ${"queued"},
@@ -209,7 +229,7 @@ export class ApprovalService {
         ${input.payloadRef ?? null}, ${input.subjectRef ?? null},
         ${input.slaDueAt ?? null}, ${input.expiresAt ?? null}, ${null},
         ${null}, ${null}, ${input.substrate ?? null},
-        ${input.changeId ?? null}, ${1}, ${createdAt}
+        ${input.changeId ?? null}, ${input.riskClass ?? null}, ${1}, ${createdAt}
       )
       ON CONFLICT (approval_id) DO NOTHING
     `;
@@ -519,6 +539,7 @@ function mapRow(row: ApprovalRow): ApprovalRecord {
     subjectRef: row.subject_ref ?? null,
     substrate: row.substrate ?? null,
     changeId: row.change_id ?? null,
+    riskClass: normalizeRiskClass(row.risk_class),
     version: Number(row.version),
     createdAt: toIso(row.created_at) ?? new Date(0).toISOString(),
   };
@@ -531,6 +552,13 @@ function mapListRow(row: ApprovalListRow): ApprovalListItem {
     stageName: row.stage_name ?? null,
     runStatus: row.run_status ?? null,
   };
+}
+
+/** Unknown or absent values stay null: unlabelled evidence, never a guess. */
+function normalizeRiskClass(value: string | null): ApprovalRiskClass | null {
+  return value === "low" || value === "medium" || value === "high"
+    ? value
+    : null;
 }
 
 function normalizeStatus(value: string): ApprovalStatus {

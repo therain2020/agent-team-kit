@@ -2037,6 +2037,7 @@ export async function requestApproval(
       const parsed = JSON.parse(await readArtifactText(store, existing)) as {
         requestId?: string;
         expiresAt?: string;
+        riskClass?: string;
       };
       if (parsed.requestId) {
         // Re-materialize the entity for runs queued before approvals were a
@@ -2052,6 +2053,7 @@ export async function requestApproval(
             payloadRef: existing.artifactId,
             slaDueAt: parsed.expiresAt ?? null,
             expiresAt: parsed.expiresAt ?? null,
+            riskClass: approvalRiskClass(parsed.riskClass),
           })
           .catch(logApprovalEnqueueError);
         return {
@@ -2215,6 +2217,7 @@ async function createApprovalRequest(
       payloadRef: published.artifact.artifactId,
       slaDueAt: expiresAt,
       expiresAt,
+      riskClass: input.riskClass,
     })
     .catch(logApprovalEnqueueError);
 
@@ -2323,6 +2326,17 @@ function autoApprovalAllowed(
     return false;
   }
   return true;
+}
+
+/**
+ * Risk class recorded on an existing approval-request artifact. Legacy
+ * payloads without one stay null so the G5 gate reports missing evidence
+ * instead of assuming a class.
+ */
+function approvalRiskClass(value: unknown): "low" | "medium" | "high" | null {
+  return value === "low" || value === "medium" || value === "high"
+    ? value
+    : null;
 }
 
 async function calculateRunCost(store: Store, runId: string): Promise<number> {

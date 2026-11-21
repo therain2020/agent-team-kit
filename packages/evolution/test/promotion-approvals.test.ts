@@ -107,6 +107,8 @@ describe("promotion approvals", () => {
       "security",
     ]);
     expect(requested.every((row) => row.status === "queued")).toBe(true);
+    // Architecture promotions are structural: every row carries high risk.
+    expect(requested.every((row) => row.riskClass === "high")).toBe(true);
     expect(requested[0]?.subjectRef).toContain("promotion:var_arch:");
 
     // Decide two of the three roles first: promotion stays blocked.

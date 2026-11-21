@@ -93,6 +93,21 @@ describe("approval API item mapping", () => {
     expect(fallback.assignee).toBeNull();
   });
 
+  it("prefers the risk class recorded on the approvals row", () => {
+    const item = toApiApprovalItem(
+      { ...entity, riskClass: "high" },
+      { riskClass: "low" },
+    );
+    expect(item.riskClass).toBe("high");
+
+    // Legacy rows have no column value; the request payload still carries it.
+    const legacy = toApiApprovalItem(
+      { ...entity, riskClass: null },
+      { riskClass: "medium" },
+    );
+    expect(legacy.riskClass).toBe("medium");
+  });
+
   it("uses payload fields the entity does not store", () => {
     const item = toApiApprovalItem(
       { ...entity, workflowId: null, stageName: null },

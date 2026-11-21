@@ -1,0 +1,199 @@
+{
+  "drillId": "rdr_01M7YTM56JM4DPHPHMFF2V3BW4",
+  "mode": "rollback",
+  "script": "scripts/rollback-drill.ts",
+  "outcome": "passed",
+  "startedAt": "2026-11-21T10:32:21.245Z",
+  "finishedAt": "2026-11-21T10:32:24.530Z",
+  "elapsedSeconds": 3.29,
+  "recoverySeconds": 2,
+  "deadlineSeconds": 600,
+  "source": {
+    "repoRoot": "D:\\GitHub\\agent-team-kit\\.claude\\worktrees\\264-rollback-drill",
+    "gitSha": "d2be84fa1ec6b290fd436bd55ec9afff15c2b999",
+    "branch": "feat/264-rollback-drill",
+    "dirty": false
+  },
+  "rto": {
+    "codeSeconds": 1.237,
+    "instructionSeconds": 0.356,
+    "worstCaseSeconds": 2,
+    "worstCaseMinutes": 1,
+    "targetMinutes": 10
+  },
+  "integrityPass": true,
+  "storeRecorded": true,
+  "workdir": null,
+  "reportPath": "D:\\GitHub\\agent-team-kit\\.claude\\worktrees\\264-rollback-drill\\docs\\evidence\\rollback-drill-20261121-103220.json",
+  "changes": {
+    "code": {
+      "substrate": "code",
+      "changeId": "chg_01M7YTM3EK4E5GHM4XE3WW4KJF",
+      "status": "ok",
+      "seconds": 1.237,
+      "startedAt": "2026-11-21T10:32:22.827Z",
+      "finishedAt": "2026-11-21T10:32:24.064Z",
+      "headBefore": "496b8e9b5e3bd132cd213f2462de51b99a19c31b",
+      "headAfter": "84f42799e740349a5a88a9d096b0cfbe2e02603a",
+      "commits": {
+        "base": "d2f96849fb325bb63b1be4f00e0bbd23f7cc5d66",
+        "change": "9acb0a43e7bbd6872eb813a6b1b8872a9828e774",
+        "revert": "84f42799e740349a5a88a9d096b0cfbe2e02603a"
+      },
+      "pass": true,
+      "checks": [
+        {
+          "name": "code-rollback-status",
+          "pass": true,
+          "detail": "status=ok reverted own commit 9acb0a43e7bbd6872eb813a6b1b8872a9828e774 (new HEAD 84f42799e740349a5a88a9d096b0cfbe2e02603a)"
+        },
+        {
+          "name": "code-own-commit-reverted",
+          "pass": true,
+          "detail": "a.txt restored to the baseline content"
+        },
+        {
+          "name": "code-unrelated-change-preserved",
+          "pass": true,
+          "detail": "later unrelated commit untouched"
+        },
+        {
+          "name": "code-head-advanced",
+          "pass": true,
+          "detail": "HEAD 496b8e9b5e3b -> 84f42799e740"
+        },
+        {
+          "name": "code-state-rolled-back",
+          "pass": true,
+          "detail": "state=rolled_back"
+        },
+        {
+          "name": "code-audit",
+          "pass": true,
+          "detail": "audit ok substrate=code"
+        }
+      ]
+    },
+    "instruction": {
+      "substrate": "instruction",
+      "changeId": "chg_01M7YTM4V4QKX32F6PYJ6GQW21",
+      "status": "ok",
+      "seconds": 0.356,
+      "startedAt": "2026-11-21T10:32:24.165Z",
+      "finishedAt": "2026-11-21T10:32:24.521Z",
+      "headBefore": null,
+      "headAfter": null,
+      "commits": null,
+      "pass": true,
+      "checks": [
+        {
+          "name": "instruction-rollback-status",
+          "pass": true,
+          "detail": "status=ok restored 1 variant file(s)"
+        },
+        {
+          "name": "instruction-restored",
+          "pass": true,
+          "detail": "writer.md restored from the backup"
+        },
+        {
+          "name": "instruction-backup-integrity",
+          "pass": true,
+          "detail": "backup hash unchanged"
+        },
+        {
+          "name": "instruction-state-rolled-back",
+          "pass": true,
+          "detail": "state=rolled_back"
+        },
+        {
+          "name": "instruction-audit",
+          "pass": true,
+          "detail": "audit ok substrate=instruction"
+        }
+      ]
+    }
+  },
+  "checks": [
+    {
+      "name": "source-commit-recorded",
+      "pass": true,
+      "detail": "source commit d2be84fa1ec6b290fd436bd55ec9afff15c2b999"
+    },
+    {
+      "name": "code-rollback-status",
+      "pass": true,
+      "detail": "status=ok reverted own commit 9acb0a43e7bbd6872eb813a6b1b8872a9828e774 (new HEAD 84f42799e740349a5a88a9d096b0cfbe2e02603a)"
+    },
+    {
+      "name": "code-own-commit-reverted",
+      "pass": true,
+      "detail": "a.txt restored to the baseline content"
+    },
+    {
+      "name": "code-unrelated-change-preserved",
+      "pass": true,
+      "detail": "later unrelated commit untouched"
+    },
+    {
+      "name": "code-head-advanced",
+      "pass": true,
+      "detail": "HEAD 496b8e9b5e3b -> 84f42799e740"
+    },
+    {
+      "name": "code-state-rolled-back",
+      "pass": true,
+      "detail": "state=rolled_back"
+    },
+    {
+      "name": "code-audit",
+      "pass": true,
+      "detail": "audit ok substrate=code"
+    },
+    {
+      "name": "instruction-rollback-status",
+      "pass": true,
+      "detail": "status=ok restored 1 variant file(s)"
+    },
+    {
+      "name": "instruction-restored",
+      "pass": true,
+      "detail": "writer.md restored from the backup"
+    },
+    {
+      "name": "instruction-backup-integrity",
+      "pass": true,
+      "detail": "backup hash unchanged"
+    },
+    {
+      "name": "instruction-state-rolled-back",
+      "pass": true,
+      "detail": "state=rolled_back"
+    },
+    {
+      "name": "instruction-audit",
+      "pass": true,
+      "detail": "audit ok substrate=instruction"
+    },
+    {
+      "name": "substrates-rolled-back",
+      "pass": true,
+      "detail": "code=ok instruction=ok"
+    },
+    {
+      "name": "rto-target",
+      "pass": true,
+      "detail": "worst-case 1 <= 10 minute(s)"
+    },
+    {
+      "name": "audit-trail",
+      "pass": true,
+      "detail": "2 change-rollback audit entries"
+    },
+    {
+      "name": "drill-recorded",
+      "pass": true,
+      "detail": "recovery drill rdr_01M7YTM56JM4DPHPHMFF2V3BW4 persisted"
+    }
+  ]
+}

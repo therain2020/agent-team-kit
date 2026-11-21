@@ -98,9 +98,13 @@ export const loadApprovalTower = cache(async function loadApprovalTower(
       requestType: item.changeId
         ? "change_proposal"
         : requestTypeFrom(item.kind, payload),
-      riskClass: proposal
-        ? riskClassFrom({ riskClass: proposal.risk })
-        : riskClassFrom(payload),
+      // Prefer the risk class recorded on the approval row; the proposal row
+      // and request payload remain the fallback for pre-column approvals.
+      riskClass: item.riskClass
+        ? riskClassFrom({ riskClass: item.riskClass })
+        : proposal
+          ? riskClassFrom({ riskClass: proposal.risk })
+          : riskClassFrom(payload),
       summary: proposal?.hypothesis ?? stringValue(payload?.summary) ?? "",
       requester:
         stringValue(payload?.requestedBy) ?? item.requester ?? "manager",
