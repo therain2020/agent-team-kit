@@ -283,8 +283,7 @@ export class CostLedger {
     const scopeKind = input.scopeKind ?? "run";
     // Run-scoped rows keep scope_id in sync with the run id; older rows were
     // backfilled the same way, so scope filters stay complete.
-    const scopeId =
-      input.scopeId ?? (scopeKind === "run" ? input.runId : null);
+    const scopeId = input.scopeId ?? (scopeKind === "run" ? input.runId : null);
     await this.store.sql`
       INSERT INTO cost_records (
         record_id, call_id, workspace_id, run_id, scope_kind, scope_id,

@@ -158,9 +158,9 @@ describe("cost scope", () => {
   });
 
   it("derives non-run scopes from aggregate keys", () => {
-    expect(resolveCostScope({ workspaceId: "default", jobId: "job_1" })).toEqual(
-      { kind: "job", id: "job_1", runId: "job:job_1" },
-    );
+    expect(
+      resolveCostScope({ workspaceId: "default", jobId: "job_1" }),
+    ).toEqual({ kind: "job", id: "job_1", runId: "job:job_1" });
     expect(
       resolveCostScope({ workspaceId: "default", changeId: "cyc_1" }),
     ).toEqual({ kind: "evolution", id: "cyc_1", runId: "evolution:cyc_1" });

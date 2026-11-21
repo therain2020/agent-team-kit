@@ -1,7 +1,7 @@
 import { newId } from "@kit/core";
 import {
-  CostTrackingGateway,
   type CostLedgerSink,
+  CostTrackingGateway,
   type ModelGateway,
   loadPriceTable,
 } from "@kit/model";

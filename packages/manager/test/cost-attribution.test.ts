@@ -19,7 +19,7 @@ const inner: ModelGateway = {
   completeWithTools: async () => ({
     text: "",
     toolCalls: [],
-    message: { role: "assistant", content: "" },
+    message: { role: "assistant" as const, content: "" },
     usage: { inputTokens: 0, outputTokens: 0 },
   }),
 };

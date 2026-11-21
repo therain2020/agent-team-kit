@@ -2,9 +2,7 @@ import type { CostRecordInput } from "@kit/store";
 import { describe, expect, it, vi } from "vitest";
 import { publishManagerExchange } from "../lib/manager";
 
-type Store = NonNullable<
-  NonNullable<Parameters<typeof publishManagerExchange>[0]]["store"]
->;
+type Store = NonNullable<Parameters<typeof publishManagerExchange>[0]["store"]>;
 
 function fakeStore() {
   const records: CostRecordInput[] = [];
@@ -74,11 +72,10 @@ describe("manager exchange cost record", () => {
 
   it("never fails the exchange when the ledger is down", async () => {
     const { store } = fakeStore();
-    (
-      store.costLedger as unknown as { record: () => Promise<never> }
-    ).record = async () => {
-      throw new Error("ledger down");
-    };
+    (store.costLedger as unknown as { record: () => Promise<never> }).record =
+      async () => {
+        throw new Error("ledger down");
+      };
     await expect(
       publishManagerExchange({
         runId: "run_2",
