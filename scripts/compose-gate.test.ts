@@ -251,12 +251,11 @@ describe("manifest schema", () => {
         return existsSync(full) ? readFileSync(full, "utf8") : null;
       },
     });
-    const validation = validateManifest(raw);
-    const declared = new Set(
-      (validation.manifest?.surfaces ?? []).flatMap((surface) => surface.files),
-    );
     expect(report.uncovered).toEqual([]);
-    expect(report.covered.sort()).toEqual([...declared].sort());
+    // Every declared file exists (the staleness check), and every detected
+    // candidate is declared. Undetected declarations are allowed: authors may
+    // declare a surface that this narrow detector does not classify.
+    expect(report.errors).toEqual([]);
   });
 
   it("matches the ComposeKind contract in the API route", () => {
