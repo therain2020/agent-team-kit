@@ -1178,11 +1178,6 @@ export function assessRisk(
         : loaded.agents.get(draft.id);
     if (draft.type === "manager") {
       reasons.push("经理变更影响全队协调");
-      return {
-        level: "low",
-        requiresApproval: false,
-        reasons,
-      };
     }
     const beforeTools = new Set(existing?.frontmatter.tools ?? []);
     const addedTools = draft.tools.filter((tool) => !beforeTools.has(tool));
