@@ -3,15 +3,19 @@ import { describe, expect, it } from "vitest";
 import type { FactoryItem } from "../lib/factory";
 import { deriveLiveAgents, deriveLiveMissions } from "../lib/office-live";
 import {
+  WORLD_EVENT_QUEUE_LIMIT,
   type WorldClientState,
+  type WorldDelta,
   applyWorldDelta,
   applyWorldSnapshot,
   initialWorldState,
   managerPresence,
   mergeAgents,
+  mergeDeltas,
   mergeRuns,
   presenceFromAgentState,
   presenceStatus,
+  pushWorldDelta,
   reconcileFactoryItems,
   reconnectDelay,
 } from "../lib/world-state";
@@ -263,6 +267,22 @@ describe("office live projection", () => {
     expect(resumed[0]).toMatchObject({ phase: "build", status: "running" });
   });
 
+  it("ignores agent state from another Pack's run", () => {
+    const state = loaded(
+      [run({ runId: "run_1" })],
+      [
+        agent({
+          agentId: "seller",
+          runId: "run_other",
+          state: "running",
+          since: "2026-11-19T11:00:00.000Z",
+        }),
+      ],
+    );
+    const agents = deriveLiveAgents([baseAgent], state.world, [baseMission]);
+    expect(agents[0]).toMatchObject({ status: "idle", live: false });
+  });
+
   it("keeps an optimistic mission until the stream knows the run", () => {
     const optimistic = {
       runId: "run_new",
@@ -340,5 +360,84 @@ describe("reconnect backoff", () => {
     expect(reconnectDelay(2, fixed)).toBe(4_000);
     expect(reconnectDelay(9, fixed)).toBe(30_000);
     expect(reconnectDelay(-1, fixed)).toBe(1_000);
+  });
+});
+
+describe("world stream batching and fallback", () => {
+  function delta(
+    seq: number,
+    runs: RunProjection[] = [],
+    agents: AgentState[] = [],
+    eventCount = 1,
+  ): WorldDelta {
+    return { seq, runs, agents, eventCount };
+  }
+
+  it("drops deltas at or behind the applied cursor", () => {
+    const state = loaded([run({ runId: "run_1" })], []);
+    const paused = run({ runId: "run_1", status: "paused", lastEventId: 10 });
+    const stale = applyWorldDelta(state, delta(10, [paused]), 2_000);
+    expect(stale).toBe(state);
+    const failed = run({ runId: "run_1", status: "failed", lastEventId: 9 });
+    const older = applyWorldDelta(state, delta(9, [failed]), 2_000);
+    expect(older).toBe(state);
+  });
+
+  it("coalesces a batch by key and keeps the highest seq", () => {
+    const merged = mergeDeltas([
+      delta(11, [run({ runId: "run_1", lastEventId: 11 })], [], 2),
+      delta(
+        13,
+        [run({ runId: "run_2", lastEventId: 13 })],
+        [agent({ agentId: "builder" })],
+        3,
+      ),
+    ]);
+    expect(merged.seq).toBe(13);
+    expect(merged.eventCount).toBe(5);
+    expect(merged.runs.map((entry) => entry.runId).sort()).toEqual([
+      "run_1",
+      "run_2",
+    ]);
+    expect(merged.agents).toHaveLength(1);
+  });
+
+  it("caps the queue at 500 events and reports the drop", () => {
+    const perFrame = WORLD_EVENT_QUEUE_LIMIT / 5;
+    let queue: WorldDelta[] = [];
+    let dropped = 0;
+    for (let index = 1; index <= 10; index += 1) {
+      const pushed = pushWorldDelta(queue, delta(index, [], [], perFrame));
+      queue = pushed.queue;
+      dropped += pushed.dropped;
+    }
+    expect(queue).toHaveLength(5);
+    expect(dropped).toBe(WORLD_EVENT_QUEUE_LIMIT);
+    expect(queue.at(-1)?.seq).toBe(10);
+  });
+
+  it("clears degradation on a snapshot and keeps polling status", () => {
+    const polling: WorldClientState = {
+      ...initialWorldState,
+      status: "polling",
+      degraded: true,
+      seq: 5,
+    };
+    const next = applyWorldSnapshot(
+      polling,
+      {
+        snapshot: {
+          runs: [],
+          agents: [],
+          computedAt: "2026-11-20T00:00:00.000Z",
+        },
+        seq: 12,
+        etag: 'W/"world-12"',
+      },
+      1_000,
+    );
+    expect(next.status).toBe("polling");
+    expect(next.degraded).toBe(false);
+    expect(next.seq).toBe(12);
   });
 });

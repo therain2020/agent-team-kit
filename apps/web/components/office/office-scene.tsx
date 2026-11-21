@@ -27,7 +27,11 @@ import {
   type MissionPrefill,
   missionPrefillForAgent,
 } from "@/lib/mission-prefill";
-import type { OfficeData } from "@/lib/office";
+import type {
+  OfficeActivePack,
+  OfficeData,
+  OfficeSnapshotPayload,
+} from "@/lib/office";
 import {
   type LiveAgent,
   type LiveMission,
@@ -37,8 +41,12 @@ import {
   missionRunIds,
 } from "@/lib/office-live";
 import type { OfficeView } from "@/lib/office-view";
-import { pixelStateFromStatus } from "@/lib/pixel-events";
+import {
+  type PixelAgentState,
+  pixelStateFromStatus,
+} from "@/lib/pixel-events";
 import { useDocumentVisible } from "@/lib/use-document-visible";
+import { useThrottledPresence } from "@/lib/use-throttled-presence";
 import { useTicker } from "@/lib/use-ticker";
 import { cn } from "@/lib/utils";
 import { useWorld } from "@/lib/world-client";
@@ -82,6 +90,10 @@ import {
 const OPTIMISTIC_TTL_MS = 120_000;
 /** How long a token/cost delta chip stays on screen. */
 const FLOW_DELTA_MS = 4_000;
+/** A run of this Pack unknown to SSR triggers one debounced snapshot fetch. */
+const UNKNOWN_RUN_DEBOUNCE_MS = 1_500;
+/** Never refetch the office snapshot more often than this. */
+const SNAPSHOT_REFRESH_COOLDOWN_MS = 15_000;
 
 const ROLE_I18N = {
   builder: "roleBuilder",
@@ -153,7 +165,12 @@ function OfficeSceneBody({
   const router = useRouter();
   const world = useWorld();
   const visible = useDocumentVisible();
-  const active = data.active;
+  // The stream can reveal a run this Pack owns before SSR's mission list does;
+  // a light `/api/office` snapshot then adds the mission without a page reload.
+  const [activeSnapshot, setActiveSnapshot] = useState<OfficeActivePack | null>(
+    null,
+  );
+  const active = activeSnapshot ?? data.active;
   const [selectedId, setSelectedId] = useState(
     active?.agents[0]?.id ?? "manager",
   );
@@ -194,6 +211,7 @@ function OfficeSceneBody({
   const flowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cueSeq = useRef(0);
   const previousWorld = useRef<WorldSnapshot | null>(null);
+  const snapshotFetchedAt = useRef(0);
 
   // The stream wins: drop optimistic missions as soon as the projection has
   // the run, and expire anything the stream never acknowledged.
@@ -235,6 +253,60 @@ function OfficeSceneBody({
     () => deriveLiveMissions(baseMissions, world.world, optimistic),
     [baseMissions, world.world, optimistic],
   );
+  // 500ms per-agent sprite throttle (97 §3.2); status text stays immediate.
+  const spriteStates = useThrottledPresence(agents);
+
+  // Unknown run guard: the world stream is workspace-wide, so only runs that
+  // use this Pack's workflows and are absent from the mission list count. A
+  // debounced `/api/office` snapshot adds the mission card without reloading.
+  useEffect(() => {
+    const current = active;
+    const runs = world.world?.runs;
+    if (!current || !runs || runs.length === 0) {
+      return;
+    }
+    const workflowIds = new Set(
+      current.workflows.map((workflow) => workflow.id),
+    );
+    const known = new Set(current.missions.map((mission) => mission.runId));
+    for (const mission of optimistic) {
+      known.add(mission.runId);
+    }
+    const unknown = runs.some(
+      (run) => workflowIds.has(run.workflowId) && !known.has(run.runId),
+    );
+    if (!unknown) {
+      return;
+    }
+    if (Date.now() - snapshotFetchedAt.current < SNAPSHOT_REFRESH_COOLDOWN_MS) {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      snapshotFetchedAt.current = Date.now();
+      void (async () => {
+        try {
+          const response = await fetch(
+            `/api/office?pack=${encodeURIComponent(current.dirName)}`,
+            { cache: "no-store", signal: controller.signal },
+          );
+          if (!response.ok) {
+            return;
+          }
+          const payload = (await response.json()) as OfficeSnapshotPayload;
+          if (payload.active && payload.active.dirName === current.dirName) {
+            setActiveSnapshot(payload.active);
+          }
+        } catch {
+          // The stream stays authoritative; the next delta retries.
+        }
+      })();
+    }, UNKNOWN_RUN_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [active, world.world, optimistic]);
 
   useEffect(() => {
     const timers = bubbleTimers.current;
@@ -522,6 +594,7 @@ function OfficeSceneBody({
               manager={manager}
               employees={employees}
               agents={agents}
+              spriteStates={spriteStates}
               ticker={ticker}
               visible={visible}
               selectedId={selected?.id ?? null}
@@ -578,6 +651,10 @@ function OfficeSceneBody({
           ) : selected ? (
             <AgentPanel
               agent={selected}
+              spriteState={
+                spriteStates[selected.id]?.state ??
+                pixelStateFromStatus(selected.status)
+              }
               tick={ticker.tick}
               packDir={active.dirName}
               team={employees}
@@ -684,6 +761,7 @@ function ActivityText({ agent }: { agent: LiveAgent }) {
 
 function AgentPanel({
   agent,
+  spriteState,
   tick,
   packDir,
   onChat,
@@ -693,6 +771,8 @@ function AgentPanel({
   onStartMission,
 }: {
   agent: LiveAgent;
+  /** Throttled sprite state; the text status still updates immediately. */
+  spriteState: PixelAgentState;
   tick: number;
   packDir: string;
   onChat: () => void;
@@ -765,7 +845,7 @@ function AgentPanel({
           <PixelAgent
             seed={agent.id.length}
             manager={agent.isManager}
-            state={pixelStateFromStatus(agent.status)}
+            state={spriteState}
             tick={tick}
             tone={agent.status === "error" ? "red" : undefined}
           />

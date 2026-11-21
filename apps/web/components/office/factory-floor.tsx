@@ -17,7 +17,11 @@ import {
 } from "@/components/pixel";
 import { SinceLabel } from "@/components/world/world-status";
 import type { LiveAgent } from "@/lib/office-live";
-import { pixelStateFromStatus } from "@/lib/pixel-events";
+import {
+  type PixelAgentState,
+  type PresenceMap,
+  pixelStateFromStatus,
+} from "@/lib/pixel-events";
 import type { Ticker } from "@/lib/use-ticker";
 import { cn, formatCny, formatNumber } from "@/lib/utils";
 import type { WorldCrate } from "@/lib/world-cues";
@@ -58,6 +62,7 @@ export function FactoryFloor({
   manager,
   employees,
   agents,
+  spriteStates,
   ticker,
   visible,
   selectedId,
@@ -78,6 +83,8 @@ export function FactoryFloor({
   manager?: LiveAgent;
   employees: LiveAgent[];
   agents: LiveAgent[];
+  /** Per-agent sprite state, already throttled for 500ms (97 §3.2). */
+  spriteStates: PresenceMap;
   ticker: Ticker;
   /** Hidden tabs freeze the clock and transforms; data still updates. */
   visible: boolean;
@@ -293,6 +300,10 @@ export function FactoryFloor({
               <Station
                 agent={agent}
                 index={agent.isManager ? 0 : employees.indexOf(agent)}
+                spriteState={
+                  spriteStates[agent.id]?.state ??
+                  pixelStateFromStatus(agent.status)
+                }
                 tick={motionTick}
                 animated={motionEnabled}
                 bubble={bubbles[agent.id]}
@@ -459,6 +470,7 @@ function FlowMeter({ flow }: { flow: FloorFlow }) {
 
 function Station({
   agent,
+  spriteState,
   tick,
   animated,
   bubble,
@@ -474,6 +486,7 @@ function Station({
   onOpen,
 }: {
   agent: LiveAgent;
+  spriteState: PixelAgentState;
   tick: number;
   animated: boolean;
   bubble?: FloorBubble;
@@ -535,7 +548,7 @@ function Station({
         <PixelAgent
           seed={index + (manager ? 7 : 0)}
           manager={manager}
-          state={pixelStateFromStatus(agent.status)}
+          state={spriteState}
           tick={tick}
           tone={agent.status === "error" ? "red" : undefined}
         />
