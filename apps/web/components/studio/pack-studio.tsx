@@ -10,6 +10,11 @@ import type {
   StudioStage,
   StudioWorkflow,
 } from "@/lib/pack-studio";
+import {
+  type PolicyApproval,
+  type WorkflowStageDraft,
+  draftStageToYaml,
+} from "@/lib/studio-drafts";
 import { cn } from "@/lib/utils";
 import {
   Bot,
@@ -18,7 +23,6 @@ import {
   FileCode2,
   FolderTree,
   Lock,
-  Plus,
   RefreshCw,
   Rocket,
   Save,
@@ -42,6 +46,8 @@ import { toast } from "sonner";
 import { parse, stringify } from "yaml";
 import { AvatarEditor } from "./avatar-editor";
 import { ManufacturePanel } from "./manufacture-panel";
+import { NewMemberDialog } from "./new-member-dialog";
+import { NewWorkflowDialog } from "./new-workflow-dialog";
 import { PackFiles } from "./pack-files";
 import { PackPublish } from "./pack-publish";
 import { StageFields } from "./stage-fields";
@@ -64,18 +70,6 @@ interface ApprovalDraft {
   riskClass: "low" | "medium" | "high";
   ttl: string;
   maxRunCostCny: string;
-}
-
-interface PolicyApproval {
-  mode: "required" | "auto" | "never";
-  position: "before" | "after";
-  riskClass: "low" | "medium" | "high";
-  ttl: string;
-  autoApproveWhen?: {
-    maxRunCostCny?: number;
-    riskClass?: Array<"low" | "medium" | "high">;
-    stages?: string[];
-  };
 }
 
 interface PolicyRow {
@@ -108,33 +102,6 @@ interface AgentDraftResult {
   rationale: string;
   warnings: string[];
   model: "live" | "heuristic";
-}
-
-const EMPTY_AGENT_DRAFT: AgentDraftValues = {
-  description: "",
-  model: "deepseek-flash",
-  role: "builder",
-  instructions: "",
-  tools: [],
-  skills: [],
-};
-
-interface WorkflowStageDraft {
-  id: string;
-  type: StudioStage["type"];
-  agent?: string;
-  coder?: string;
-  goal?: string;
-  acceptance?: string;
-  inputs: string[];
-  outputs: string[];
-  timeout?: string;
-  retry?: { max: number; backoff: "fixed" | "exp" };
-  gate?: string;
-  depends: string[];
-  includeInitialInput?: boolean;
-  revisionAgent?: string;
-  approval?: PolicyApproval | null;
 }
 
 interface WorkflowDraftResult {
@@ -234,19 +201,9 @@ export function PackStudio({
   const [policyExcluded, setPolicyExcluded] = useState<Record<string, boolean>>(
     {},
   );
-  const [newAgent, setNewAgent] = useState<{ id: string } & AgentDraftValues>({
-    id: "",
-    ...EMPTY_AGENT_DRAFT,
-  });
   const [agentIntent, setAgentIntent] = useState("");
   const [agentDraft, setAgentDraft] = useState<AgentDraftResult | null>(null);
   const [agentDraftBusy, setAgentDraftBusy] = useState(false);
-  const [newAgentIntent, setNewAgentIntent] = useState("");
-  const [newAgentDraft, setNewAgentDraft] = useState<AgentDraftResult | null>(
-    null,
-  );
-  const [newAgentDraftBusy, setNewAgentDraftBusy] = useState(false);
-  const [newWorkflowId, setNewWorkflowId] = useState("workflow-2");
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [workflowIntent, setWorkflowIntent] = useState("");
   const [workflowDraft, setWorkflowDraft] =
@@ -368,48 +325,40 @@ export function PackStudio({
     toast.success(t("agentDraftApplied"));
   }
 
-  async function generateNewAgentDraft() {
-    if (!newAgentIntent.trim()) {
-      toast.error(t("agentDraftIntentRequired"));
-      return;
-    }
-    setNewAgentDraftBusy(true);
-    setError(null);
-    try {
-      setNewAgentDraft(
-        await requestAgentDraft(newAgentIntent.trim(), newAgent.id.trim(), {
-          description: newAgent.description,
-          model: newAgent.model,
-          role: newAgent.role,
-          instructions: newAgent.instructions,
-          tools: newAgent.tools,
-          skills: newAgent.skills,
-        }),
-      );
-    } catch (problem) {
-      const text = problem instanceof Error ? problem.message : String(problem);
-      setError(text);
-      toast.error(text);
-    } finally {
-      setNewAgentDraftBusy(false);
-    }
+  function handleMemberCreated(member: AgentDraftValues & { id: string }) {
+    const created: StudioAgent = {
+      id: member.id,
+      isManager: false,
+      description: member.description,
+      model: member.model,
+      role: member.role,
+      tools: member.tools,
+      skills: member.skills,
+      instructions: member.instructions,
+      file: `agents/${member.id}.md`,
+    };
+    setAgents((current) => [
+      ...current.filter((agent) => agent.id !== created.id),
+      created,
+    ]);
+    setSelectedId(created.id);
+    setAgentIntent("");
+    setAgentDraft(null);
+    router.refresh();
   }
 
-  function applyNewAgentDraft() {
-    if (!newAgentDraft) {
-      return;
-    }
-    const values = newAgentDraft.values;
-    setNewAgent((current) => ({
-      ...current,
-      description: values.description,
-      model: values.model,
-      role: values.role === "manager" ? current.role : values.role,
-      instructions: values.instructions,
-      tools: values.tools,
-      skills: values.skills,
-    }));
-    toast.success(t("agentDraftApplied"));
+  function handleWorkflowCreated(workflow: {
+    id: string;
+    file: string;
+    content: string;
+  }) {
+    setWorkflowFile(workflow.file);
+    setWorkflowRaw(workflow.content);
+    setWorkflowIntent("");
+    setWorkflowDraft(null);
+    setPipelineIntent("");
+    setPipelineDraft(null);
+    router.refresh();
   }
 
   async function generateManagerDraft() {
@@ -494,36 +443,6 @@ export function PackStudio({
       setError(text);
       toast.error(text);
       return false;
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function addAgent() {
-    setSaving(true);
-    setError(null);
-    try {
-      const response = await fetch(
-        `/api/packs/${encodeURIComponent(data.dirName)}/agents`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(newAgent),
-        },
-      );
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error ?? "create failed");
-      }
-      toast.success(t("agentCreated"));
-      setNewAgent({ id: "", ...EMPTY_AGENT_DRAFT });
-      setNewAgentIntent("");
-      setNewAgentDraft(null);
-      router.refresh();
-    } catch (problem) {
-      const text = problem instanceof Error ? problem.message : String(problem);
-      setError(text);
-      toast.error(text);
     } finally {
       setSaving(false);
     }
@@ -624,36 +543,6 @@ export function PackStudio({
       toast.error(text);
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function addWorkflow() {
-    const id = newWorkflowId.trim();
-    if (!id) {
-      return;
-    }
-    setWorkflowBusy(true);
-    try {
-      const response = await fetch(
-        `/api/packs/${encodeURIComponent(data.dirName)}/workflow`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id }),
-        },
-      );
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error ?? "create failed");
-      }
-      toast.success(t("workflowCreated"));
-      window.location.reload();
-    } catch (problem) {
-      toast.error(
-        problem instanceof Error ? problem.message : t("validationFailed"),
-      );
-    } finally {
-      setWorkflowBusy(false);
     }
   }
 
@@ -1222,140 +1111,15 @@ export function PackStudio({
                 ))}
             </div>
 
-            <div className="rounded-lg border border-border bg-card p-3">
-              <p className="mb-2 flex items-center gap-1.5 text-[11px] text-zinc-300">
-                <Plus className="size-3.5" />
-                {t("newAgent")}
-              </p>
-              <div className="space-y-1.5">
-                <Input
-                  value={newAgent.id}
-                  onChange={(event) =>
-                    setNewAgent((current) => ({
-                      ...current,
-                      id: event.target.value,
-                    }))
-                  }
-                  placeholder={t("agentIdPlaceholder")}
-                  className="h-8 font-mono text-[11px]"
-                />
-                <Input
-                  value={newAgent.description}
-                  onChange={(event) =>
-                    setNewAgent((current) => ({
-                      ...current,
-                      description: event.target.value,
-                    }))
-                  }
-                  placeholder={t("agentDescriptionPlaceholder")}
-                  className="h-8 text-[11px]"
-                />
-                <Input
-                  value={newAgent.model}
-                  onChange={(event) =>
-                    setNewAgent((current) => ({
-                      ...current,
-                      model: event.target.value,
-                    }))
-                  }
-                  placeholder="deepseek-flash"
-                  className="h-8 font-mono text-[11px]"
-                />
-                <select
-                  value={newAgent.role}
-                  onChange={(event) =>
-                    setNewAgent((current) => ({
-                      ...current,
-                      role: event.target.value as StudioAgent["role"],
-                    }))
-                  }
-                  aria-label={t("role")}
-                  className="h-8 w-full rounded-md border border-border bg-zinc-950 px-2 text-[11px] text-zinc-200"
-                >
-                  <option value="builder">{t("roleBuilder")}</option>
-                  <option value="seller">{t("roleSeller")}</option>
-                  <option value="specialist">{t("roleSpecialist")}</option>
-                </select>
-                <TokenPicker
-                  values={newAgent.tools}
-                  options={data.catalog.tools.map((tool) => ({
-                    value: tool.name,
-                    description:
-                      tool.source === "toolpack" ? "toolpack" : undefined,
-                  }))}
-                  onChange={(tools) =>
-                    setNewAgent((current) => ({ ...current, tools }))
-                  }
-                  selectLabel={t("addTool")}
-                  customPlaceholder={t("customTool")}
-                  addLabel={t("add")}
-                  unknownLabel={t("unknownTool")}
-                />
-                <TokenPicker
-                  values={newAgent.skills}
-                  options={data.catalog.skills.map((skill) => ({
-                    value: skill,
-                  }))}
-                  onChange={(skills) =>
-                    setNewAgent((current) => ({ ...current, skills }))
-                  }
-                  selectLabel={t("addSkill")}
-                  customPlaceholder={t("customSkill")}
-                  addLabel={t("add")}
-                  unknownLabel={t("unknownSkill")}
-                />
-                <Textarea
-                  value={newAgent.instructions}
-                  onChange={(event) =>
-                    setNewAgent((current) => ({
-                      ...current,
-                      instructions: event.target.value,
-                    }))
-                  }
-                  placeholder={t("instructionsPlaceholder")}
-                  rows={3}
-                  className="text-[11px]"
-                />
-                <div className="space-y-1.5 rounded-md border border-border/60 p-2">
-                  <p className="flex items-center gap-1 text-[10px] text-zinc-400">
-                    <Sparkles className="size-3" />
-                    {t("agentDraftNewTitle")}
-                  </p>
-                  <Textarea
-                    value={newAgentIntent}
-                    onChange={(event) => setNewAgentIntent(event.target.value)}
-                    placeholder={t("agentDraftPlaceholder")}
-                    className="min-h-12 text-[11px]"
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => void generateNewAgentDraft()}
-                    disabled={newAgentDraftBusy || saving}
-                  >
-                    <Sparkles className="size-3.5" />
-                    {newAgentDraftBusy
-                      ? t("agentDraftGenerating")
-                      : t("agentDraftGenerate")}
-                  </Button>
-                  {newAgentDraft ? (
-                    <AgentDraftPreview
-                      draft={newAgentDraft}
-                      onApply={applyNewAgentDraft}
-                    />
-                  ) : null}
-                </div>
-                <Button
-                  size="sm"
-                  className="w-full"
-                  onClick={addAgent}
-                  disabled={saving || !newAgent.id || !newAgent.description}
-                >
-                  {t("createAgent")}
-                </Button>
-              </div>
-            </div>
+            <NewMemberDialog
+              dirName={data.dirName}
+              tools={data.catalog.tools.map((tool) => ({
+                name: tool.name,
+                source: tool.source,
+              }))}
+              skills={data.catalog.skills}
+              onCreated={handleMemberCreated}
+            />
 
             {!hasManager ? (
               <div className="space-y-1.5 rounded-lg border border-border bg-card p-3">
@@ -1621,23 +1385,11 @@ export function PackStudio({
       {tab === "workflows" ? (
         <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
           <div className="space-y-2 rounded-lg border border-border bg-card p-2">
-            <div className="flex gap-1">
-              <Input
-                value={newWorkflowId}
-                onChange={(event) => setNewWorkflowId(event.target.value)}
-                placeholder={t("workflowId")}
-                className="h-8 font-mono text-[11px]"
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={addWorkflow}
-                disabled={workflowBusy || !newWorkflowId.trim()}
-                aria-label={t("workflowNew")}
-              >
-                <Plus className="size-3.5" />
-              </Button>
-            </div>
+            <NewWorkflowDialog
+              dirName={data.dirName}
+              agentIds={agents.map((agent) => agent.id)}
+              onCreated={handleWorkflowCreated}
+            />
             {data.workflows.map((workflow) => (
               <button
                 key={workflow.file}
@@ -2490,51 +2242,6 @@ function currentStagesOf(workflow: StudioWorkflow): WorkflowStageDraft[] {
     ...(stage.revisionAgent ? { revisionAgent: stage.revisionAgent } : {}),
     ...(stage.approval ? { approval: stage.approval } : {}),
   }));
-}
-
-function draftStageToYaml(stage: WorkflowStageDraft): Record<string, unknown> {
-  const out: Record<string, unknown> = {
-    id: stage.id,
-    type: stage.type,
-    inputs: stage.inputs,
-    outputs: stage.outputs,
-  };
-  if (stage.agent) {
-    out.agent = stage.agent;
-  }
-  if (stage.coder) {
-    out.coder = stage.coder;
-  }
-  if (stage.goal) {
-    out.goal = stage.goal;
-  }
-  if (stage.acceptance) {
-    out.acceptance = stage.acceptance;
-  }
-  if (stage.timeout) {
-    out.timeout = stage.timeout;
-  }
-  if (stage.retry) {
-    out.retry = stage.retry;
-  }
-  if (stage.gate) {
-    out.gate = stage.gate;
-  }
-  if (stage.depends.length === 1) {
-    out.inputFrom = stage.depends[0];
-  } else if (stage.depends.length > 1) {
-    out.inputsFrom = stage.depends;
-  }
-  if (stage.includeInitialInput) {
-    out.includeInitialInput = true;
-  }
-  if (stage.revisionAgent) {
-    out.revisionAgent = stage.revisionAgent;
-  }
-  if (stage.approval) {
-    out.approval = stage.approval;
-  }
-  return out;
 }
 
 function workflowDocBase(raw: string, id: string): Record<string, unknown> {

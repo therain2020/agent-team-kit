@@ -38,7 +38,14 @@ export type ComposeKind =
   | "pack"
   | "workflow"
   | "pipeline"
-  | "source";
+  | "source"
+  /**
+   * Studio create flows (94 C-6b / C-9). `agent` and `workflow` edit an
+   * existing object; the `studio.*` kinds draft a brand-new one, so they reject
+   * invalid/reserved ids up front and never carry `current` values.
+   */
+  | "studio.member"
+  | "studio.workflow";
 
 export interface ComposeInput {
   kind: ComposeKind;
@@ -48,6 +55,11 @@ export interface ComposeInput {
   env?: Record<string, string | undefined>;
   /** Agent being edited; empty when drafting a brand-new member. */
   agentId?: string;
+  /**
+   * Id of the workflow a `studio.workflow` draft would create. Editing an
+   * existing workflow uses `workflow` + `currentStages` instead.
+   */
+  workflowId?: string;
   /** Current form values so drafts preserve unsaved edits. */
   current?: Partial<AgentDraftValues>;
   /** Template pre-selected by the user for a brand-new pack; optional. */
@@ -229,6 +241,9 @@ export interface ComposeResult {
 const DEFAULT_ACCEPTANCE =
   "Small verified changes; high-risk changes stay pending approval.";
 
+/** Ids of new Studio objects: members and workflows both use this slug form. */
+const ID_SLUG = /^[a-z][a-z0-9-]*$/;
+
 export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
   const result = await composeJobInner(input);
   return input.cost ? { ...result, jobId: input.cost.jobId } : result;
@@ -318,16 +333,9 @@ async function composeJobInner(input: ComposeInput): Promise<ComposeResult> {
   }
   if (input.kind === "agent") {
     const env = input.env ?? process.env;
+    const facts = await loadedPackFacts(loaded);
     const agentId = input.agentId?.trim() || null;
     const current = sanitizeAgentCurrent(input.current);
-    const catalog = await packCatalog(loaded.dir);
-    const packAgents = [...loaded.agents.entries()].map(([id, agent]) => ({
-      id,
-      role: agent.role,
-      model: agent.spec.model,
-      tools: agent.spec.tools,
-      skills: agent.spec.skills,
-    }));
     const isManager =
       agentId === "manager" ||
       current?.role === "manager" ||
@@ -336,16 +344,10 @@ async function composeJobInner(input: ComposeInput): Promise<ComposeResult> {
       intent,
       {
         pack: loaded.pack.metadata.name,
-        workflows: loaded.workflows.map((workflow) => ({
-          id: workflow.id,
-          stages: workflow.stages.map((stage) => stage.id),
-        })),
-        agents: packAgents,
-        tools: catalog.tools.map((tool) => tool.name),
-        skills: catalog.skills,
+        ...facts,
         models: agentModelWhitelist(
           env,
-          packAgents.map((agent) => agent.model),
+          facts.agents.map((agent) => agent.model),
         ),
         agentId,
         current,
@@ -357,31 +359,108 @@ async function composeJobInner(input: ComposeInput): Promise<ComposeResult> {
   }
   if (input.kind === "workflow") {
     const env = input.env ?? process.env;
-    const catalog = await packCatalog(loaded.dir);
-    const packAgents = [...loaded.agents.entries()].map(([id, agent]) => ({
-      id,
-      role: agent.role,
-      model: agent.spec.model,
-      tools: agent.spec.tools,
-      skills: agent.spec.skills,
-    }));
+    const facts = await loadedPackFacts(loaded);
     return composeWorkflow(
       intent,
       {
         pack: loaded.pack.metadata.name,
-        workflows: loaded.workflows.map((workflow) => ({
-          id: workflow.id,
-          stages: workflow.stages.map((stage) => stage.id),
-        })),
-        agents: packAgents,
-        tools: catalog.tools.map((tool) => tool.name),
-        skills: catalog.skills,
+        ...facts,
         gates: loaded.pack.evals?.rubrics ? [loaded.pack.evals.rubrics] : [],
         current: parseWorkflowDraftStages(input.currentStages),
       },
       env,
       input.cost,
     );
+  }
+  // Studio create flows: the object id is part of the first input, so an
+  // invalid, reserved or taken id is a hard error instead of a warning — the
+  // create API would reject it anyway and the operator should fix it now.
+  if (input.kind === "studio.member") {
+    const env = input.env ?? process.env;
+    const memberId = (input.agentId ?? "").trim();
+    if (!memberId) {
+      throw new JobError("member_id_required", "a member id is required", 400);
+    }
+    if (!ID_SLUG.test(memberId)) {
+      throw new JobError(
+        "member_id_invalid",
+        `member id ${memberId} must match ^[a-z][a-z0-9-]*$`,
+        400,
+      );
+    }
+    if (memberId === "manager") {
+      throw new JobError(
+        "member_id_reserved",
+        'member id "manager" is reserved; create the manager from the manager panel',
+        400,
+      );
+    }
+    const facts = await loadedPackFacts(loaded);
+    const result = await composeAgent(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        ...facts,
+        models: agentModelWhitelist(
+          env,
+          facts.agents.map((agent) => agent.model),
+        ),
+        agentId: memberId,
+        current: null,
+        isManager: false,
+      },
+      env,
+      input.cost,
+    );
+    const warnings = loaded.agents.has(memberId)
+      ? [
+          `成员 ${memberId} 已存在；请更换 id 或先删除现有成员。`,
+          ...result.warnings,
+        ]
+      : result.warnings;
+    return {
+      ...result,
+      kind: "studio.member",
+      warnings: [...new Set(warnings)],
+    };
+  }
+  if (input.kind === "studio.workflow") {
+    const env = input.env ?? process.env;
+    const workflowId = (input.workflowId ?? "").trim();
+    if (!workflowId) {
+      throw new JobError(
+        "workflow_id_required",
+        "a workflow id is required",
+        400,
+      );
+    }
+    if (!ID_SLUG.test(workflowId)) {
+      throw new JobError(
+        "workflow_id_invalid",
+        `workflow id ${workflowId} must match ^[a-z][a-z0-9-]*$`,
+        400,
+      );
+    }
+    if (loaded.workflows.some((workflow) => workflow.id === workflowId)) {
+      throw new JobError(
+        "workflow_id_exists",
+        `workflow ${workflowId} already exists`,
+        400,
+      );
+    }
+    const facts = await loadedPackFacts(loaded);
+    const result = await composeWorkflow(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        ...facts,
+        gates: loaded.pack.evals?.rubrics ? [loaded.pack.evals.rubrics] : [],
+        current: null,
+      },
+      env,
+      input.cost,
+    );
+    return { ...result, kind: "studio.workflow" };
   }
   if (input.kind === "pipeline") {
     return composePipelineDraft({
@@ -863,6 +942,36 @@ Rules:
   };
 }
 
+interface LoadedPackFacts {
+  workflows: Array<{ id: string; stages: string[] }>;
+  agents: AgentDraftFacts["agents"];
+  tools: string[];
+  skills: string[];
+}
+
+/**
+ * Read-only snapshot shared by the Studio edit/create composers, so the
+ * `agent` / `workflow` / `studio.*` kinds all draft against one fact shape.
+ */
+async function loadedPackFacts(loaded: LoadedPack): Promise<LoadedPackFacts> {
+  const catalog = await packCatalog(loaded.dir);
+  return {
+    workflows: loaded.workflows.map((workflow) => ({
+      id: workflow.id,
+      stages: workflow.stages.map((stage) => stage.id),
+    })),
+    agents: [...loaded.agents.entries()].map(([id, agent]) => ({
+      id,
+      role: agent.role,
+      model: agent.spec.model,
+      tools: agent.spec.tools,
+      skills: agent.spec.skills,
+    })),
+    tools: catalog.tools.map((tool) => tool.name),
+    skills: catalog.skills,
+  };
+}
+
 export interface AgentDraftFacts {
   pack: string;
   workflows: Array<{ id: string; stages: string[] }>;
@@ -895,15 +1004,18 @@ async function composeAgent(
     : "按成员 id 与意图推断职责，生成可编辑的成员草稿。";
   let model: ComposeResult["model"] = "heuristic";
 
-  try {
-    const gateway = composeGateway({
-      env,
-      attribution: cost,
-      source: "compose:agent",
-    });
-    const response = await gateway.complete({
-      model: "deepseek-flash",
-      instructions: `You draft ONE teammate for a private agent team.
+  // No key or KIT_MODEL_MODE=stub: keep the heuristic draft and skip the call
+  // so the operator is not shown a misleading "AI unavailable" warning.
+  if (loadModelConfig(env).mode === "live") {
+    try {
+      const gateway = composeGateway({
+        env,
+        attribution: cost,
+        source: "compose:agent",
+      });
+      const response = await gateway.complete({
+        model: "deepseek-flash",
+        instructions: `You draft ONE teammate for a private agent team.
 Return JSON only:
 {"description":"<one sentence>","model":"<model id>","role":"builder|seller|specialist|manager","instructions":"<role prompt in Markdown>","tools":["<tool name>"],"skills":["<skill name>"],"rationale":"<one sentence>","warnings":["<optional>"]}
 Rules:
@@ -912,49 +1024,50 @@ Rules:
 - tools and skills must come from the provided catalogs; never invent them.
 - preserve the existing values unless the intent asks to change them.
 - keep the description under 200 characters; do not invent facts.`,
-      input: JSON.stringify({
-        intent,
-        pack: facts.pack,
-        agentId: facts.agentId,
-        isManager: facts.isManager,
-        current: facts.current,
-        roles: [
-          "builder",
-          "seller",
-          "specialist",
-          ...(facts.isManager ? ["manager"] : []),
-        ],
-        models: facts.models,
-        tools: facts.tools,
-        skills: facts.skills,
-        agents: facts.agents,
-        workflows: facts.workflows,
-      }),
-    });
-    const parsed = parseJson(response.text);
-    if (parsed) {
-      const validated = validateAgentDraft(parsed, fallback, facts);
-      if (validated.accepted) {
-        values = validated.values;
-        rationale = validated.rationale ?? rationale;
-        warnings.push(...validated.warnings);
-        if (Array.isArray(parsed.warnings)) {
-          warnings.push(
-            ...parsed.warnings
-              .filter((item): item is string => typeof item === "string")
-              .map((item) => item.slice(0, 300))
-              .slice(0, 5),
-          );
+        input: JSON.stringify({
+          intent,
+          pack: facts.pack,
+          agentId: facts.agentId,
+          isManager: facts.isManager,
+          current: facts.current,
+          roles: [
+            "builder",
+            "seller",
+            "specialist",
+            ...(facts.isManager ? ["manager"] : []),
+          ],
+          models: facts.models,
+          tools: facts.tools,
+          skills: facts.skills,
+          agents: facts.agents,
+          workflows: facts.workflows,
+        }),
+      });
+      const parsed = parseJson(response.text);
+      if (parsed) {
+        const validated = validateAgentDraft(parsed, fallback, facts);
+        if (validated.accepted) {
+          values = validated.values;
+          rationale = validated.rationale ?? rationale;
+          warnings.push(...validated.warnings);
+          if (Array.isArray(parsed.warnings)) {
+            warnings.push(
+              ...parsed.warnings
+                .filter((item): item is string => typeof item === "string")
+                .map((item) => item.slice(0, 300))
+                .slice(0, 5),
+            );
+          }
+          model = "live";
+        } else {
+          warnings.push("AI 草稿未通过校验，已使用启发式草稿。");
         }
-        model = "live";
       } else {
-        warnings.push("AI 草稿未通过校验，已使用启发式草稿。");
+        warnings.push("AI 草稿无法解析，已使用启发式草稿。");
       }
-    } else {
-      warnings.push("AI 草稿无法解析，已使用启发式草稿。");
+    } catch {
+      warnings.push("AI 草稿不可用，已使用启发式草稿。");
     }
-  } catch {
-    warnings.push("AI 草稿不可用，已使用启发式草稿。");
   }
 
   return {
@@ -1223,15 +1336,18 @@ async function composeWorkflow(
     : "按 Pack 的首个成员生成线性单阶段草稿。";
   let model: ComposeResult["model"] = "heuristic";
 
-  try {
-    const gateway = composeGateway({
-      env,
-      attribution: cost,
-      source: "compose:workflow",
-    });
-    const response = await gateway.complete({
-      model: "deepseek-flash",
-      instructions: `You draft a multi-stage workflow graph for a private agent team.
+  // No key or KIT_MODEL_MODE=stub: keep the heuristic stage graph and skip the
+  // call so the operator is not shown a misleading "AI unavailable" warning.
+  if (loadModelConfig(env).mode === "live") {
+    try {
+      const gateway = composeGateway({
+        env,
+        attribution: cost,
+        source: "compose:workflow",
+      });
+      const response = await gateway.complete({
+        model: "deepseek-flash",
+        instructions: `You draft a multi-stage workflow graph for a private agent team.
 Return JSON only:
 {"stages":[{"id":"<slug>","type":"agent|coder|workflow","agent":"<agent id>","goal":"<one sentence>","acceptance":"<checkable criterion>","inputs":["<artifact>"],"outputs":["<artifact>"],"timeout":"15m","depends":["<earlier stage id>"],"gate":"<optional eval file>","approval":{"mode":"required|auto|never","position":"before|after","riskClass":"low|medium|high","ttl":"72h"}}],"rationale":"<one sentence>","warnings":["<optional>"]}
 Rules:
@@ -1243,34 +1359,35 @@ Rules:
 - human approval (mode required) only on delivery/publication stages; never auto-approve high risk.
 - gate must reference a provided eval file (optionally with #rubric); omit it when none fits.
 - do not invent agents, gates, tools or facts.`,
-      input: JSON.stringify({
-        intent,
-        pack: facts.pack,
-        workflows: facts.workflows,
-        agents: facts.agents,
-        tools: facts.tools,
-        skills: facts.skills,
-        gates: facts.gates,
-        current: facts.current,
-      }),
-    });
-    const parsed = parseJson(response.text);
-    if (parsed) {
-      const validated = validateWorkflowDraft(parsed, fallback, facts);
-      if (validated.accepted) {
-        values = validated.values;
-        rationale = validated.rationale ?? rationale;
-        warnings.push(...validated.warnings);
-        model = "live";
+        input: JSON.stringify({
+          intent,
+          pack: facts.pack,
+          workflows: facts.workflows,
+          agents: facts.agents,
+          tools: facts.tools,
+          skills: facts.skills,
+          gates: facts.gates,
+          current: facts.current,
+        }),
+      });
+      const parsed = parseJson(response.text);
+      if (parsed) {
+        const validated = validateWorkflowDraft(parsed, fallback, facts);
+        if (validated.accepted) {
+          values = validated.values;
+          rationale = validated.rationale ?? rationale;
+          warnings.push(...validated.warnings);
+          model = "live";
+        } else {
+          warnings.push(...validated.warnings);
+          warnings.push("AI 阶段图未通过校验，已使用默认阶段图。");
+        }
       } else {
-        warnings.push(...validated.warnings);
-        warnings.push("AI 阶段图未通过校验，已使用默认阶段图。");
+        warnings.push("AI 草稿无法解析，已使用默认阶段图。");
       }
-    } else {
-      warnings.push("AI 草稿无法解析，已使用默认阶段图。");
+    } catch {
+      warnings.push("AI 草稿不可用，已使用默认阶段图。");
     }
-  } catch {
-    warnings.push("AI 草稿不可用，已使用默认阶段图。");
   }
 
   return {
