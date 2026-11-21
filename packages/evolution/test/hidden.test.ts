@@ -1,15 +1,30 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   checkHiddenDraft,
   defaultHiddenEvalsDir,
   defaultHiddenEvalsRoot,
   parseHiddenSuite,
+  resolveHiddenEvalsDir,
   selectHiddenChunk,
 } from "../src/hidden";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
+});
+
+async function tempRoot(): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "kit-hidden-resolve-"));
+  tempDirs.push(root);
+  return root;
+}
 
 function suiteText(size: number): string {
   const cases = [1, 2, 3, 4]
@@ -104,5 +119,64 @@ describe("hidden eval suites", () => {
     expect(defaultHiddenEvalsDir("  ", root)).toBe(path.join(root, "default"));
 
     expect(path.isAbsolute(defaultHiddenEvalsRoot())).toBe(true);
+  });
+
+  it("resolves missing and incomplete suites explicitly", async () => {
+    const root = await tempRoot();
+    const missing = resolveHiddenEvalsDir({ workspaceId: "ws-a", root });
+    expect(missing.status).toBe("missing");
+    expect(missing.dir).toBe(path.join(root, "ws-a"));
+    expect(missing.reason).toContain("hidden eval directory missing");
+
+    await mkdir(path.join(root, "ws-a"), { recursive: true });
+    const incomplete = resolveHiddenEvalsDir({ workspaceId: "ws-a", root });
+    expect(incomplete.status).toBe("incomplete");
+    expect(incomplete.reason).toContain("hidden eval suite missing");
+
+    await writeFile(
+      path.join(root, "ws-a", "suite.yaml"),
+      suiteText(1),
+      "utf8",
+    );
+    const available = resolveHiddenEvalsDir({ workspaceId: "ws-a", root });
+    expect(available.status).toBe("available");
+    expect(available.dir).toBe(path.join(root, "ws-a"));
+    expect(available.reason).toBe("");
+  });
+
+  it("honors an explicit directory and the env/home root chain", async () => {
+    const root = await tempRoot();
+    const explicit = path.join(root, "elsewhere");
+    await mkdir(explicit, { recursive: true });
+    await writeFile(path.join(explicit, "suite.yaml"), suiteText(1), "utf8");
+
+    const resolved = resolveHiddenEvalsDir({
+      workspaceId: "ws-a",
+      dir: explicit,
+      root,
+    });
+    expect(resolved.status).toBe("available");
+    expect(resolved.dir).toBe(explicit);
+
+    const previousHidden = process.env.KIT_HIDDEN_EVALS_ROOT;
+    const previousHome = process.env.KIT_HOME;
+    try {
+      Reflect.deleteProperty(process.env, "KIT_HIDDEN_EVALS_ROOT");
+      process.env.KIT_HOME = root;
+      expect(defaultHiddenEvalsRoot()).toBe(path.join(root, "hidden-evals"));
+      process.env.KIT_HIDDEN_EVALS_ROOT = explicit;
+      expect(defaultHiddenEvalsRoot()).toBe(explicit);
+    } finally {
+      if (previousHidden === undefined) {
+        Reflect.deleteProperty(process.env, "KIT_HIDDEN_EVALS_ROOT");
+      } else {
+        process.env.KIT_HIDDEN_EVALS_ROOT = previousHidden;
+      }
+      if (previousHome === undefined) {
+        Reflect.deleteProperty(process.env, "KIT_HOME");
+      } else {
+        process.env.KIT_HOME = previousHome;
+      }
+    }
   });
 });

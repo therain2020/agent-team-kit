@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import path from "node:path";
 import { recordShadowEvolutionCycle } from "@kit/change";
 import { CliError } from "@kit/core";
@@ -20,7 +19,6 @@ import {
   defaultAttributionPath,
   defaultCyclesRoot,
   defaultGovernancePath,
-  defaultHiddenEvalsDir,
   defaultIterationsPath,
   defaultOutcomesPath,
   divergenceGuard,
@@ -42,6 +40,7 @@ import {
   readVariantMeta,
   recordOutcome,
   requestPromotionApprovals,
+  resolveHiddenEvalsDir,
   resolveVariantKind,
   rollbackCanary,
   runEvolutionCycle,
@@ -407,7 +406,7 @@ export function registerEvolve(program: Command): void {
     .option("--cycles-root <dir>", "external root for frozen eval snapshots")
     .option(
       "--hidden-evals <dir>",
-      "hidden eval directory to freeze (default <KIT_HIDDEN_EVALS_ROOT>/<workspace>)",
+      "hidden eval directory to freeze (default <hidden-root>/<workspace>, hidden-root = KIT_HIDDEN_EVALS_ROOT | <KIT_HOME>/hidden-evals | ~/.agent-team-kit/hidden-evals)",
     )
     .option(
       "--approve-evaluator-change",
@@ -471,8 +470,10 @@ export function registerEvolve(program: Command): void {
         }
         try {
           const record = await withEvolutionRepo(async (repo, store) => {
-            const hiddenEvalsDir =
-              options.hiddenEvals ?? defaultHiddenDir(repo.workspaceId);
+            const hiddenEvals = resolveHiddenEvalsDir({
+              workspaceId: repo.workspaceId,
+              ...(options.hiddenEvals ? { dir: options.hiddenEvals } : {}),
+            });
             const record = await runEvolutionCycle({
               packDir,
               agentId: options.agent,
@@ -501,7 +502,10 @@ export function registerEvolve(program: Command): void {
               signalsRoot: options.signalsRoot,
               cyclesRoot: options.cyclesRoot,
               workspaceId: repo.workspaceId,
-              ...(hiddenEvalsDir ? { hiddenEvalsDir } : {}),
+              hiddenEvals,
+              ...(hiddenEvals.status === "available"
+                ? { hiddenEvalsDir: hiddenEvals.dir }
+                : {}),
               ...(options.approveEvaluatorChange
                 ? { allowEvaluatorChange: true }
                 : {}),
@@ -1260,14 +1264,4 @@ function reportError(command: string, error: unknown, json = false): void {
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
-}
-
-/**
- * Hidden suites default to `<KIT_HIDDEN_EVALS_ROOT or ~/.agent-team-kit/
- * hidden-evals>/<workspace>`. A missing directory means the cycle degrades to
- * the visible rubric and the manifest records `hidden.available: false`.
- */
-function defaultHiddenDir(workspaceId: string): string | undefined {
-  const dir = defaultHiddenEvalsDir(workspaceId);
-  return existsSync(dir) ? dir : undefined;
 }

@@ -83,7 +83,8 @@ kit evolve snapshot verify <cycleId> [--cycles-root <dir>]
 
 The command recomputes every file hash and the manifest hash and exits non-zero
 on mismatch. Cycle records persist `evalSnapshotPath`, `evalSnapshotHash`,
-`evaluatorHash` and, when approved, `evaluatorApprovalRef`.
+`evaluatorHash`, the `hidden` coverage marker and, when approved,
+`evaluatorApprovalRef`.
 
 ## Hidden eval sets
 
@@ -96,12 +97,38 @@ physical neighbours of neither packs nor variants.
 <hidden-root>/<workspace>/suite.yaml
 ```
 
-`<hidden-root>` defaults to `~/.agent-team-kit/hidden-evals` and can be
-overridden with `KIT_HIDDEN_EVALS_ROOT`. `<workspace>` is the sanitized
-workspace id. `evolve cycle` picks this directory up automatically when it
-exists; `--hidden-evals <dir>` overrides it for one run. The directory must
-live outside the pack, outside the snapshot destination and outside the
-repository, otherwise the cycle refuses to freeze.
+Every trigger resolves the directory through the same helper
+(`resolveHiddenEvalsDir` in `@kit/evolution`), so CLI, web and autopilot cycles
+cannot drift apart. Resolution order:
+
+1. an explicit directory (`--hidden-evals <dir>`, or a caller-supplied `dir`);
+2. `KIT_HIDDEN_EVALS_ROOT`;
+3. `<KIT_HOME>/hidden-evals`;
+4. `~/.agent-team-kit/hidden-evals`.
+
+The workspace segment is the sanitized workspace id (`[^A-Za-z0-9._-]+` becomes
+`-`; empty, `.` and `..` become `default`). The directory must live outside the
+pack, outside the snapshot destination and outside the repository, otherwise
+the cycle refuses to freeze.
+
+Resolution yields one of three statuses:
+
+- `available` — the directory and `suite.yaml` exist;
+- `missing` — the directory does not exist;
+- `incomplete` — the directory exists but has no `suite.yaml`.
+
+### Trigger behaviour when the set is unavailable
+
+| Trigger | Behaviour |
+|---|---|
+| `kit evolve cycle` | optional: the cycle runs on the visible rubric only, and both the cycle record (`hidden.reason`) and the snapshot manifest (`hidden.reason`) record why. |
+| Web (`POST /api/evolution/cycle`) | required: the cycle skips with `decision: "skipped"`, a rationale naming the reason, and a `hidden` marker; it never scores against the visible rubric only. |
+| Autopilot / `@kit/job` evolution jobs | required, same skip semantics as the web trigger. |
+
+Required triggers therefore fail closed: a missing or incomplete hidden set is
+an explicit skip with a recorded reason, not a silent downgrade. The `hidden`
+coverage marker on the cycle record carries `available`, `required`, `status`,
+`dir` and, when unavailable, `reason`.
 
 Tests and drills must inject a temporary root; they must never read or write
 the real home directory.
@@ -162,10 +189,14 @@ snapshot. If the audit cannot be written, the access fails closed.
 
 ### Degradation
 
-Without a hidden suite the cycle runs on the visible rubric only and marks the
-gap: `manifest.hidden = { available: false }`, no `scores.hidden`, and
-`rationale` ends with `hidden coverage unavailable`. This keeps the cycle
-usable while making missing coverage visible in the records.
+For optional triggers (`kit evolve cycle`) without a hidden suite the cycle
+runs on the visible rubric only and marks the gap: `manifest.hidden` carries
+`available: false` and the resolution `reason`, no `scores.hidden` is written,
+and `rationale` ends with `hidden coverage unavailable`. The cycle record's
+`hidden` marker repeats the reason. Required triggers (web, autopilot) do not
+take this path: they skip the cycle before any snapshot or scoring, so a
+visible-only cycle can never be mistaken for one that was judged with hidden
+coverage.
 
 ## Outcome metrics (E3, 70 §3.4)
 

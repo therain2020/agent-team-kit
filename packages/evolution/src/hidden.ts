@@ -10,8 +10,10 @@ import { parse } from "yaml";
  *
  *   <hidden-root>/<workspace>/suite.yaml
  *
- * The default root is `~/.agent-team-kit/hidden-evals`; override it with
- * `KIT_HIDDEN_EVALS_ROOT`. Cases never enter packs, variants, logs or the
+ * The default root is `<KIT_HOME>/hidden-evals` (or
+ * `~/.agent-team-kit/hidden-evals` without `KIT_HOME`); override it with
+ * `KIT_HIDDEN_EVALS_ROOT`. CLI, web and autopilot resolve it through
+ * `resolveHiddenEvalsDir`. Cases never enter packs, variants, logs or the
  * console - only aggregate counts leave the scoring path. Every read or
  * selection is written to the external audit sink
  * `<cycles-root>/hidden-audit.jsonl`.
@@ -62,8 +64,35 @@ export interface HiddenRotationSelection {
 }
 
 export type HiddenPlan =
-  | { available: false }
+  | { available: false; reason?: string; checkedAt?: string }
   | ({ available: true; rotatedAt: string } & HiddenRotationSelection);
+
+/**
+ * Outcome of resolving the hidden-set directory for one trigger. Callers that
+ * must not silently fall back to the visible rubric (web, autopilot) mark the
+ * resolution `required` on the cycle; the cycle then skips with `reason`.
+ */
+export type HiddenEvalsStatus = "available" | "missing" | "incomplete";
+
+export interface HiddenEvalsResolution {
+  status: HiddenEvalsStatus;
+  /** Directory that was checked (absolute). */
+  dir: string;
+  /** Hidden root the workspace directory was derived from (absolute). */
+  root: string;
+  /** Human-readable reason; empty when the suite is available. */
+  reason: string;
+}
+
+/** Coverage marker persisted on an evolution cycle (70 §5). */
+export interface HiddenEvalsMarker {
+  available: boolean;
+  /** True when the trigger refuses to score without hidden coverage. */
+  required: boolean;
+  status: HiddenEvalsStatus | "unresolved";
+  dir?: string;
+  reason?: string;
+}
 
 export interface HiddenCoverage {
   available: boolean;
@@ -91,10 +120,24 @@ export const EMPTY_HIDDEN_COVERAGE: HiddenCoverage = {
   adversarialFailed: 0,
 };
 
+/**
+ * Kit home: `KIT_HOME` when set, otherwise `~/.agent-team-kit` (mirrors
+ * `@kit/bootstrap` without depending on it).
+ */
+export function hiddenEvalsKitHome(): string {
+  return process.env.KIT_HOME
+    ? path.resolve(process.env.KIT_HOME)
+    : path.join(os.homedir(), ".agent-team-kit");
+}
+
+/**
+ * Hidden root precedence: `KIT_HIDDEN_EVALS_ROOT` > `<KIT_HOME>/hidden-evals`
+ * > `~/.agent-team-kit/hidden-evals`.
+ */
 export function defaultHiddenEvalsRoot(): string {
   return path.resolve(
     process.env.KIT_HIDDEN_EVALS_ROOT ??
-      path.join(os.homedir(), ".agent-team-kit", "hidden-evals"),
+      path.join(hiddenEvalsKitHome(), "hidden-evals"),
   );
 }
 
@@ -110,6 +153,50 @@ export function defaultHiddenEvalsDir(
   const segment =
     safe === "" || safe === "." || safe === ".." ? "default" : safe;
   return path.join(path.resolve(root ?? defaultHiddenEvalsRoot()), segment);
+}
+
+/**
+ * Shared resolver for every trigger that runs an evolution cycle: CLI, web and
+ * autopilot resolve the same directory the same way (70 §5).
+ *
+ * - `dir` (explicit, e.g. `--hidden-evals`) wins over the workspace default.
+ * - The workspace default is `<root>/<sanitized workspace>`; the root comes
+ *   from `KIT_HIDDEN_EVALS_ROOT`, then `<KIT_HOME>/hidden-evals`, then
+ *   `~/.agent-team-kit/hidden-evals`.
+ * - A missing directory and a directory without `suite.yaml` are distinct
+ *   statuses so a caller can record why it refused to score.
+ */
+export function resolveHiddenEvalsDir(
+  input: {
+    workspaceId?: string;
+    /** Explicit override; absolute or relative to the process cwd. */
+    dir?: string;
+    /** Root override (tests, drills); defaults to the env/home chain. */
+    root?: string;
+  } = {},
+): HiddenEvalsResolution {
+  const root = path.resolve(input.root ?? defaultHiddenEvalsRoot());
+  const dir = input.dir
+    ? path.resolve(input.dir)
+    : defaultHiddenEvalsDir(input.workspaceId ?? "default", root);
+  if (!existsSync(dir)) {
+    return {
+      status: "missing",
+      dir,
+      root,
+      reason: `hidden eval directory missing: ${dir}`,
+    };
+  }
+  const suiteFile = path.join(dir, HIDDEN_SUITE_FILE);
+  if (!existsSync(suiteFile)) {
+    return {
+      status: "incomplete",
+      dir,
+      root,
+      reason: `hidden eval suite missing: ${suiteFile}`,
+    };
+  }
+  return { status: "available", dir, root, reason: "" };
 }
 
 export async function loadHiddenSuite(dir: string): Promise<HiddenSuite> {

@@ -1,11 +1,10 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { runWebEvolutionCycle } from "@/lib/evolution-cycle";
 import { resolveEvolutionEvidence } from "@/lib/evolution-evidence";
-import { getEvolutionRepo } from "@/lib/evolution-repo";
 import { sameOriginError } from "@/lib/http";
 import { getRepoRoot, resolvePackDir } from "@/lib/paths";
 import { newId } from "@kit/core";
-import { runEvolutionCycle } from "@kit/evolution";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -57,7 +56,7 @@ export async function POST(request: Request) {
 
   const variantsRoot = path.join(repoRoot, "variants");
   try {
-    const record = await runEvolutionCycle({
+    const record = await runWebEvolutionCycle({
       packDir,
       agentId: typeof body.agentId === "string" ? body.agentId : undefined,
       inputFile,
@@ -72,7 +71,6 @@ export async function POST(request: Request) {
       cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
       statePath: path.join(variantsRoot, "state.json"),
       variantsRoot,
-      repo: await getEvolutionRepo(),
     });
     return NextResponse.json(
       {

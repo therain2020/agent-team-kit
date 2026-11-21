@@ -42,8 +42,9 @@ my-team/
 ```
 
 Only **visible** eval material belongs in a pack. Hidden eval cases live
-outside the repository (`~/.agent-team-kit/hidden-evals/<workspace>/`) and are
-never copied into packs or variants; see
+outside the repository (`<KIT_HOME or ~/.agent-team-kit>/hidden-evals/<workspace>/`,
+`KIT_HIDDEN_EVALS_ROOT` overrides the root) and are never copied into packs or
+variants; see
 [evolution-governance.md](evolution-governance.md#hidden-eval-sets).
 
 ## Roles and tools
