@@ -1,4 +1,5 @@
 import type { ComponentKind } from "@kit/core";
+import type { DraftStage } from "@kit/pack";
 import { describe, expect, it } from "vitest";
 import {
   type PipelineComponentOption,
@@ -17,7 +18,6 @@ import {
   updatePipelineBinding,
   validatePipelineDraftEdits,
 } from "../lib/pipeline-drafts";
-import type { WorkflowStageDraft } from "../lib/studio-drafts";
 
 function option(
   kind: ComponentKind,
@@ -44,9 +44,9 @@ function option(
 
 function stage(
   id: string,
-  type: WorkflowStageDraft["type"] = "agent",
+  type: DraftStage["type"] = "agent",
   agent?: string,
-): WorkflowStageDraft {
+): DraftStage {
   return {
     id,
     type,

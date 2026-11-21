@@ -159,16 +159,25 @@ describe("workshop component assembly (end to end)", () => {
     const result = await assembleComponents(
       {
         packDir,
-        components: [{ kind: "agent", id: "echo" }],
+        components: [
+          { kind: "agent", id: "echo" },
+          { kind: "toolpack", id: "weather" },
+        ],
         dryRun: true,
       },
       workshopComponentLibrary(componentsRoot),
     );
 
     expect(result.preview).toBe(true);
-    expect(result.bindings).toHaveLength(1);
-    expect(result.written).toEqual(["agents/echo.md"]);
+    expect(result.bindings).toHaveLength(2);
+    expect(result.written).toEqual([
+      "toolpacks/weather.yaml",
+      "agents/echo.md",
+    ]);
     expect(existsSync(path.join(packDir, "agents", "echo.md"))).toBe(false);
+    expect(existsSync(path.join(packDir, "toolpacks", "weather.yaml"))).toBe(
+      false,
+    );
     expect(existsSync(path.join(packDir, "components.lock.json"))).toBe(false);
     expect(await readFile(path.join(packDir, "team.yaml"), "utf8")).toBe(
       teamBefore,

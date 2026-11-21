@@ -1,5 +1,5 @@
 import type { ComponentKind, ComponentRef } from "@kit/core";
-import type { WorkflowStageDraft } from "./studio-drafts";
+import type { DraftStage } from "@kit/pack";
 
 /**
  * Editable pipeline assembly draft (94 C-6c+, 88 M3b).
@@ -60,7 +60,7 @@ export interface PipelineDraftValues {
   id: string;
   name: string;
   description: string;
-  stages: WorkflowStageDraft[];
+  stages: DraftStage[];
   components: PipelineComponentDraft[];
   bindings: PipelineBindingDraft[];
   /** Selections the server rejected when the draft was generated. */
@@ -139,15 +139,12 @@ function findComponent(
   );
 }
 
-function findStage(
-  stages: WorkflowStageDraft[],
-  node: string,
-): WorkflowStageDraft | undefined {
+function findStage(stages: DraftStage[], node: string): DraftStage | undefined {
   return stages.find((stage) => stage.id === node);
 }
 
 function setStageAgent(
-  stages: WorkflowStageDraft[],
+  stages: DraftStage[],
   node: string,
   agent: string | null,
 ): void {
@@ -164,7 +161,7 @@ function setStageAgent(
 
 /** Undo a binding's effect: an agent stage must not keep a removed component. */
 function clearBindingEffect(
-  stages: WorkflowStageDraft[],
+  stages: DraftStage[],
   binding: PipelineBindingDraft,
 ): void {
   if (binding.component.kind !== "agent") {
@@ -425,7 +422,7 @@ export function assignPipelineStageAgent(
 /** Stages as they will be written: agent bindings are applied to `agent`. */
 export function applyPipelineBindings(
   values: PipelineDraftValues,
-): WorkflowStageDraft[] {
+): DraftStage[] {
   const stages = cloneValues(values).stages;
   for (const binding of values.bindings) {
     if (binding.component.kind === "agent") {
