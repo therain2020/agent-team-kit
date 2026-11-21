@@ -2102,6 +2102,9 @@ export function validatePipelineDraft(
         continue;
       }
       const stage = stages[index];
+      if (!stage) {
+        continue;
+      }
       const expectedType = kind === "agent" ? "agent" : "workflow";
       if (stage.type !== expectedType) {
         rejectPipeline(
