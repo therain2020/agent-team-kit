@@ -1,8 +1,7 @@
 import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { KillSwitch, resolveKillSwitch } from "@kit/core";
-import type { getOpsGate } from "@kit/ops";
+import type { KillSwitch } from "@kit/core";
 import { initStore, loadStoreConfig } from "@kit/store";
 import { afterEach, describe, expect, it } from "vitest";
 import { type FireTriggerDeps, fireTrigger } from "../src/dispatch";
@@ -97,12 +96,12 @@ function deps(
     reason: null,
     timezone: "UTC",
     action: null,
-  })) as unknown as typeof getOpsGate;
+  })) as unknown as FireTriggerDeps["opsGateFn"];
   return {
     store,
     repoRoot: root,
     now: new Date("2026-11-20T12:00:00.000Z"),
-    killSwitchFn: (() => null) as typeof resolveKillSwitch,
+    killSwitchFn: (() => null) as unknown as FireTriggerDeps["killSwitchFn"],
     opsGateFn,
     startJobFn,
     onGate: (gate) => trail.push(gate),
@@ -247,6 +246,8 @@ describe("fireTrigger gate contract", () => {
       updatedAt: "2026-11-20T00:00:00.000Z",
     } satisfies KillSwitch;
     let started = 0;
+    const killSwitchFn = (() =>
+      killSwitch) as unknown as FireTriggerDeps["killSwitchFn"];
     const result = await fireTrigger(
       {
         triggerId: "daily-radar",
@@ -255,7 +256,7 @@ describe("fireTrigger gate contract", () => {
         route: route("daily-radar"),
       },
       deps(store, root, trail, {
-        killSwitchFn: (() => killSwitch) as typeof resolveKillSwitch,
+        killSwitchFn,
         startJobFn: (async () => {
           started += 1;
           throw new Error("unreachable");
@@ -279,7 +280,7 @@ describe("fireTrigger gate contract", () => {
       reason: "night mode 22-07 UTC",
       timezone: "UTC",
       action: "pause_generation" as const,
-    })) as unknown as typeof getOpsGate;
+    })) as unknown as FireTriggerDeps["opsGateFn"];
     const result = await fireTrigger(
       {
         triggerId: "daily-radar",
