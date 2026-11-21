@@ -85,6 +85,36 @@ export const changeEvalPlanSchema = z.object({
 
 export type ChangeEvalPlan = z.infer<typeof changeEvalPlanSchema>;
 
+/**
+ * Structured, executable revert reference (85 §3.6). `revertRef` stays the
+ * compact display pointer; this record is what a recovery kernel executes.
+ *
+ * - `code`: revert the recorded commit only (never `HEAD` blindly).
+ * - `instruction`: restore the backed-up variant files after verifying the
+ *   backup hash.
+ */
+export const changeRevertCodeSchema = z.object({
+  kind: z.literal("code"),
+  commit: z.string().trim().min(1),
+  baseSha: z.string().trim().min(1).nullable().default(null),
+  backupDir: z.string().trim().min(1).nullable().default(null),
+});
+
+export const changeRevertInstructionSchema = z.object({
+  kind: z.literal("instruction"),
+  targetDir: z.string().trim().min(1),
+  backupDir: z.string().trim().min(1),
+  /** sha256 over the sorted backup file hashes; verified before restoring. */
+  hash: z.string().trim().min(1),
+});
+
+export const changeRevertRefSchema = z.discriminatedUnion("kind", [
+  changeRevertCodeSchema,
+  changeRevertInstructionSchema,
+]);
+
+export type ChangeRevertRef = z.infer<typeof changeRevertRefSchema>;
+
 export const changeSourceRefSchema = z.object({
   kind: z.enum(["iteration", "evolution", "human"]),
   id: z.string().min(1),
@@ -135,6 +165,8 @@ export const changeProposalSchema = z.object({
   }),
   /** Commit/variant the change can be rolled back to. */
   revertRef: z.string().min(1).nullable().default(null),
+  /** Executable revert record; see {@link changeRevertRefSchema}. */
+  revert: changeRevertRefSchema.nullable().default(null),
   budgetRef: z.string().min(1).nullable().default(null),
   approvalRef: z.string().min(1).nullable().default(null),
   outcome: changeOutcomeSchema.nullable().default(null),
@@ -166,6 +198,7 @@ export const newChangeProposalInputSchema = z.object({
   risk: changeRiskSchema,
   evalPlan: changeEvalPlanSchema.optional(),
   revertRef: z.string().min(1).nullable().default(null),
+  revert: changeRevertRefSchema.nullable().default(null),
   budgetRef: z.string().min(1).nullable().default(null),
   approvalRef: z.string().min(1).nullable().default(null),
   contentRef: z.string().min(1).nullable().default(null),
@@ -196,6 +229,7 @@ export function newChangeProposal(
     risk: parsed.risk,
     evalPlan: parsed.evalPlan,
     revertRef: parsed.revertRef,
+    revert: parsed.revert,
     budgetRef: parsed.budgetRef,
     approvalRef: parsed.approvalRef,
     outcome: null,

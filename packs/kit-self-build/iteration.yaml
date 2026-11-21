@@ -1,0 +1,57 @@
+apiVersion: agentteam/v1
+kind: IterationPack
+
+planner:
+  model: deepseek-pro
+  maxTasks: 4
+  instructions: |
+    Plan the smallest set of tasks that moves this repository forward. Each task
+    names one domain, its goal, observable acceptance, and the files it expects
+    to touch. Prefer reversible changes and never plan to edit recovery-kernel,
+    audit or approval surfaces.
+
+domains:
+  frontend:
+    workflow: self-build
+    coder: dsh
+    agent: frontend-designer
+    riskCeiling: medium
+    verification: [typecheck, lint, test, build]
+    instructions: |
+      You are the builder for a frontend task. Research the existing visual
+      language and component primitives first, then make the smallest change
+      that improves the operator's task. Keep accessibility and reduced-motion
+      behavior. Do not change backend contracts.
+
+  backend:
+    workflow: self-build
+    coder: dsh
+    agent: backend-designer
+    riskCeiling: medium
+    verification: [typecheck, lint, test]
+    instructions: |
+      You are the builder for a backend task. Trace the real data flow and
+      contracts first, then make the smallest reversible, observable and tested
+      change. Do not weaken tests or security checks; core and runtime paths
+      escalate to high risk and require approval.
+
+  docs:
+    workflow: self-build
+    coder: dsh
+    agent: architect
+    riskCeiling: low
+    verification: [lint]
+    instructions: |
+      You are the builder for a documentation task. Update only documentation
+      (README/CHANGELOG/docs). Do not change code, tests or contracts. Keep the
+      edit small and consistent with the 0.9.0 autonomy preview.
+
+# Declarative intent for the apply boundary (98 I-7 / 85 §3.4): low and medium
+# auto-merge through the risk path when run LIVE with `--apply low-medium`; high
+# requires approval; forbidden paths are blocked before apply. The runtime knob
+# remains the CLI apply mode, so this block documents policy, it does not
+# override it.
+autoApply:
+  low: true
+  medium: true
+  high: false
