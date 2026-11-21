@@ -4,9 +4,11 @@ import {
   Gamepad2,
   Globe2,
   Inbox,
+  ListChecks,
   type LucideIcon,
   Package,
   Siren,
+  Zap,
 } from "lucide-react";
 
 export interface NavItem {
@@ -59,6 +61,11 @@ export const NAV_ITEMS: NavItem[] = [
     shortcut: "e",
   },
   { href: "/ops", labelKey: "ops", icon: Siren, shortcut: "p" },
+  // Trigger plane surfaces (96 §5.5, issue #96): observation (`/jobs`) and
+  // control (`/triggers`) are separate entries so an observer never lands on
+  // a page that asks them to act.
+  { href: "/jobs", labelKey: "jobs", icon: ListChecks, shortcut: "j" },
+  { href: "/triggers", labelKey: "triggers", icon: Zap, shortcut: "t" },
 ];
 
 /** `g`-prefix quick-jump key → destination, derived from NAV_ITEMS. */

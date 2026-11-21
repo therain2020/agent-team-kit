@@ -1,11 +1,11 @@
 "use client";
 
-import { AutopilotConsole } from "@/components/autopilot/autopilot-console";
 import { BudgetConsole } from "@/components/budgets/budget-console";
 import { CostAttribution } from "@/components/costs/cost-attribution";
 import type { DependencyView } from "@/components/degradation/degradation-controls";
 import { KillSwitchConsole } from "@/components/kill-switch/kill-switch-console";
 import { AutonomyCard } from "@/components/ops/autonomy-card";
+import { AutopilotDebug } from "@/components/ops/autopilot-debug";
 import { CapacitySection } from "@/components/ops/capacity-section";
 import { DegradationSection } from "@/components/ops/degradation-section";
 import { ImpactChainCard, suggestionKey } from "@/components/ops/impact-chain";
@@ -330,7 +330,12 @@ export function OpsSurface({
           </h3>
           <p className="text-[11px] text-zinc-500">{t("autopilotDesc")}</p>
         </div>
-        <AutopilotConsole overview={initial.autopilot} />
+        <AutopilotDebug
+          enabledPacks={
+            initial.autopilot.packs.filter((pack) => pack.enabled).length
+          }
+          totalPacks={initial.autopilot.packs.length}
+        />
       </OpsSectionBlock>
     </div>
   );

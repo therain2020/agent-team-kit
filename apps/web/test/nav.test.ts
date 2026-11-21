@@ -29,7 +29,9 @@ function pageRoutes(dir: string): string[] {
 }
 
 describe("console IA (#160)", () => {
-  it("exposes the first-class entries with observer added (#134)", () => {
+  it("exposes the first-class entries plus the trigger plane and observer surfaces", () => {
+    // 96 §5.5 adds the observation (`/jobs`) and control (`/triggers`) entries;
+    // 98 I-8 adds the read-only observer entry.
     expect(NAV_ITEMS.map((item) => item.href)).toEqual([
       "/office",
       "/world",
@@ -38,6 +40,8 @@ describe("console IA (#160)", () => {
       "/workshop",
       "/evolution",
       "/ops",
+      "/jobs",
+      "/triggers",
     ]);
   });
 
@@ -77,12 +81,13 @@ describe("console IA (#160)", () => {
     expect(isNavItemActive(workshop, "/world")).toBe(false);
   });
 
-  it("keeps app/(console) at eleven page routes or fewer", () => {
+  it("keeps app/(console) at thirteen page routes or fewer", () => {
     const routes = pageRoutes(CONSOLE_DIR).sort();
-    expect(routes.length).toBeLessThanOrEqual(11);
+    expect(routes.length).toBeLessThanOrEqual(13);
     expect(routes).toEqual([
       "/approvals",
       "/evolution",
+      "/jobs",
       "/observer",
       "/office",
       "/ops",
@@ -90,6 +95,7 @@ describe("console IA (#160)", () => {
       "/packs/[dirName]/studio",
       "/sources",
       "/traces",
+      "/triggers",
       "/workshop",
       "/world",
     ]);
