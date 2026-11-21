@@ -845,6 +845,7 @@ function AgentPanel({
             state={spriteState}
             tick={tick}
             tone={agent.status === "error" ? "red" : undefined}
+            avatar={agent.avatar}
           />
         </div>
         <div className="min-w-0 flex-1">

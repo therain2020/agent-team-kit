@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import type { AgentRole } from "@kit/core";
+import type { AgentRole, AvatarSpec } from "@kit/core";
 import { loadPack } from "@kit/pack";
 import { ManifestBudget, selectOfficeRuns } from "./office-budget";
 import { type StudioAgent, loadStudioData } from "./pack-studio";
@@ -34,6 +34,8 @@ export interface OfficeAgentView {
   activityDetail?: string;
   runId?: string;
   lastArtifactId?: string;
+  /** Custom sprite from the agent frontmatter; absent = seed sprite. */
+  avatar?: AvatarSpec;
 }
 
 export type OfficeTaskPhase =
@@ -253,6 +255,7 @@ export async function loadOfficeData(packParam?: string): Promise<OfficeData> {
       activityDetail: latest.activityDetail,
       runId: latest.runId,
       lastArtifactId: latest.artifactId,
+      avatar: agent.avatar,
     };
   });
 

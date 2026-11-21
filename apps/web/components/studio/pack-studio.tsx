@@ -39,6 +39,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { parse, stringify } from "yaml";
+import { AvatarEditor } from "./avatar-editor";
 import { PackFiles } from "./pack-files";
 import { PackPublish } from "./pack-publish";
 import { StageFields } from "./stage-fields";
@@ -445,9 +446,9 @@ export function PackStudio({
     toast.success(t("agentDraftApplied"));
   }
 
-  async function saveAgent() {
+  async function saveAgent(): Promise<boolean> {
     if (!selected) {
-      return;
+      return false;
     }
     setSaving(true);
     setError(null);
@@ -466,6 +467,7 @@ export function PackStudio({
             skills: selected.skills,
             permissions: selected.permissions,
             instructions: selected.instructions,
+            avatar: selected.avatar ?? null,
           }),
         },
       );
@@ -483,10 +485,12 @@ export function PackStudio({
       toast.success(t("saved"));
       setMessage(t("validated"));
       router.refresh();
+      return true;
     } catch (problem) {
       const text = problem instanceof Error ? problem.message : String(problem);
       setError(text);
       toast.error(text);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -1589,6 +1593,22 @@ export function PackStudio({
                 className="font-mono text-[11px] leading-relaxed"
               />
             </Field>
+
+            <AvatarEditor
+              key={selected.id}
+              agentId={selected.id}
+              manager={selected.isManager}
+              savedAvatar={
+                data.agents.find((agent) => agent.id === selected.id)?.avatar ??
+                null
+              }
+              saving={saving}
+              onDraftChange={(avatar) =>
+                patchAgent({ avatar: avatar ?? undefined })
+              }
+              onSave={saveAgent}
+            />
+
             <p className="text-[10px] text-zinc-600">{t("agentHint")}</p>
           </div>
         </div>
