@@ -76,7 +76,13 @@ function routerFor(
     runId: string,
   ) => Promise<RunVariantSelection | null>,
 ): EventRouter {
-  return new EventRouter(store, root, { select }, "default");
+  return new EventRouter(
+    store,
+    root,
+    { select },
+    "default",
+    () => new Date("2026-11-20T12:00:00.000Z"),
+  );
 }
 
 async function runInput(

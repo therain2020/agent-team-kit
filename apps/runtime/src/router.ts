@@ -114,11 +114,14 @@ export class EventRouter {
     private readonly repoRoot: string,
     private readonly variantSelector: RunVariantSelector | null = null,
     private readonly workspaceId = "default",
+    /** Injectable clock keeps night-mode gates deterministic in tests. */
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   async route(event: EventEnvelope, payload: unknown): Promise<RouteResult> {
     const result: RouteResult = { started: [], skipped: [], errors: [] };
     const packs = await this.loadPacks();
+    const now = this.now();
     const runMode =
       process.env.KIT_EVENT_RUN_MODE === "live" ? "LIVE" : "DRY_RUN";
     const priority = priorityClassFor({
@@ -182,6 +185,7 @@ export class EventRouter {
             store: this.store,
             repoRoot: this.repoRoot,
             workspaceId: this.workspaceId,
+            now,
           },
         ).catch((error: unknown) => {
           result.errors.push(
