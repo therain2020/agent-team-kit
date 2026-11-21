@@ -72,6 +72,22 @@ export interface WorkshopSourceView {
   commit: string;
   trust: string;
   builtin: boolean;
+  /** Observer-set collection budget (98 I-5). */
+  budget?: { dailyCostCny: number; maxItemsPerRun: number };
+  /** Retired sources keep their manifest and history; collection stops. */
+  retired?: boolean;
+  retiredAt?: string;
+}
+
+/** Compact per-source yield view for the source shelf (98 I-5). */
+export interface WorkshopSourceHealthView {
+  sourceId: string;
+  runs: number;
+  itemsCollected: number;
+  eventsCreated: number;
+  eventRatio: number;
+  consecutiveFailures: number;
+  degraded: boolean;
 }
 
 export interface WorkshopSurfaceData {

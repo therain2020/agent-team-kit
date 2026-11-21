@@ -5,6 +5,7 @@ import type { EvidenceError, EvidenceSet, RawSourceItem } from "./types";
 export * from "./adapters";
 export * from "./collect";
 export * from "./fetch-source";
+export * from "./manufacture";
 export * from "./registry";
 export * from "./scoring";
 export * from "./types";

@@ -1,16 +1,25 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CliError } from "@kit/core";
+import { draftAuthoredSource } from "@kit/job";
 import {
   SOURCE_TOPIC,
   collectOnce,
+  createSourceProposal,
   draftInterestProfile,
   fetchEvidence,
   installSource,
+  installSourceProposal,
   listInstalledSources,
+  listRetirementProposals,
+  listSourceProposals,
+  loadInstalledSource,
   removeSource,
+  retireSource,
   searchSources,
+  setSourceBudget,
   testSource,
+  updateSourceDefinition,
 } from "@kit/source";
 import { initStore } from "@kit/store";
 import type { Command } from "commander";
@@ -630,6 +639,274 @@ export function registerSource(program: Command): void {
         }
       },
     );
+
+  source
+    .command("propose")
+    .description(
+      "Draft a declarative source.yaml proposal from one sentence (98 I-5, no install)",
+    )
+    .requiredOption("--intent <text>", "what the source should fetch")
+    .option(
+      "--endpoint <url>",
+      "override the endpoint extracted from the intent",
+    )
+    .option("--name <name>", "override the generated source name")
+    .option("--description <text>", "override the generated description")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        intent: string;
+        endpoint?: string;
+        name?: string;
+        description?: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        try {
+          const authored = draftAuthoredSource(options.intent, {
+            ...(options.endpoint ? { endpoint: options.endpoint } : {}),
+            ...(options.name ? { name: options.name } : {}),
+            ...(options.description
+              ? { description: options.description }
+              : {}),
+          });
+          const proposal = await createSourceProposal({
+            intent: options.intent,
+            yaml: authored.yaml,
+            model: "heuristic",
+          });
+          emit(json, proposal, () => {
+            console.log(
+              `${proposal.status === "rejected" ? "✖" : "✓"} ${proposal.status} ${proposal.name} (${proposal.id})`,
+            );
+            for (const issue of proposal.issues) {
+              console.log(`  ! ${issue.code} ${issue.path}: ${issue.message}`);
+            }
+            console.log(authored.yaml);
+            console.log(`next: kit source approve ${proposal.id} --yes`);
+          });
+        } catch (error) {
+          report("propose", error, json);
+        }
+      },
+    );
+
+  source
+    .command("proposals")
+    .description("List source manufacture and retirement proposals")
+    .option("--json", "machine-readable output", false)
+    .action(async (options: { json?: boolean }) => {
+      const json = wantsJson(options);
+      const store = await initStore();
+      try {
+        const health = await store.information.listSourceHealth();
+        const [proposals, retirements] = await Promise.all([
+          listSourceProposals(),
+          listRetirementProposals({
+            health: health.map((row) => ({
+              sourceId: row.sourceId,
+              runs: row.runs,
+              successes: row.successes,
+              failures: row.failures,
+              itemsCollected: row.itemsCollected,
+              eventsCreated: row.eventsCreated,
+              consecutiveFailures: row.consecutiveFailures,
+              degraded: row.degraded,
+            })),
+          }),
+        ]);
+        emit(json, { proposals, retirements }, () => {
+          for (const proposal of proposals) {
+            console.log(
+              `${proposal.status.padEnd(10)} source ${proposal.name}  ${proposal.id}`,
+            );
+          }
+          for (const proposal of retirements) {
+            console.log(
+              `${proposal.status.padEnd(10)} retire ${proposal.sourceId}  ${proposal.reason}`,
+            );
+          }
+          if (proposals.length === 0 && retirements.length === 0) {
+            console.log("no source proposals");
+          }
+        });
+      } catch (error) {
+        report("proposals", error, json);
+      } finally {
+        await store.close();
+      }
+    });
+
+  source
+    .command("approve <proposal>")
+    .description("Install a validated source proposal (explicit approval)")
+    .option("--yes", "confirm observer approval and install", false)
+    .option("--actor <name>", "observer name for the audit record")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        proposalId: string,
+        options: { yes: boolean; actor?: string; json?: boolean },
+      ) => {
+        const json = wantsJson(options);
+        if (!options.yes) {
+          emitError(
+            json,
+            new CliError(
+              "needs_confirmation",
+              "AI proposals never install themselves; re-run with --yes after reviewing source.yaml",
+            ),
+          );
+          return;
+        }
+        try {
+          const result = await installSourceProposal({
+            id: proposalId,
+            approved: true,
+            ...(options.actor ? { actor: options.actor } : {}),
+          });
+          emit(json, result.proposal, () => {
+            console.log(
+              `✓ installed ${result.installed.definition.metadata.name}@${result.installed.definition.metadata.version} (${result.installed.meta.trust})`,
+            );
+            console.log(`  ${result.installed.file}`);
+          });
+        } catch (error) {
+          report("approve", error, json);
+        }
+      },
+    );
+
+  source
+    .command("edit <name>")
+    .description("Replace an installed source.yaml after the same gate passes")
+    .requiredOption("--yaml <file>", "path to the edited source.yaml")
+    .option("--actor <name>", "observer name for the audit record")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        name: string,
+        options: { yaml: string; actor?: string; json?: boolean },
+      ) => {
+        const json = wantsJson(options);
+        try {
+          const yaml = await readFile(path.resolve(options.yaml), "utf8");
+          const updated = await updateSourceDefinition({
+            name,
+            yaml,
+            ...(options.actor ? { actor: options.actor } : {}),
+          });
+          emit(
+            json,
+            { name, version: updated.definition.metadata.version },
+            () => {
+              console.log(
+                `✓ edited ${name}@${updated.definition.metadata.version}`,
+              );
+            },
+          );
+        } catch (error) {
+          report("edit", error, json);
+        }
+      },
+    );
+
+  source
+    .command("budget <name>")
+    .description("Set an observer budget for an installed source")
+    .option("--daily-cny <n>", "daily cost ceiling in CNY")
+    .option("--max-items <n>", "max items per run (1-100)")
+    .option("--actor <name>", "observer name for the audit record")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        name: string,
+        options: {
+          dailyCny?: string;
+          maxItems?: string;
+          actor?: string;
+          json?: boolean;
+        },
+      ) => {
+        const json = wantsJson(options);
+        try {
+          const current = await loadInstalledSource(name);
+          if (!current) {
+            throw new CliError("not_found", `source not installed: ${name}`);
+          }
+          const budget = {
+            dailyCostCny: parseNonNegative(
+              options.dailyCny,
+              "--daily-cny",
+              current.meta.budget?.dailyCostCny ?? 0,
+            ),
+            maxItemsPerRun: parseBounded(
+              options.maxItems,
+              "--max-items",
+              current.meta.budget?.maxItemsPerRun ?? 20,
+              1,
+              100,
+            ),
+          };
+          await setSourceBudget({
+            name,
+            budget,
+            ...(options.actor ? { actor: options.actor } : {}),
+          });
+          emit(json, { name, budget }, () => {
+            console.log(
+              `✓ ${name} budget: ${budget.dailyCostCny} CNY/day · ≤${budget.maxItemsPerRun} items/run`,
+            );
+          });
+        } catch (error) {
+          report("budget", error, json);
+        }
+      },
+    );
+
+  source
+    .command("retire <name>")
+    .description(
+      "Retire a source; collection stops and all history is kept (never deleted)",
+    )
+    .option("--reason <text>", "audited reason")
+    .option("--proposal <id>", "retirement proposal id to mark applied")
+    .option("--actor <name>", "observer name for the audit record")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        name: string,
+        options: {
+          reason?: string;
+          proposal?: string;
+          actor?: string;
+          json?: boolean;
+        },
+      ) => {
+        const json = wantsJson(options);
+        try {
+          const retired = await retireSource({
+            name,
+            ...(options.reason ? { reason: options.reason } : {}),
+            ...(options.proposal ? { proposalId: options.proposal } : {}),
+            ...(options.actor ? { actor: options.actor } : {}),
+          });
+          emit(
+            json,
+            {
+              name,
+              retiredAt: retired.meta.retiredAt,
+              retirement: retired.meta.retirement,
+            },
+            () => {
+              console.log(`✓ retired ${name}; manifest and history kept`);
+            },
+          );
+        } catch (error) {
+          report("retire", error, json);
+        }
+      },
+    );
 }
 
 function parseList(value: string | undefined): string[] | undefined {
@@ -654,10 +931,37 @@ function parseRatio(value: string | undefined, fallback: number): number {
   return parsed;
 }
 
-function parseNonNegative(value: string, label: string): number {
+function parseNonNegative(
+  value: string | undefined,
+  label: string,
+  fallback?: number,
+): number {
+  if (value === undefined && fallback !== undefined) {
+    return fallback;
+  }
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) {
     throw new CliError("usage", `${label} must be a non-negative number`);
+  }
+  return parsed;
+}
+
+function parseBounded(
+  value: string | undefined,
+  label: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new CliError(
+      "usage",
+      `${label} must be an integer between ${min} and ${max}`,
+    );
   }
   return parsed;
 }

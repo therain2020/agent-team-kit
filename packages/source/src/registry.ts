@@ -25,6 +25,7 @@ import {
   type InstalledSource,
   type RawSourceItem,
   SOURCE_TOPIC,
+  type SourceBudget,
   type SourceCandidate,
   type SourceDefinition,
   type SourceMeta,
@@ -311,6 +312,11 @@ function normalizeMeta(
     fallback.trustDetail;
   const trust =
     normalizeTrustLevel(record.trust) ?? trustDetail?.level ?? fallback.trust;
+  const budget = normalizeBudget(record.budget);
+  const manufacture = normalizeManufacture(record.manufacture);
+  const retiredAt = asString(record.retiredAt);
+  const retiredBy = asString(record.retiredBy);
+  const retirement = normalizeRetirement(record.retirement);
   return {
     ...fallback,
     kind: record.kind === "source" ? "source" : fallback.kind,
@@ -329,6 +335,73 @@ function normalizeMeta(
     ...(record.secretScan === "passed"
       ? { secretScan: "passed" as const }
       : {}),
+    ...(budget ? { budget } : {}),
+    ...(manufacture ? { manufacture } : {}),
+    ...(retiredAt ? { retiredAt } : {}),
+    ...(retiredBy ? { retiredBy } : {}),
+    ...(retirement ? { retirement } : {}),
+  };
+}
+
+function normalizeBudget(value: unknown): SourceBudget | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const dailyCostCny = record.dailyCostCny;
+  const maxItemsPerRun = record.maxItemsPerRun;
+  if (
+    typeof dailyCostCny !== "number" ||
+    !Number.isFinite(dailyCostCny) ||
+    dailyCostCny < 0 ||
+    typeof maxItemsPerRun !== "number" ||
+    !Number.isInteger(maxItemsPerRun) ||
+    maxItemsPerRun < 1
+  ) {
+    return undefined;
+  }
+  return { dailyCostCny, maxItemsPerRun };
+}
+
+function normalizeManufacture(
+  value: unknown,
+): SourceMeta["manufacture"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const proposalId = asString(record.proposalId);
+  const actor = asString(record.actor);
+  const model =
+    record.model === "live" || record.model === "heuristic"
+      ? record.model
+      : undefined;
+  if (!proposalId || !actor || !model) {
+    return undefined;
+  }
+  return { proposalId, actor, model };
+}
+
+function normalizeRetirement(
+  value: unknown,
+): SourceMeta["retirement"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const reason = asString(record.reason);
+  if (!reason) {
+    return undefined;
+  }
+  const proposalId = asString(record.proposalId);
+  const evidence =
+    record.evidence && typeof record.evidence === "object"
+      ? (record.evidence as Record<string, number | boolean>)
+      : undefined;
+  return {
+    ...(proposalId ? { proposalId } : {}),
+    reason,
+    ...(evidence ? { evidence } : {}),
   };
 }
 

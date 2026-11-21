@@ -79,6 +79,13 @@ export interface SourceTrust {
  * same provenance. `trust` stays a flat level string for the existing
  * `/sources` read models; `trustDetail` carries the full signature grading.
  */
+export interface SourceBudget {
+  /** Daily cost ceiling for collecting this source, in CNY. */
+  dailyCostCny: number;
+  /** Per-run item ceiling; clamped to the schema's 1..100 range. */
+  maxItemsPerRun: number;
+}
+
 export interface SourceMeta {
   kind?: "source";
   id?: string;
@@ -108,6 +115,22 @@ export interface SourceMeta {
   };
   homepage?: string;
   secretScan?: "passed";
+  /** Observer-set collection budget (98 I-5). */
+  budget?: SourceBudget;
+  /** Provenance for AI-drafted sources accepted through a proposal. */
+  manufacture?: {
+    proposalId: string;
+    actor: string;
+    model: "live" | "heuristic";
+  };
+  /** Retirement keeps the manifest and history; collection stops. */
+  retiredAt?: string;
+  retiredBy?: string;
+  retirement?: {
+    proposalId?: string;
+    reason: string;
+    evidence?: Record<string, number | boolean>;
+  };
 }
 
 export interface InstalledSource {
