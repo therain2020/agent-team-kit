@@ -623,6 +623,11 @@ function DraftSummary({ proposal }: { proposal: ManufactureProposal }) {
       </div>
     );
   }
+  // TypeScript does not exclude `ManufactureAgentDraft` (discriminant
+  // "agent" | "manager") from the false branch above, so narrow explicitly.
+  if (draft.type !== "component") {
+    return null;
+  }
   return (
     <div className="space-y-1">
       {draft.components.map((component) => (
