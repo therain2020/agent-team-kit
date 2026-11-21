@@ -96,6 +96,8 @@
   checklist and evidence flow for the first 7 days.
 - [gate-report.md](./gate-report.md) — rerunnable 1.0 gate evidence report,
   local sources and how to read GAP entries.
+- [compose-gate.md](./compose-gate.md) — C-0 check: new input surfaces declare
+  a compose kind, deterministic fallback and review step.
 - `packs/self-improve/` — Cyber and UX squads for this repo.
 - `examples/sources/` — publish a declarative source to the market.
 - `examples/workshop/` — publish a declarative workshop item.

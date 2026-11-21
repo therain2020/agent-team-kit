@@ -145,6 +145,8 @@ CREATE TABLE IF NOT EXISTS run_requests (
   workspace_id TEXT NOT NULL,
   workflow_id TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'pack_run',
+  priority TEXT,
+  admission_reason TEXT,
   payload TEXT NOT NULL,
   status TEXT NOT NULL,
   claimed_by TEXT,
@@ -158,6 +160,10 @@ CREATE TABLE IF NOT EXISTS run_requests (
 
 ALTER TABLE run_requests
   ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'pack_run';
+-- 60.6: admission priority plus the gate's drop/merge rationale. Nullable so
+-- pre-existing rows fall back to the priority embedded in their payload.
+ALTER TABLE run_requests ADD COLUMN IF NOT EXISTS priority TEXT;
+ALTER TABLE run_requests ADD COLUMN IF NOT EXISTS admission_reason TEXT;
 
 ALTER TABLE run_requests
   ADD COLUMN IF NOT EXISTS lease_version INTEGER NOT NULL DEFAULT 0;
@@ -1334,6 +1340,8 @@ CREATE TABLE IF NOT EXISTS run_requests (
   workspace_id TEXT NOT NULL,
   workflow_id TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'pack_run',
+  priority TEXT,
+  admission_reason TEXT,
   payload TEXT NOT NULL,
   status TEXT NOT NULL,
   claimed_by TEXT,
@@ -1833,6 +1841,11 @@ CREATE TABLE IF NOT EXISTS manager_sessions (
 ALTER TABLE autopilot_state ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
 
 ALTER TABLE run_requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'pack_run';
+
+-- 60.6: admission priority plus the gate's drop/merge rationale. Nullable so
+-- pre-existing rows fall back to the priority embedded in their payload.
+ALTER TABLE run_requests ADD COLUMN priority TEXT;
+ALTER TABLE run_requests ADD COLUMN admission_reason TEXT;
 
 ALTER TABLE run_requests ADD COLUMN lease_version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE runs ADD COLUMN version INTEGER NOT NULL DEFAULT 0;

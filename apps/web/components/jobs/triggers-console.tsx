@@ -1,5 +1,6 @@
 "use client";
 
+import { AutopilotPlanDialog } from "@/components/autopilot/autopilot-plan-dialog";
 import { PageHeader } from "@/components/kit/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -243,6 +244,22 @@ export function TriggersConsole({
                 <Badge variant={pack.enabled ? "success" : "outline"}>
                   {pack.enabled ? t("packOn") : t("packOff")}
                 </Badge>
+                {pack.autoApprove ? (
+                  <Badge
+                    variant={
+                      pack.autoApprove.enabled
+                        ? pack.autoApprove.scope === "all"
+                          ? "warning"
+                          : "success"
+                        : "outline"
+                    }
+                    title={t("autoApproveScopeHint")}
+                  >
+                    {pack.autoApprove.scope === "all"
+                      ? t("autoApproveScopeAll")
+                      : t("autoApproveScopeScheduled")}
+                  </Badge>
+                ) : null}
                 <span className="font-mono text-[10px] text-zinc-500">
                   {pack.lastTickAt
                     ? t("lastTick", {
@@ -250,20 +267,28 @@ export function TriggersConsole({
                       })
                     : t("noHeartbeat")}
                 </span>
-                <Button
-                  size="sm"
-                  variant={pack.enabled ? "outline" : "default"}
-                  className="ml-auto"
-                  disabled={busy !== null}
-                  onClick={() => togglePack(pack)}
-                >
-                  {pack.enabled ? (
-                    <Pause className="size-3.5" />
-                  ) : (
-                    <Play className="size-3.5" />
-                  )}
-                  {pack.enabled ? t("pausePack") : t("enablePack")}
-                </Button>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <AutopilotPlanDialog
+                    packDir={pack.dirName}
+                    packName={pack.name}
+                    enabled={pack.enabled}
+                    config={pack.config}
+                    workflows={pack.workflows}
+                  />
+                  <Button
+                    size="sm"
+                    variant={pack.enabled ? "outline" : "default"}
+                    disabled={busy !== null}
+                    onClick={() => togglePack(pack)}
+                  >
+                    {pack.enabled ? (
+                      <Pause className="size-3.5" />
+                    ) : (
+                      <Play className="size-3.5" />
+                    )}
+                    {pack.enabled ? t("pausePack") : t("enablePack")}
+                  </Button>
+                </div>
               </div>
               <p className="border-b border-border/60 px-3 py-1.5 text-[10px] text-zinc-500">
                 {t("packSwitchHint")}

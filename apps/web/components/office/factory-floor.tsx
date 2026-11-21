@@ -21,10 +21,14 @@ import {
 import { SinceLabel } from "@/components/world/world-status";
 import type { FactoryLinkItem } from "@/lib/factory";
 import { FACTORY_ROOM_HREF } from "@/lib/office-deeplink";
+import { floorKeyAction } from "@/lib/office-keys";
 import type { LiveAgent } from "@/lib/office-live";
+import { floorBreakpointClass } from "@/lib/office-responsive";
 import {
   type PixelAgentState,
   type PresenceMap,
+  floorMotionTick,
+  floorTransition,
   pixelStateFromStatus,
 } from "@/lib/pixel-events";
 import type { Ticker } from "@/lib/use-ticker";
@@ -137,7 +141,7 @@ export function FactoryFloor({
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
   const hovered = agents.find((agent) => agent.id === hoveredId) ?? null;
   const reversed = useConveyorReverse(reverseSeq);
-  const motionTick = motionEnabled && visible ? ticker.tick : 0;
+  const motionTick = floorMotionTick(ticker.tick, motionEnabled, visible);
   const waitingCount = agents.filter(
     (agent) => agent.status === "waiting",
   ).length;
@@ -177,50 +181,34 @@ export function FactoryFloor({
       return;
     }
     const onKey = (event: KeyboardEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey
-      ) {
+      const action = floorKeyAction(event, {
+        suspended,
+        hasAgents: order.length > 0,
+        hasSelection: selected !== null,
+      });
+      if (!action) {
         return;
       }
-      const target = event.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      if (order.length === 0) {
-        return;
-      }
-      const step = (delta: number) => {
+      if (action.kind === "step") {
         event.preventDefault();
         const index = selectedId ? order.indexOf(selectedId) : -1;
-        const nextIndex = (index + delta + order.length) % order.length;
+        const nextIndex = (index + action.delta + order.length) % order.length;
         const nextId = order[nextIndex];
         if (!nextId) {
           return;
         }
         onSelect(nextId);
         stationRefs.current.get(nextId)?.focus();
-      };
-      if (event.key === "j" || event.key === "J") {
-        step(1);
-      } else if (event.key === "k" || event.key === "K") {
-        step(-1);
-      } else if (event.key === "Enter") {
+        return;
+      }
+      if (action.kind === "open") {
+        event.preventDefault();
         if (selected) {
-          event.preventDefault();
           onOpen(selected);
         }
-      } else if (event.key === "Escape") {
-        onEscape();
+        return;
       }
+      onEscape();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -311,12 +299,13 @@ export function FactoryFloor({
 
         <div
           ref={stageRef}
-          className="relative hidden md:block"
+          className={cn("relative", floorBreakpointClass("stage"))}
           style={{
             transform: `translate3d(${camera.x}px, ${camera.y}px, 0)`,
-            transition: motionEnabled
-              ? "transform 420ms steps(4, end)"
-              : "none",
+            transition: floorTransition(
+              motionEnabled,
+              "transform 420ms steps(4, end)",
+            ),
           }}
         >
           <StationGrid
@@ -391,9 +380,10 @@ export function FactoryFloor({
                   className="absolute bottom-4 left-3 flex flex-col items-center"
                   style={{
                     transform: `translate3d(${index * 48}px, 0, 0)`,
-                    transition: motionEnabled
-                      ? "transform 320ms steps(3, end)"
-                      : "none",
+                    transition: floorTransition(
+                      motionEnabled,
+                      "transform 320ms steps(3, end)",
+                    ),
                   }}
                 >
                   <PixelCrate tone={crate.tone} size={20} />
@@ -427,7 +417,7 @@ export function FactoryFloor({
         selectedId={selectedId}
         onSelect={onSelect}
         onOpen={onOpen}
-        className="mt-3 md:hidden"
+        className={cn("mt-3", floorBreakpointClass("compactList"))}
       />
     </PixelWorld>
   );

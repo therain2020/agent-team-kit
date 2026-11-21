@@ -1,4 +1,5 @@
 import { nextCronOccurrence } from "@kit/autopilot";
+import type { AutoApproveScope, AutopilotConfig } from "@kit/core";
 import {
   type EventRoute,
   type Trigger,
@@ -7,6 +8,7 @@ import {
   loadTriggerUsage,
   resolveTriggerBudget,
 } from "@kit/trigger";
+import { resolveAutoApproveScope } from "./auto-approve-scope";
 import { getRepoRoot } from "./paths";
 import { ensureStoreSchema, getStore } from "./store";
 
@@ -61,6 +63,18 @@ export interface TriggerPackView {
   enabled: boolean;
   lastTickAt: string | null;
   lastError: string | null;
+  /**
+   * Effective auto-approval policy (96 §5.2). `scope` is always explicit here:
+   * an absent `autopilot.yaml` value reads as `scheduled`.
+   */
+  autoApprove: {
+    enabled: boolean;
+    scope: AutoApproveScope;
+    maxRisk: string;
+  } | null;
+  /** Full config for the plan dialog; only approval writes on save. */
+  config: AutopilotConfig;
+  workflows: Array<{ id: string; stages: number }>;
   triggers: TriggerView[];
 }
 
@@ -144,12 +158,25 @@ export async function loadTriggerConsole(): Promise<TriggerConsoleData> {
     }
 
     triggers.sort((a, b) => a.triggerId.localeCompare(b.triggerId));
+    const autoApprove = pack.config.approval?.autoApprove;
     packs.push({
       dirName: pack.dirName,
       name: pack.loaded.pack.metadata.name,
       enabled: packEnabled,
       lastTickAt: state?.lastTickAt ?? null,
       lastError: state?.lastError ?? null,
+      autoApprove: autoApprove
+        ? {
+            enabled: autoApprove.enabled,
+            scope: resolveAutoApproveScope(autoApprove),
+            maxRisk: autoApprove.maxRisk,
+          }
+        : null,
+      config: pack.config,
+      workflows: pack.loaded.workflows.map((workflow) => ({
+        id: workflow.id,
+        stages: workflow.stages.length,
+      })),
       triggers,
     });
   }

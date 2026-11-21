@@ -6,6 +6,25 @@ on:
   pull_request:
 
 jobs:
+  # New-form gate (94 §2 rule 6 / §6 C-0): a changed input surface must be
+  # declared with its compose kind, deterministic fallback and review step.
+  # The check diffs against the PR base, so unrelated PRs pass untouched.
+  compose-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Compose gate (94 C-0)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bun run scripts/compose-gate.ts --base "$BASE_SHA"
+
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 25
