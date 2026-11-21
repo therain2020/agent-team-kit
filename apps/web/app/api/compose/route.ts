@@ -1,16 +1,22 @@
+import path from "node:path";
 import { sameOriginError } from "@/lib/http";
 import { jobErrorResponse } from "@/lib/job-api";
-import { getRepoRoot } from "@/lib/paths";
+import { getComponentsRoot, getPacksRoot, getRepoRoot } from "@/lib/paths";
+import { loadPipelineInventory } from "@/lib/pipeline-inventory";
 import { toSourceCandidateInputs } from "@/lib/source-draft";
 import { searchSourceMarketForIntent } from "@/lib/sources";
+import type { ComponentRef } from "@kit/core";
 import {
   type AgentDraftValues,
   type ComposeKind,
   JobError,
+  type PipelineDraftValues,
   type SourceCandidateInput,
   composeJob,
   parseWorkflowDraftStages,
 } from "@kit/job";
+import { AssemblyError, assembleComponents } from "@kit/pack";
+import { workshopComponentLibrary } from "@kit/workshop";
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -42,7 +48,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, workflow, or source",
+          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, workflow, pipeline, or source",
       },
       { status: 400 },
     );
@@ -60,9 +66,19 @@ export async function POST(request: Request) {
 
   const current = parseAgentCurrent(body.current);
   const currentStages = parseWorkflowDraftStages(body.currentStages);
+  const pipelineDir = kind === "pipeline" ? absolutePackDir(packDir) : null;
+  if (kind === "pipeline" && !pipelineDir) {
+    return NextResponse.json(
+      { error: "packDir must be inside packs/" },
+      { status: 400 },
+    );
+  }
   try {
     const sourceCandidates =
       kind === "source" ? await loadSourceCandidates(intent) : undefined;
+    const pipeline = pipelineDir
+      ? await loadPipelineInventory(pipelineDir)
+      : undefined;
     const result = await composeJob({
       kind,
       intent,
@@ -75,11 +91,95 @@ export async function POST(request: Request) {
       ...(current ? { current } : {}),
       ...(currentStages ? { currentStages } : {}),
       ...(sourceCandidates ? { sourceCandidates } : {}),
+      ...(pipeline ? { pipeline } : {}),
     });
-    return NextResponse.json(result);
+    // The pipeline draft is validated through the real assembler in dry-run
+    // mode: the response carries the planned bindings but nothing is written.
+    const assembly =
+      pipelineDir && result.kind === "pipeline"
+        ? await previewPipelineAssembly(
+            pipelineDir,
+            result.values as PipelineDraftValues,
+          )
+        : undefined;
+    return NextResponse.json({ ...result, ...(assembly ? { assembly } : {}) });
   } catch (error) {
     return jobErrorResponse(error);
   }
+}
+
+interface AssemblyPreview {
+  ok: boolean;
+  preview?: boolean;
+  bindings?: Array<{ node: string; component: ComponentRef }>;
+  written?: string[];
+  warnings?: string[];
+  noop?: boolean;
+  issues?: Array<{ code: string; path: string; message: string }>;
+  error?: string;
+}
+
+async function previewPipelineAssembly(
+  packDir: string,
+  values: PipelineDraftValues,
+): Promise<AssemblyPreview> {
+  const components = values.components.map((component) => ({
+    kind: component.ref.kind,
+    id: component.ref.id,
+  }));
+  if (components.length === 0) {
+    return { ok: true, preview: true, bindings: [], written: [], noop: true };
+  }
+  try {
+    const result = await assembleComponents(
+      { packDir, components, allowCommand: false, dryRun: true },
+      workshopComponentLibrary(getComponentsRoot()),
+    );
+    return {
+      ok: true,
+      preview: true,
+      bindings: result.bindings,
+      written: result.written,
+      warnings: result.warnings,
+      noop: result.noop,
+    };
+  } catch (error) {
+    if (error instanceof AssemblyError) {
+      return {
+        ok: false,
+        preview: true,
+        issues: error.issues,
+        warnings: error.warnings,
+      };
+    }
+    return {
+      ok: false,
+      preview: true,
+      error: error instanceof Error ? error.message : "assembly preview failed",
+    };
+  }
+}
+
+/**
+ * Resolve a pack id / path to its absolute directory, mirroring
+ * `composeJob`'s containment check so the assembler preview and the lockfile
+ * read use the same directory as the draft.
+ */
+function absolutePackDir(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const packsRoot = getPacksRoot();
+  const resolved = path.isAbsolute(trimmed)
+    ? path.resolve(trimmed)
+    : trimmed.replace(/\\/g, "/").startsWith("packs/")
+      ? path.resolve(getRepoRoot(), trimmed)
+      : path.resolve(packsRoot, trimmed);
+  const prefix = packsRoot.endsWith(path.sep)
+    ? packsRoot
+    : `${packsRoot}${path.sep}`;
+  return resolved.startsWith(prefix) ? resolved : null;
 }
 
 async function loadSourceCandidates(
@@ -105,6 +205,7 @@ function parseKind(value: unknown): ComposeKind | undefined {
     value === "agent" ||
     value === "pack" ||
     value === "workflow" ||
+    value === "pipeline" ||
     value === "source"
     ? value
     : undefined;

@@ -2,6 +2,9 @@ import path from "node:path";
 import {
   type AgentRole,
   type AutopilotConfig,
+  type ComponentKind,
+  type ComponentRef,
+  type ComponentSource,
   agentRoleSchema,
   isCronExpression,
 } from "@kit/core";
@@ -32,6 +35,7 @@ export type ComposeKind =
   | "agent"
   | "pack"
   | "workflow"
+  | "pipeline"
   | "source";
 
 export interface ComposeInput {
@@ -50,6 +54,8 @@ export interface ComposeInput {
   currentStages?: DraftStage[];
   /** Market candidates for the `source` kind; never fetched inside this pack. */
   sourceCandidates?: SourceCandidateInput[];
+  /** Component library snapshot for the `pipeline` kind (server-loaded). */
+  pipeline?: PipelineInventory;
 }
 
 export interface MissionValues {
@@ -111,6 +117,88 @@ export interface WorkflowDraftValues {
   stages: DraftStage[];
 }
 
+/**
+ * One valid component from the local library (`components/<kind>/<id>/`). The
+ * server builds this snapshot from `@kit/workshop` and passes it in, so the
+ * composer never reads the component library itself: `@kit/job` stays free of
+ * a `@kit/workshop` dependency and tests can inject fixtures.
+ */
+export interface PipelineComponentEntry {
+  kind: ComponentKind;
+  id: string;
+  version: string;
+  source: ComponentSource;
+  description: string;
+  /** Tools an agent component references in its frontmatter. */
+  tools: string[];
+  /** Adapter per tool for a toolpack component. */
+  toolAdapters: Record<string, "http" | "mcp" | "command">;
+  /** Agent ids a workflow component binds in its stages. */
+  workflowAgents: string[];
+}
+
+export interface InvalidPipelineComponent {
+  kind: ComponentKind;
+  id: string;
+  issues: string[];
+}
+
+export interface PipelineInventory {
+  components: PipelineComponentEntry[];
+  /** Components present on disk that failed validation; never selectable. */
+  invalid: InvalidPipelineComponent[];
+  /** Refs already pinned in the pack's `components.lock.json`. */
+  locked: ComponentRef[];
+}
+
+export function emptyPipelineInventory(): PipelineInventory {
+  return { components: [], invalid: [], locked: [] };
+}
+
+export type PipelineIssueCode =
+  | "component_not_found"
+  | "component_invalid"
+  | "component_kind_mismatch"
+  | "manager_component"
+  | "tool_overreach"
+  | "tool_consent_required"
+  | "version_conflict"
+  | "stage_not_found"
+  | "invalid_graph";
+
+export interface PipelineDraftIssue {
+  code: PipelineIssueCode;
+  /** `kind/id` for components, or the offending stage id. */
+  path: string;
+  message: string;
+}
+
+export interface PipelineComponentDraft {
+  ref: ComponentRef;
+  description: string;
+}
+
+export interface PipelineBindingDraft {
+  /** Stage id the component binds to. */
+  node: string;
+  component: ComponentRef;
+}
+
+export interface PipelineDraftValues {
+  /** Draft pipeline id; the review UI may rename it before writing. */
+  id: string;
+  name: string;
+  description: string;
+  /** Proposed workflow stages; validated as a single-entry DAG. */
+  stages: DraftStage[];
+  /** Components the draft would assemble (pinned version/source). */
+  components: PipelineComponentDraft[];
+  /** Stage-level bindings applied by the draft. */
+  bindings: PipelineBindingDraft[];
+  /** Selections the server rejected, with the reason to show the operator. */
+  issues: PipelineDraftIssue[];
+}
+
 export interface ComposeResult {
   kind: ComposeKind;
   values:
@@ -122,6 +210,7 @@ export interface ComposeResult {
     | AgentDraftValues
     | PackDraftValues
     | WorkflowDraftValues
+    | PipelineDraftValues
     | SourceDraftValues;
   rationale: string;
   warnings: string[];
@@ -269,6 +358,33 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
         tools: catalog.tools.map((tool) => tool.name),
         skills: catalog.skills,
         gates: loaded.pack.evals?.rubrics ? [loaded.pack.evals.rubrics] : [],
+        current: parseWorkflowDraftStages(input.currentStages),
+      },
+      env,
+    );
+  }
+  if (input.kind === "pipeline") {
+    const env = input.env ?? process.env;
+    const catalog = await packCatalog(loaded.dir);
+    return composePipeline(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        agents: [...loaded.agents.entries()].map(([id, agent]) => ({
+          id,
+          role: agent.role,
+          tools: agent.spec.tools,
+        })),
+        tools: catalog.tools.map((tool) => tool.name),
+        skills: catalog.skills,
+        gates: loaded.pack.evals?.rubrics ? [loaded.pack.evals.rubrics] : [],
+        workflows: loaded.workflows.map((workflow) => ({
+          id: workflow.id,
+          stages: workflow.stages
+            .map((stage) => parseDraftStage(stage))
+            .filter((stage): stage is DraftStage => stage !== null),
+        })),
+        inventory: input.pipeline ?? emptyPipelineInventory(),
         current: parseWorkflowDraftStages(input.currentStages),
       },
       env,
@@ -1426,6 +1542,747 @@ function slug(value: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
   return cleaned || "schedule";
+}
+
+export interface PipelineDraftFacts {
+  pack: string;
+  agents: Array<{ id: string; role: AgentRole; tools: string[] }>;
+  /** Tool names already available in the host pack. */
+  tools: string[];
+  /** Skill names already available in the host pack. */
+  skills: string[];
+  /** Eval files the pack already defines; drafts may only gate on these. */
+  gates: string[];
+  /** Existing workflows (as draft stages) the heuristic can reuse. */
+  workflows: Array<{ id: string; stages: DraftStage[] }>;
+  inventory: PipelineInventory;
+  current: DraftStage[] | null;
+  /** Command toolpacks need explicit consent; the composer never grants it. */
+  allowCommand?: boolean;
+}
+
+/**
+ * Composes a `pipeline` draft from intent + host pack context + component
+ * library inventory (94 C-6c, 88 M3b).
+ *
+ * The draft only proposes: a stage graph plus component refs pinned to the
+ * inventory's version/source, plus stage bindings. Every selection is checked
+ * against the inventory, the pack catalog and the existing lockfile, so a
+ * draft can never reference a component that does not exist or a tool the
+ * pack cannot run. The server then validates the whole set through the
+ * assembler (dry-run) before the review UI enables approval.
+ */
+async function composePipeline(
+  intent: string,
+  facts: PipelineDraftFacts,
+  env: Record<string, string | undefined>,
+): Promise<ComposeResult> {
+  const warnings: string[] = [];
+  for (const broken of facts.inventory.invalid) {
+    warnings.push(
+      `组件 ${broken.kind}/${broken.id} 无效，已跳过：${broken.issues
+        .slice(0, 2)
+        .join("; ")}`,
+    );
+  }
+  if (facts.inventory.components.length === 0) {
+    warnings.push("组件库为空，已按模具现有阶段生成启发式草稿。");
+  }
+  const fallback = defaultPipelineDraft(intent, facts, warnings);
+  let values = fallback;
+  let rationale = facts.current
+    ? "在现有阶段图上装配组件库，并保留可用绑定。"
+    : "按模具现有阶段与组件库生成可审阅的装配草稿。";
+  let model: ComposeResult["model"] = "heuristic";
+
+  const config = loadModelConfig(env);
+  if (config.mode === "live") {
+    try {
+      const gateway = createModelGateway(config);
+      const response = await gateway.complete({
+        model: "deepseek-flash",
+        instructions: `You assemble a runnable pipeline for a private agent team from a component library.
+Return JSON only:
+{"id":"<slug>","name":"<pipeline name>","description":"<one sentence>","stages":[{"id":"<slug>","type":"agent|coder|workflow","agent":"<agent id>","goal":"<one sentence>","acceptance":"<checkable criterion>","inputs":["<artifact>"],"outputs":["<artifact>"],"timeout":"15m","depends":["<earlier stage id>"],"gate":"<optional eval file>","approval":{"mode":"required|auto|never","position":"before|after","riskClass":"low|medium|high","ttl":"72h"}}],"bindings":[{"node":"<stage id>","kind":"agent|workflow|toolpack|skillpack","id":"<component id>"}],"rationale":"<one sentence>","warnings":["<optional>"]}
+Rules:
+- only use component kinds and ids listed in inventory; never invent components.
+- stage ids are unique slugs (^[a-z][a-z0-9-]*$); exactly one entry stage has an empty depends list.
+- every depends entry references an earlier stage id; the graph must stay acyclic.
+- agent stages bind an existing team agent id or a selected agent component id.
+- an agent stage may bind one kind agent component; a workflow stage may bind one kind workflow component; coder stages cannot bind components.
+- agent/toolpack components may only reference tools from the provided catalogs; command-adapter toolpacks require explicit human consent and are rejected here.
+- keep 2 to 5 stages; human approval (mode required) only before delivery/publication, never auto-approve high risk.
+- gate must reference a provided eval file; omit it when none fits.
+- do not invent agents, tools, gates, budgets or facts.`,
+        input: JSON.stringify({
+          intent,
+          pack: facts.pack,
+          agents: facts.agents,
+          tools: facts.tools,
+          skills: facts.skills,
+          gates: facts.gates,
+          workflows: facts.workflows.map((workflow) => ({
+            id: workflow.id,
+            stages: workflow.stages.map((stage) => stage.id),
+          })),
+          inventory: facts.inventory.components.map((component) => ({
+            kind: component.kind,
+            id: component.id,
+            version: component.version,
+            description: component.description,
+            ...(component.kind === "agent"
+              ? { tools: component.tools }
+              : component.kind === "toolpack"
+                ? { toolAdapters: component.toolAdapters }
+                : {}),
+          })),
+          locked: facts.inventory.locked.map((ref) => ({
+            kind: ref.kind,
+            id: ref.id,
+            version: ref.version,
+          })),
+          current: facts.current,
+        }),
+      });
+      const parsed = parseJson(response.text);
+      if (parsed) {
+        const validated = validatePipelineDraft(parsed, fallback, facts);
+        if (validated.accepted) {
+          values = validated.values;
+          rationale = validated.rationale ?? rationale;
+          warnings.push(...validated.warnings);
+          model = "live";
+        } else {
+          warnings.push(...validated.warnings);
+          warnings.push("AI 流水线草稿未通过校验，已使用启发式装配。");
+        }
+      }
+    } catch {
+      warnings.push("AI 草稿不可用，已使用启发式装配。");
+    }
+  }
+
+  return {
+    kind: "pipeline",
+    values,
+    rationale,
+    warnings: [...new Set(warnings)],
+    model,
+  };
+}
+
+function defaultPipelineDraft(
+  intent: string,
+  facts: PipelineDraftFacts,
+  warnings: string[],
+): PipelineDraftValues {
+  const issues: PipelineDraftIssue[] = [];
+  const inventoryAgents = facts.inventory.components.filter(
+    (component) => component.kind === "agent",
+  );
+  const allowedAgents = new Set([
+    ...facts.agents.map((agent) => agent.id),
+    ...inventoryAgents.map((component) => component.id),
+  ]);
+  const stages = pickPipelineStages(intent, facts, allowedAgents, warnings).map(
+    copyDraftStage,
+  );
+
+  const components = new Map<string, PipelineComponentDraft>();
+  const bindings: PipelineBindingDraft[] = [];
+  const selectedTools = new Map<string, "http" | "mcp" | "command">();
+
+  // Select toolpacks/skillpacks whose id or description matches the intent so
+  // agent components that depend on their tools can pass validation.
+  const tokens = intentTokens(intent);
+  for (const entry of facts.inventory.components) {
+    if (entry.kind !== "toolpack" && entry.kind !== "skillpack") {
+      continue;
+    }
+    if (!tokenMatches(entry, tokens)) {
+      continue;
+    }
+    if (
+      acceptPipelineComponent(
+        entry,
+        facts,
+        issues,
+        warnings,
+        selectedTools,
+        components,
+      )
+    ) {
+      if (entry.kind === "toolpack") {
+        for (const [tool, adapter] of Object.entries(entry.toolAdapters)) {
+          selectedTools.set(tool, adapter);
+        }
+      }
+    }
+  }
+
+  // Bind matching agent components to agent stages, one per stage.
+  const used = new Set<string>();
+  for (const stage of stages) {
+    if (stage.type !== "agent") {
+      continue;
+    }
+    const component = findAgentComponent(
+      stage.agent ?? "",
+      inventoryAgents,
+      tokens,
+      used,
+    );
+    if (!component) {
+      continue;
+    }
+    selectToolpacksForAgent(
+      component,
+      facts,
+      issues,
+      warnings,
+      selectedTools,
+      components,
+    );
+    if (
+      !acceptPipelineComponent(
+        component,
+        facts,
+        issues,
+        warnings,
+        selectedTools,
+        components,
+      )
+    ) {
+      continue;
+    }
+    stage.agent = component.id;
+    used.add(component.id);
+    addPipelineComponent(component, components);
+    bindings.push({ node: stage.id, component: componentRef(component) });
+  }
+
+  return {
+    id: slug(intent.split(/\s+/).slice(0, 4).join(" ") || "pipeline"),
+    name: `${facts.pack} pipeline`,
+    description: intent.trim().slice(0, 300),
+    stages,
+    components: [...components.values()],
+    bindings,
+    issues,
+  };
+}
+
+function pickPipelineStages(
+  intent: string,
+  facts: PipelineDraftFacts,
+  allowedAgents: Set<string>,
+  warnings: string[],
+): DraftStage[] {
+  if (facts.current && facts.current.length > 0) {
+    if (validateStageGraph(facts.current, allowedAgents).ok) {
+      return facts.current;
+    }
+    warnings.push("现有阶段图无法直接沿用，已改用模具默认流水线。");
+  }
+  for (const workflow of facts.workflows) {
+    if (
+      workflow.stages.length > 0 &&
+      validateStageGraph(workflow.stages, allowedAgents).ok
+    ) {
+      return workflow.stages;
+    }
+  }
+  const first =
+    facts.agents.find((agent) => agent.role !== "manager") ?? facts.agents[0];
+  const component = facts.inventory.components.find(
+    (entry) => entry.kind === "agent" && entry.id !== "manager",
+  );
+  const agentId = first?.id ?? component?.id;
+  if (!agentId) {
+    throw new JobError(
+      "invalid_pack",
+      "pack and component library provide no agent for a pipeline",
+      400,
+    );
+  }
+  const id = slug(agentId);
+  return [
+    {
+      id,
+      type: "agent",
+      agent: agentId,
+      goal: intent.trim().slice(0, 300),
+      inputs: ["task"],
+      outputs: [`${id}_output`],
+      depends: [],
+    },
+  ];
+}
+
+function findAgentComponent(
+  stageAgent: string,
+  candidates: PipelineComponentEntry[],
+  tokens: Set<string>,
+  used: Set<string>,
+): PipelineComponentEntry | null {
+  const exact = candidates.find(
+    (component) => component.id === stageAgent && !used.has(component.id),
+  );
+  if (exact) {
+    return exact;
+  }
+  return (
+    candidates.find(
+      (component) => !used.has(component.id) && tokenMatches(component, tokens),
+    ) ?? null
+  );
+}
+
+function acceptPipelineComponent(
+  entry: PipelineComponentEntry,
+  facts: PipelineDraftFacts,
+  issues: PipelineDraftIssue[],
+  warnings: string[],
+  selectedTools: Map<string, "http" | "mcp" | "command">,
+  components: Map<string, PipelineComponentDraft>,
+): boolean {
+  const path = `${entry.kind}/${entry.id}`;
+  if (components.has(path)) {
+    return true;
+  }
+  if (entry.kind === "agent" && entry.id === "manager") {
+    return rejectPipeline(
+      issues,
+      warnings,
+      "manager_component",
+      path,
+      "manager 是模具级角色，不能作为组件装配",
+    );
+  }
+  const locked = facts.inventory.locked.find(
+    (ref) => ref.kind === entry.kind && ref.id === entry.id,
+  );
+  if (
+    locked &&
+    (locked.version !== entry.version ||
+      locked.source.sha256 !== entry.source.sha256 ||
+      locked.source.commit !== entry.source.commit)
+  ) {
+    return rejectPipeline(
+      issues,
+      warnings,
+      "version_conflict",
+      path,
+      `已锁定 ${locked.version}，组件库为 ${entry.version}；先解除绑定再更换版本`,
+    );
+  }
+  if (entry.kind === "toolpack") {
+    for (const [tool, adapter] of Object.entries(entry.toolAdapters)) {
+      if (adapter === "command" && facts.allowCommand !== true) {
+        return rejectPipeline(
+          issues,
+          warnings,
+          "tool_consent_required",
+          path,
+          `工具 ${tool} 使用 command 适配器，需要显式授权后才能装配`,
+        );
+      }
+      if (facts.tools.includes(tool)) {
+        return rejectPipeline(
+          issues,
+          warnings,
+          "tool_overreach",
+          path,
+          `工具 ${tool} 与模具现有工具冲突`,
+        );
+      }
+    }
+  }
+  if (entry.kind === "agent") {
+    const allowed = new Set([...facts.tools, ...selectedTools.keys()]);
+    for (const tool of entry.tools) {
+      if (!allowed.has(tool)) {
+        return rejectPipeline(
+          issues,
+          warnings,
+          "tool_overreach",
+          path,
+          `成员组件引用了模具不可用的工具：${tool}`,
+        );
+      }
+      const adapter = selectedTools.get(tool);
+      if (adapter === "command" && facts.allowCommand !== true) {
+        return rejectPipeline(
+          issues,
+          warnings,
+          "tool_consent_required",
+          path,
+          `工具 ${tool} 使用 command 适配器，需要显式授权`,
+        );
+      }
+    }
+  }
+  addPipelineComponent(entry, components);
+  return true;
+}
+
+/**
+ * Heuristic convenience: if a selected agent component names a tool that only
+ * a toolpack in the inventory can provide, select that toolpack too. Command
+ * adapters are still rejected by `acceptPipelineComponent` (consent required),
+ * so the agent is then rejected instead of silently losing the tool.
+ */
+function selectToolpacksForAgent(
+  agent: PipelineComponentEntry,
+  facts: PipelineDraftFacts,
+  issues: PipelineDraftIssue[],
+  warnings: string[],
+  selectedTools: Map<string, "http" | "mcp" | "command">,
+  components: Map<string, PipelineComponentDraft>,
+): void {
+  for (const tool of agent.tools) {
+    if (facts.tools.includes(tool) || selectedTools.has(tool)) {
+      continue;
+    }
+    const provider = facts.inventory.components.find(
+      (entry) =>
+        entry.kind === "toolpack" && entry.toolAdapters[tool] !== undefined,
+    );
+    if (!provider) {
+      continue;
+    }
+    if (
+      acceptPipelineComponent(
+        provider,
+        facts,
+        issues,
+        warnings,
+        selectedTools,
+        components,
+      )
+    ) {
+      for (const [name, adapter] of Object.entries(provider.toolAdapters)) {
+        selectedTools.set(name, adapter);
+      }
+    }
+  }
+}
+
+function rejectPipeline(
+  issues: PipelineDraftIssue[],
+  warnings: string[],
+  code: PipelineIssueCode,
+  path: string,
+  message: string,
+): false {
+  issues.push({ code, path, message });
+  warnings.push(`${path}: ${message}`);
+  return false;
+}
+
+function addPipelineComponent(
+  entry: PipelineComponentEntry,
+  components: Map<string, PipelineComponentDraft>,
+): void {
+  const key = `${entry.kind}/${entry.id}`;
+  if (!components.has(key)) {
+    components.set(key, {
+      ref: componentRef(entry),
+      description: entry.description,
+    });
+  }
+}
+
+function componentRef(entry: PipelineComponentEntry): ComponentRef {
+  return {
+    kind: entry.kind,
+    id: entry.id,
+    version: entry.version,
+    source: { ...entry.source },
+  };
+}
+
+export function validatePipelineDraft(
+  parsed: Record<string, unknown>,
+  fallback: PipelineDraftValues,
+  facts: PipelineDraftFacts,
+): {
+  values: PipelineDraftValues;
+  rationale?: string;
+  warnings: string[];
+  accepted: boolean;
+} {
+  const parsedStages = parseWorkflowDraftStages(parsed.stages);
+  if (!parsedStages) {
+    return {
+      values: fallback,
+      warnings: ["AI 流水线草稿缺少有效的 stages 数组。"],
+      accepted: false,
+    };
+  }
+  const warnings: string[] = [];
+  const issues: PipelineDraftIssue[] = [];
+  const stages = parsedStages.map(copyDraftStage);
+  const components = new Map<string, PipelineComponentDraft>();
+  const bindings: PipelineBindingDraft[] = [];
+  const selectedTools = new Map<string, "http" | "mcp" | "command">();
+
+  const byKey = new Map(
+    facts.inventory.components.map((entry) => [
+      `${entry.kind}/${entry.id}`,
+      entry,
+    ]),
+  );
+  const requested: Array<{ entry: PipelineComponentEntry; node?: string }> = [];
+  const rawBindings = Array.isArray(parsed.bindings) ? parsed.bindings : [];
+  for (const item of rawBindings) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.kind !== "string" || typeof record.id !== "string") {
+      continue;
+    }
+    const entry = byKey.get(`${record.kind}/${record.id.trim()}`);
+    if (!entry) {
+      rejectPipeline(
+        issues,
+        warnings,
+        "component_not_found",
+        `${record.kind}/${record.id}`,
+        "组件库中不存在该组件，已忽略",
+      );
+      continue;
+    }
+    requested.push({
+      entry,
+      ...(typeof record.node === "string" && record.node.trim()
+        ? { node: record.node.trim() }
+        : {}),
+    });
+  }
+
+  // Toolpacks/skillpacks first so agent components can reference their tools.
+  for (const { entry } of requested) {
+    if (entry.kind !== "toolpack" && entry.kind !== "skillpack") {
+      continue;
+    }
+    if (
+      acceptPipelineComponent(
+        entry,
+        facts,
+        issues,
+        warnings,
+        selectedTools,
+        components,
+      ) &&
+      entry.kind === "toolpack"
+    ) {
+      for (const [tool, adapter] of Object.entries(entry.toolAdapters)) {
+        selectedTools.set(tool, adapter);
+      }
+    }
+  }
+
+  // Then agent components, then workflow components.
+  for (const kind of ["agent", "workflow"] as const) {
+    for (const { entry, node } of requested) {
+      if (entry.kind !== kind) {
+        continue;
+      }
+      const index = node ? stages.findIndex((stage) => stage.id === node) : -1;
+      if (index < 0) {
+        rejectPipeline(
+          issues,
+          warnings,
+          "stage_not_found",
+          `${entry.kind}/${entry.id}`,
+          node ? `阶段 ${node} 不存在` : "绑定缺少目标阶段",
+        );
+        continue;
+      }
+      const stage = stages[index];
+      const expectedType = kind === "agent" ? "agent" : "workflow";
+      if (stage.type !== expectedType) {
+        rejectPipeline(
+          issues,
+          warnings,
+          "component_kind_mismatch",
+          `${entry.kind}/${entry.id}`,
+          `阶段 ${stage.id} 是 ${stage.type} 类型，不能绑定 ${kind} 组件`,
+        );
+        continue;
+      }
+      if (
+        !acceptPipelineComponent(
+          entry,
+          facts,
+          issues,
+          warnings,
+          selectedTools,
+          components,
+        )
+      ) {
+        continue;
+      }
+      if (bindings.some((binding) => binding.node === stage.id)) {
+        continue;
+      }
+      if (kind === "agent") {
+        stage.agent = entry.id;
+      }
+      bindings.push({ node: stage.id, component: componentRef(entry) });
+    }
+  }
+
+  // Infer agent bindings from stage.agent so a model that only edits stages
+  // still assembles the component the stage names.
+  for (const stage of stages) {
+    if (stage.type !== "agent" || bindings.some((b) => b.node === stage.id)) {
+      continue;
+    }
+    const entry = facts.inventory.components.find(
+      (component) => component.kind === "agent" && component.id === stage.agent,
+    );
+    if (
+      entry &&
+      acceptPipelineComponent(
+        entry,
+        facts,
+        issues,
+        warnings,
+        selectedTools,
+        components,
+      )
+    ) {
+      bindings.push({ node: stage.id, component: componentRef(entry) });
+    }
+  }
+
+  for (const stage of stages) {
+    const gate = stage.gate;
+    if (
+      gate &&
+      !facts.gates.some(
+        (allowed) => gate === allowed || gate.startsWith(`${allowed}#`),
+      )
+    ) {
+      Reflect.deleteProperty(stage, "gate");
+      warnings.push(`阶段 ${stage.id} 的 gate 不在 Pack 评测中，已移除。`);
+    }
+  }
+
+  const allowedAgents = new Set([
+    ...facts.agents.map((agent) => agent.id),
+    ...[...components.values()]
+      .filter((component) => component.ref.kind === "agent")
+      .map((component) => component.ref.id),
+  ]);
+  const graph = validateStageGraph(stages, allowedAgents);
+  if (!graph.ok) {
+    return {
+      values: fallback,
+      warnings: [
+        ...graph.errors.slice(0, 5),
+        "AI 流水线草稿的阶段图无效，已使用启发式装配。",
+      ],
+      accepted: false,
+    };
+  }
+
+  // Workflow components must only bind agents this pipeline can provide.
+  const workflowEntries = facts.inventory.components.filter(
+    (entry) =>
+      entry.kind === "workflow" && components.has(`workflow/${entry.id}`),
+  );
+  for (const entry of workflowEntries) {
+    const missing = entry.workflowAgents.filter(
+      (agentId) => !allowedAgents.has(agentId),
+    );
+    if (missing.length > 0) {
+      components.delete(`workflow/${entry.id}`);
+      const index = bindings.findIndex(
+        (binding) =>
+          binding.component.kind === "workflow" &&
+          binding.component.id === entry.id,
+      );
+      if (index >= 0) {
+        bindings.splice(index, 1);
+      }
+      rejectPipeline(
+        issues,
+        warnings,
+        "component_kind_mismatch",
+        `workflow/${entry.id}`,
+        `组件引用了不可用的成员：${missing.slice(0, 3).join(", ")}`,
+      );
+    }
+  }
+
+  const id =
+    typeof parsed.id === "string" && parsed.id.trim()
+      ? slug(parsed.id)
+      : fallback.id;
+  return {
+    values: {
+      id,
+      name:
+        typeof parsed.name === "string" && parsed.name.trim()
+          ? parsed.name.trim().slice(0, 200)
+          : fallback.name,
+      description:
+        typeof parsed.description === "string" && parsed.description.trim()
+          ? parsed.description.trim().slice(0, 300)
+          : fallback.description,
+      stages,
+      components: [...components.values()],
+      bindings,
+      issues,
+    },
+    rationale:
+      typeof parsed.rationale === "string" && parsed.rationale.trim()
+        ? parsed.rationale.trim().slice(0, 500)
+        : undefined,
+    warnings,
+    accepted: true,
+  };
+}
+
+function copyDraftStage(stage: DraftStage): DraftStage {
+  return {
+    ...stage,
+    inputs: [...stage.inputs],
+    outputs: [...stage.outputs],
+    depends: [...stage.depends],
+    ...(stage.retry ? { retry: { ...stage.retry } } : {}),
+    ...(stage.approval ? { approval: { ...stage.approval } } : {}),
+  };
+}
+
+function intentTokens(intent: string): Set<string> {
+  return new Set(
+    intent
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 3),
+  );
+}
+
+function tokenMatches(
+  entry: PipelineComponentEntry,
+  tokens: Set<string>,
+): boolean {
+  if (tokens.size === 0) {
+    return false;
+  }
+  const text = `${entry.id} ${entry.description}`.toLowerCase();
+  for (const token of tokens) {
+    if (text.includes(token)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 interface PolicyFacts {
