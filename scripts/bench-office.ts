@@ -734,6 +734,11 @@ function collectAssetUrls(html: string): string[] {
 }
 
 async function resolveCommitSha(): Promise<string> {
+  // `GITHUB_SHA` is reserved by Actions and points at the synthetic PR merge
+  // commit, so CI passes the source commit explicitly.
+  if (process.env.BENCH_COMMIT_SHA) {
+    return process.env.BENCH_COMMIT_SHA;
+  }
   if (process.env.GITHUB_SHA) {
     return process.env.GITHUB_SHA;
   }

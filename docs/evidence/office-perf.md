@@ -84,7 +84,8 @@ prints it to stdout, and appends a markdown table to
 CI uploads the JSON as the `office-perf-<sha>` artifact (90-day retention),
 so a result is always attributable to the commit that produced it. On pull
 requests the workflow passes `github.event.pull_request.head.sha` (the source
-commit) rather than the synthetic merge-commit SHA.
+commit) through `BENCH_COMMIT_SHA`; `GITHUB_SHA` cannot be overridden and would
+otherwise record the synthetic merge commit.
 
 ## Reproduce
 
