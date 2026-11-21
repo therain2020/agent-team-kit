@@ -130,12 +130,14 @@ export function parseSaveProfileBody(body: unknown): SaveProfileRequestBody {
   };
 }
 
-export async function saveProfile(input: SaveProfileRequestBody) {
+export async function saveProfile(
+  input: SaveProfileRequestBody & { actor?: string },
+) {
   await ensureStoreSchema();
   const store = getStore();
   return store.interestProfiles.saveProfile({
     ...input,
-    actor: "web:console",
+    actor: input.actor ?? "web:console",
   });
 }
 

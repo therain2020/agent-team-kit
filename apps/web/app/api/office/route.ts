@@ -1,4 +1,5 @@
 import path from "node:path";
+import { loadFactoryLink } from "@/lib/factory-server";
 import { type OfficeSnapshotPayload, loadOfficeData } from "@/lib/office";
 import { resolvePackDir } from "@/lib/paths";
 import { ensureStoreSchema, getStore } from "@/lib/store";
@@ -29,7 +30,10 @@ export async function GET(request: Request) {
 
   await ensureStoreSchema();
   try {
-    const data = await loadOfficeData(dirName);
+    const [data, factoryLink] = await Promise.all([
+      loadOfficeData(dirName),
+      loadFactoryLink(),
+    ]);
     if (!data.active || data.active.dirName !== dirName) {
       return NextResponse.json(
         { error: "pack not found or invalid" },
@@ -41,6 +45,7 @@ export async function GET(request: Request) {
     `;
     const payload: OfficeSnapshotPayload = {
       active: data.active,
+      factoryLink,
       cursor: Number(rows[0]?.max ?? 0),
       generatedAt: new Date().toISOString(),
     };

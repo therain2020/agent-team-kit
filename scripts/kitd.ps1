@@ -1,6 +1,6 @@
 param(
   [Parameter(Position = 0)]
-  [ValidateSet("status", "check", "up", "down", "snapshot", "rollback", "lkg", "watch", "install-task")]
+  [ValidateSet("status", "check", "up", "down", "snapshot", "rollback", "lkg", "list", "watch", "install-task")]
   [string]$Command = "status",
   [string]$Repo = "D:\GitHub\agent-team-kit",
   [string]$LkgTag = "lkg-0.9.0-preview",
@@ -9,6 +9,8 @@ param(
   [string]$LkgVerifiedBy = "",
   [string]$LkgWorkspace = "default",
   [string]$LkgTarget = "workspace-artifacts",
+  [string]$Change = "",
+  [switch]$Execute,
   [switch]$DryRun,
   [int]$FailuresBeforeRollback = 3,
   [int]$IntervalSeconds = 30,
@@ -208,6 +210,63 @@ function Invoke-Rollback {
   Write-Output "rolled back to $LkgTag (preserved recovery/$stamp)"
 }
 
+# Single-change rollback (85 §3.6, issue #89). The TypeScript side owns the
+# revert, the store transition and the unified repo-external audit; kitd only
+# keeps this thin and records its own summary. Default is dry-run; -Execute
+# performs the rollback.
+function Invoke-ChangeRollback {
+  if ([string]::IsNullOrWhiteSpace($Change)) {
+    throw "rollback --change requires a change id"
+  }
+  $mode = "dry-run"
+  $arguments = @(
+    "run", "scripts/change-rollback.ts",
+    "--change", $Change,
+    "--repo", $Repo,
+    "--actor", "kitd:operator"
+  )
+  if ($Execute -and -not $DryRun) {
+    $arguments += "--execute"
+    $mode = "execute"
+  }
+
+  Push-Location $Repo
+  try {
+    & bun @arguments
+    $exitCode = $LASTEXITCODE
+  } finally {
+    Pop-Location
+  }
+
+  if ($exitCode -ne 0) {
+    Write-Audit "change-rollback" "failed" "change=$Change mode=$mode exit=$exitCode"
+    throw "change rollback failed: $Change (mode $mode)"
+  }
+  Write-Audit "change-rollback" $mode "change=$Change"
+  if ($mode -eq "execute") {
+    $health = Get-Health
+    $healthStatus = "unhealthy"
+    if ($health.ok) {
+      $healthStatus = "healthy"
+    }
+    Write-Audit "change-rollback" $healthStatus "change=$Change $($health.detail)"
+  }
+  Write-Output "change rollback $mode complete: $Change"
+}
+
+function Invoke-ChangeList {
+  Push-Location $Repo
+  try {
+    & bun run scripts/change-rollback.ts --list --repo $Repo
+    if ($LASTEXITCODE -ne 0) {
+      throw "change list failed"
+    }
+  } finally {
+    Pop-Location
+  }
+  Write-Audit "change-list" "ok" "change rollback audit"
+}
+
 function Invoke-LkgSwitch {
   if ([string]::IsNullOrWhiteSpace($LkgArtifactId)) {
     throw "the lkg command requires -LkgArtifactId"
@@ -302,10 +361,17 @@ switch ($Command) {
     Invoke-Snapshot
   }
   "rollback" {
-    Invoke-Rollback
+    if ([string]::IsNullOrWhiteSpace($Change)) {
+      Invoke-Rollback
+    } else {
+      Invoke-ChangeRollback
+    }
   }
   "lkg" {
     Invoke-LkgSwitch
+  }
+  "list" {
+    Invoke-ChangeList
   }
   "watch" {
     Write-Audit "watch" "start" "interval=$IntervalSeconds failures=$FailuresBeforeRollback web=$Web"

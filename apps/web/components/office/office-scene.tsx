@@ -14,15 +14,18 @@ import {
 import {
   PixelAgent,
   PixelClockControls,
+  PixelDoor,
   PixelMotionProvider,
   PixelProgress,
   TOOL_BUBBLE_MS,
+  agentSeed,
 } from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SinceLabel, WorldStatus } from "@/components/world/world-status";
 import { factoryRunHref } from "@/lib/approvals-view";
+import { type FactoryLink, reconcileFactoryLink } from "@/lib/factory";
 import {
   type MissionPrefill,
   missionPrefillForAgent,
@@ -32,6 +35,7 @@ import type {
   OfficeData,
   OfficeSnapshotPayload,
 } from "@/lib/office";
+import { FACTORY_ROOM_HREF, resolveInitialAgent } from "@/lib/office-deeplink";
 import {
   type LiveAgent,
   type LiveMission,
@@ -91,6 +95,8 @@ const FLOW_DELTA_MS = 4_000;
 const UNKNOWN_RUN_DEBOUNCE_MS = 1_500;
 /** Never refetch the office snapshot more often than this. */
 const SNAPSHOT_REFRESH_COOLDOWN_MS = 15_000;
+/** The paused set moved on the stream: resync the door plate from the snapshot. */
+const LINK_RESYNC_DEBOUNCE_MS = 1_200;
 
 const ROLE_I18N = {
   builder: "roleBuilder",
@@ -133,10 +139,14 @@ const STATUS_STYLE: Record<LiveAgent["status"], { dot: string; text: string }> =
 
 export function OfficeScene(props: {
   data: OfficeData;
+  /** Door plate payload, projected from the factory snapshot (97 §3.5). */
+  factoryLink: FactoryLink | null;
   initialMessages: UIMessage[];
   stubMode: boolean;
   initialPanel?: "agent" | "chat";
   initialView?: OfficeView;
+  /** Factory → office deep link; validated by the page before it reaches us. */
+  initialAgentId?: string | null;
 }) {
   return (
     <PixelMotionProvider>
@@ -147,16 +157,20 @@ export function OfficeScene(props: {
 
 function OfficeSceneBody({
   data,
+  factoryLink,
   initialMessages,
   stubMode,
   initialPanel = "agent",
   initialView = "floor",
+  initialAgentId,
 }: {
   data: OfficeData;
+  factoryLink: FactoryLink | null;
   initialMessages: UIMessage[];
   stubMode: boolean;
   initialPanel?: "agent" | "chat";
   initialView?: OfficeView;
+  initialAgentId?: string | null;
 }) {
   const t = useTranslations("office");
   const router = useRouter();
@@ -168,8 +182,9 @@ function OfficeSceneBody({
     null,
   );
   const active = activeSnapshot ?? data.active;
-  const [selectedId, setSelectedId] = useState(
-    active?.agents[0]?.id ?? "manager",
+  const [linkSnapshot, setLinkSnapshot] = useState<FactoryLink | null>(null);
+  const [selectedId, setSelectedId] = useState(() =>
+    resolveInitialAgent(active?.agents ?? [], initialAgentId),
   );
   const [view, setView] = useState<OfficeView>(initialView);
   const [locked, setLocked] = useState(false);
@@ -246,6 +261,12 @@ function OfficeSceneBody({
     () => deriveLiveAgents(baseAgents, world.world, baseMissions, optimistic),
     [baseAgents, baseMissions, world.world, optimistic],
   );
+  // The door plate follows the same stream as the factory gate: a decision or
+  // a new request moves both counts inside one batch window (97 §3.5).
+  const liveLink = useMemo(() => {
+    const link = linkSnapshot ?? factoryLink;
+    return link ? reconcileFactoryLink(link, world.world) : null;
+  }, [linkSnapshot, factoryLink, world.world]);
   const missions = useMemo(
     () => deriveLiveMissions(baseMissions, world.world, optimistic),
     [baseMissions, world.world, optimistic],
@@ -297,6 +318,9 @@ function OfficeSceneBody({
           if (payload.active && payload.active.dirName === current.dirName) {
             setActiveSnapshot(payload.active);
           }
+          if (payload.factoryLink) {
+            setLinkSnapshot(payload.factoryLink);
+          }
         } catch {
           // The stream stays authoritative; the next delta retries.
         }
@@ -320,6 +344,87 @@ function OfficeSceneBody({
       }
     };
   }, []);
+
+  // When the paused set changes, the door plate count is reconciled against
+  // the factory snapshot (97 §3.5). `reconcileFactoryLink` already moved it
+  // optimistically from the stream; this fetch is the authoritative pass and
+  // also refreshes the top three workpieces for the plate tooltip.
+  const pausedKey = useMemo(() => {
+    if (!world.world) {
+      return "";
+    }
+    return world.world.runs
+      .filter((run) => run.status === "paused")
+      .map((run) => run.runId)
+      .sort()
+      .join(",");
+  }, [world.world]);
+  const lastPausedKey = useRef("");
+
+  useEffect(() => {
+    if (!active || !pausedKey || pausedKey === lastPausedKey.current) {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      lastPausedKey.current = pausedKey;
+      void (async () => {
+        try {
+          const response = await fetch(
+            `/api/office?pack=${encodeURIComponent(active.dirName)}`,
+            { cache: "no-store", signal: controller.signal },
+          );
+          if (!response.ok) {
+            return;
+          }
+          const payload = (await response.json()) as OfficeSnapshotPayload;
+          if (payload.factoryLink) {
+            setLinkSnapshot(payload.factoryLink);
+          }
+        } catch {
+          // The stream stays authoritative; the next change retries.
+        }
+      })();
+    }, LINK_RESYNC_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [active, pausedKey]);
+
+  // Room switch (97 §3.5): `F` walks through the factory door from anywhere on
+  // the office surface, including the list view and the agent panel. Modal
+  // surfaces (mission dialog, stage drawer) keep the key to themselves.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (
+        missionOpen ||
+        stageTarget ||
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        router.push(FACTORY_ROOM_HREF);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [missionOpen, router, stageTarget]);
 
   // Every floor animation is a response to a world delta: the first snapshot
   // seeds the belt, later deltas yield crates/bubbles/stamps/flow cues. No
@@ -549,6 +654,14 @@ function OfficeSceneBody({
           </fieldset>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {view === "list" ? (
+            <PixelDoor
+              href={FACTORY_ROOM_HREF}
+              label={t("factoryDoor")}
+              count={liveLink?.pendingCount ?? 0}
+              shortcut="F"
+            />
+          ) : null}
           <Button asChild size="sm" variant="ghost">
             <Link href="/ops?section=control">
               <ShieldCheck className="size-3.5" />
@@ -591,6 +704,8 @@ function OfficeSceneBody({
           ) : (
             <FactoryFloor
               packName={active.name}
+              pendingCount={liveLink?.pendingCount ?? 0}
+              pendingItems={liveLink?.topItems ?? []}
               manager={manager}
               employees={employees}
               agents={agents}
@@ -843,7 +958,7 @@ function AgentPanel({
       <div className="flex items-start gap-3">
         <div className="rounded-lg border border-border bg-zinc-950/60 p-1.5">
           <PixelAgent
-            seed={agent.id.length}
+            seed={agentSeed(agent.id)}
             manager={agent.isManager}
             state={spriteState}
             tick={tick}
@@ -975,7 +1090,7 @@ function AgentPanel({
           <Button size="sm" variant="outline" asChild>
             <Link href={approvalHref} aria-keyshortcuts="B">
               <ShieldCheck className="size-3.5" />
-              {t("handleApproval")}
+              {t("goToFactory")}
               <ShortcutKey>B</ShortcutKey>
             </Link>
           </Button>

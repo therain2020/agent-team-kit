@@ -24,8 +24,9 @@ describe("ops section routing", () => {
     expect(legacyOpsRedirect("/degradation")).toBe("/ops?section=degradation");
     expect(legacyOpsRedirect("/budgets")).toBe("/ops?section=budget");
     expect(legacyOpsRedirect("/kill-switch")).toBe("/ops?section=control");
-    expect(legacyOpsRedirect("/autopilot")).toBe("/ops?section=control");
-    expect(Object.keys(LEGACY_OPS_REDIRECTS)).toHaveLength(4);
+    // Autopilot moved to its own control surface (`/triggers`, 96 §5.5).
+    expect(legacyOpsRedirect("/autopilot")).toBeNull();
+    expect(Object.keys(LEGACY_OPS_REDIRECTS)).toHaveLength(3);
     expect(legacyOpsRedirect("/runs")).toBeNull();
   });
 
