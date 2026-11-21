@@ -87,7 +87,11 @@ export const REQUIRED_PROMOTION_ROLES: Readonly<
 > = Object.freeze({
   context: Object.freeze([]),
   tool: Object.freeze([]),
-  architecture: Object.freeze(["operator", "security", "architecture"]),
+  architecture: Object.freeze([
+    "operator",
+    "security",
+    "architecture",
+  ] as const),
 });
 
 export function requiredPromotionRoles(

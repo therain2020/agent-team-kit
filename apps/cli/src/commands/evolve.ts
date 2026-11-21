@@ -88,6 +88,7 @@ export function registerEvolve(program: Command): void {
           );
           return;
         }
+        const kind = isVariantKind(options.kind) ? options.kind : undefined;
         try {
           const result = await withEvolutionRepo(async (repo) => {
             const created = await initVariant(
@@ -95,7 +96,7 @@ export function registerEvolve(program: Command): void {
               options.out,
               options.name,
               {
-                ...(options.kind ? { kind: options.kind } : {}),
+                ...(kind ? { kind } : {}),
                 ...(options.workspace
                   ? { workspaceId: options.workspace }
                   : { workspaceId: repo.workspaceId }),
@@ -151,6 +152,7 @@ export function registerEvolve(program: Command): void {
           );
           return;
         }
+        const kind = isVariantKind(options.kind) ? options.kind : undefined;
         try {
           const result = await withEvolutionRepo(async (repo) => {
             const created = await proposeVariant(
@@ -161,7 +163,7 @@ export function registerEvolve(program: Command): void {
               options.name,
               options.model,
               {
-                ...(options.kind ? { kind: options.kind } : {}),
+                ...(kind ? { kind } : {}),
                 ...(options.workspace
                   ? { workspaceId: options.workspace }
                   : { workspaceId: repo.workspaceId }),
