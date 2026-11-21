@@ -1,11 +1,14 @@
 import {
+  Eye,
   FlaskConical,
   Gamepad2,
   Globe2,
   Inbox,
+  ListChecks,
   type LucideIcon,
   Package,
   Siren,
+  Zap,
 } from "lucide-react";
 
 export interface NavItem {
@@ -25,13 +28,18 @@ export interface NavItem {
 }
 
 /**
- * The six first-class console entries (82 §3, issue #160). Everything else is
- * a drill-down or a legacy route folded into one of these surfaces. Atlas
+ * The first-class console entries (82 §3, issue #160). Everything else is a
+ * drill-down or a legacy route folded into one of these surfaces. Atlas
  * (`/world?tab=atlas`) is a `/world` drill-down, so it stays out of this list.
+ *
+ * `/observer` is the observation-first entry (98 §3.5, issue #134): it reads the
+ * closed loop and drills into `/world`. `/runs` and `/autopilot` stay demoted
+ * — they redirect to `/world` and `/ops` and are never primary entries.
  */
 export const NAV_ITEMS: NavItem[] = [
   { href: "/office", labelKey: "office", icon: Gamepad2, shortcut: "o" },
   { href: "/world", labelKey: "world", icon: Globe2, shortcut: "w" },
+  { href: "/observer", labelKey: "observer", icon: Eye, shortcut: "v" },
   {
     href: "/approvals",
     labelKey: "approvals",
@@ -53,6 +61,11 @@ export const NAV_ITEMS: NavItem[] = [
     shortcut: "e",
   },
   { href: "/ops", labelKey: "ops", icon: Siren, shortcut: "p" },
+  // Trigger plane surfaces (96 §5.5, issue #96): observation (`/jobs`) and
+  // control (`/triggers`) are separate entries so an observer never lands on
+  // a page that asks them to act.
+  { href: "/jobs", labelKey: "jobs", icon: ListChecks, shortcut: "j" },
+  { href: "/triggers", labelKey: "triggers", icon: Zap, shortcut: "t" },
 ];
 
 /** `g`-prefix quick-jump key → destination, derived from NAV_ITEMS. */

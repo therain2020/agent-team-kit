@@ -740,6 +740,7 @@ export class SqliteTriggerRunStore implements TriggerRunStore {
         launchedAt: record.launchedAt,
         estimateCny: record.estimateCny,
         payloadRef: record.payloadRef,
+        reactionRuleId: record.reactionRuleId ?? null,
         lastError: record.lastError,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
@@ -786,6 +787,12 @@ export class SqliteTriggerRunStore implements TriggerRunStore {
     }
     if (options.status) {
       conditions.push(eq(triggerRuns.status, options.status));
+    }
+    if (options.payloadRef) {
+      conditions.push(eq(triggerRuns.payloadRef, options.payloadRef));
+    }
+    if (options.reactionRuleId) {
+      conditions.push(eq(triggerRuns.reactionRuleId, options.reactionRuleId));
     }
     if (options.since) {
       conditions.push(sql`${triggerRuns.launchedAt} >= ${options.since}`);

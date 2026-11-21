@@ -5,7 +5,7 @@ import {
   RunStatusBadge,
   StageStatusBadge,
 } from "@/components/kit/status-badge";
-import { PixelWorkpiece } from "@/components/pixel";
+import { PixelAgent, PixelWorkpiece, agentSeed } from "@/components/pixel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +18,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { FactoryDetail, FactoryItem } from "@/lib/factory";
+import { officeAgentHref } from "@/lib/office-deeplink";
 import { cn, formatCny, formatNumber, timeAgo, timeUntil } from "@/lib/utils";
 import {
   CheckCircle2,
@@ -216,6 +217,28 @@ export function ApprovalDrawer({
                 <p className="text-xs leading-5 text-zinc-300">
                   {detail.summary.title}
                 </p>
+                {item?.producerAgentId ? (
+                  <div className="flex items-center gap-2 border border-zinc-800 bg-zinc-950 p-2">
+                    <PixelAgent
+                      seed={agentSeed(item.producerAgentId)}
+                      state="idle"
+                      scale={0.5}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] text-zinc-500">
+                        {t("producer")}
+                      </p>
+                      <p className="truncate font-mono text-xs text-zinc-200">
+                        {item.producerAgentId}
+                      </p>
+                    </div>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link href={officeAgentHref(item.producerAgentId)}>
+                        {t("viewOffice")}
+                      </Link>
+                    </Button>
+                  </div>
+                ) : null}
                 <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-zinc-800 pt-3 text-[10px] text-zinc-500">
                   {detail.summary.stageName ? (
                     <Meta label={t("stage")} value={detail.summary.stageName} />

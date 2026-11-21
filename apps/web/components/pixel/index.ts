@@ -6,7 +6,12 @@
  * on its own.
  */
 
-export { AGENT_PALETTES, MANAGER_PALETTE, agentPalette } from "./palette";
+export {
+  AGENT_PALETTES,
+  MANAGER_PALETTE,
+  agentPalette,
+  agentSeed,
+} from "./palette";
 export type { AgentPalette } from "./palette";
 export {
   PixelMotionProvider,
@@ -17,6 +22,13 @@ export { PixelAgent } from "./pixel-agent";
 export { PixelDesk, PixelProgress } from "./pixel-desk";
 export { PixelPlant } from "./pixel-plant";
 export { PixelRoom } from "./pixel-room";
+export {
+  PixelDoor,
+  PixelWorld,
+  ROOM_SWITCH_MS,
+  WorldHud,
+} from "./pixel-world";
+export type { WorldHudItem } from "./pixel-world";
 export { PixelWorkpiece, workpieceTone } from "./pixel-workpiece";
 export type { WorkpieceTone } from "./pixel-workpiece";
 export { PixelCrate } from "./pixel-crate";

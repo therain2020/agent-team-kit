@@ -2,6 +2,7 @@ import { ApprovalService } from "./approval-service";
 import { ArtifactService } from "./artifact-service";
 import { type BlobClient, FsBlobClient, S3BlobClient } from "./blob";
 import { BudgetService } from "./budget-service";
+import { ChangeApprovalService } from "./change-approval-service";
 import { ChangeProposalService } from "./change-service";
 import { CircuitBreakerService } from "./circuit-breaker-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
@@ -12,6 +13,7 @@ import { InformationService } from "./information-service";
 import { InterestProfileService } from "./interest-profile-service";
 import { LastKnownGoodService } from "./lkg-service";
 import { ensureSchema } from "./migrate";
+import { ReactionRuleService } from "./reaction-rule-service";
 import {
   PostgresArtifactStore,
   PostgresAutopilotStateStore,
@@ -102,6 +104,17 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
 
   const { blobs, artifactStore } = repositories;
 
+  const approvals = new ApprovalService({
+    sql: handle.sql,
+    driver: handle.driver,
+  });
+  const changeProposals = new ChangeProposalService({
+    sql: handle.sql,
+    driver: handle.driver,
+    blobs,
+    blobClient,
+  });
+
   return {
     config,
     driver: handle.driver,
@@ -122,10 +135,9 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     information: new InformationService({ sql: handle.sql }),
     /** InterestProfile versions, profile audit and signal audit (98 I-2). */
     interestProfiles: new InterestProfileService({ sql: handle.sql }),
-    approvals: new ApprovalService({
-      sql: handle.sql,
-      driver: handle.driver,
-    }),
+    /** ReactionRule versions and audit (98 I-3, 96 T6). */
+    reactionRules: new ReactionRuleService({ sql: handle.sql }),
+    approvals,
     budgetService: new BudgetService({
       sql: handle.sql,
       driver: handle.driver,
@@ -139,11 +151,12 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
       driver: handle.driver,
     }),
     /** Unified change pipeline storage (85 §3.5, D-52). */
-    changeProposals: new ChangeProposalService({
+    changeProposals,
+    /** High-risk change approvals on the shared inbox (85.3.5.5). */
+    changeApprovals: new ChangeApprovalService({
       sql: handle.sql,
-      driver: handle.driver,
-      blobs,
-      blobClient,
+      approvals,
+      proposals: changeProposals,
     }),
   };
 }

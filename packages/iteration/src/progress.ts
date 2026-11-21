@@ -46,7 +46,7 @@ export async function startIteration(
   await store.sql`
     INSERT INTO iteration_runs (
       iteration_id, workflow_id, workspace_id, repo_root, origin_kind,
-      trigger_id, trigger_run_id, goal, acceptance,
+      trigger_id, trigger_run_id, reaction_rule_id, goal, acceptance,
       run_mode, apply_mode, status, phase, plan_artifact_id, started_at,
       updated_at
     ) VALUES (
@@ -54,7 +54,8 @@ export async function startIteration(
       ${input.workflowId ?? `iteration-${input.iterationId}`},
       ${input.workspaceId}, ${input.repoRoot ?? null},
       ${input.origin?.kind ?? null}, ${input.origin?.triggerId ?? null},
-      ${input.origin?.triggerRunId ?? null}, ${input.goal},
+      ${input.origin?.triggerRunId ?? null},
+      ${input.origin?.reactionRuleId ?? null}, ${input.goal},
       ${input.acceptance ?? null},
       ${input.runMode}, ${input.applyMode}, 'running', 'planned',
       ${planArtifactId}, ${now}, ${now}
@@ -67,6 +68,10 @@ export async function startIteration(
       trigger_run_id = COALESCE(
         EXCLUDED.trigger_run_id,
         iteration_runs.trigger_run_id
+      ),
+      reaction_rule_id = COALESCE(
+        EXCLUDED.reaction_rule_id,
+        iteration_runs.reaction_rule_id
       ),
       goal = EXCLUDED.goal,
       acceptance = EXCLUDED.acceptance,
