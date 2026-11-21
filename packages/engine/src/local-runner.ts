@@ -1,3 +1,4 @@
+import { GATE_EVIDENCE_KIND, recordGateEvidence } from "@kit/activity";
 import { newId, priorityClassFor } from "@kit/core";
 import { findDecisionForRequest } from "@kit/manager";
 import {
@@ -245,6 +246,27 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
           staleMs,
         );
         if (request) {
+          // Single-writer evidence (85 §5.2 S9): every claim increments the
+          // fencing token, so this row proves the run was serialized under a
+          // lease. Best-effort: a failed audit write must not drop the claim.
+          await recordGateEvidence(options.store, {
+            workspaceId: request.workspaceId,
+            runId: request.runId,
+            kind: GATE_EVIDENCE_KIND.runLeaseClaimed,
+            status: "claimed",
+            summary: `run request ${request.requestId} claimed by ${owner}`,
+            payload: {
+              requestId: request.requestId,
+              owner,
+              leaseVersion: request.leaseVersion,
+            },
+          }).catch((error: unknown) => {
+            console.error(
+              `[local-runner] failed to record lease claim: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          });
           await execute(request, {
             requestId: request.requestId,
             owner,
