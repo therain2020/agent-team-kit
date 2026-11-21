@@ -16,12 +16,12 @@ import {
 } from "@kit/job";
 import { type OpsGate, getOpsGate as defaultGetOpsGate } from "@kit/ops";
 import { type LoadedPack, loadPack, simulatePack } from "@kit/pack";
-import { appendOp } from "@kit/store";
-import type {
-  AdmitRunInput,
-  AdmitRunResult,
-  TriggerRunRecord,
-  initStore,
+import {
+  type AdmitRunInput,
+  type AdmitRunResult,
+  type TriggerRunRecord,
+  type initStore,
+  appendOp,
 } from "@kit/store";
 import {
   type BlockingGate,
