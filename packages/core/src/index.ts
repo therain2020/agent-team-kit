@@ -1,5 +1,6 @@
 export * from "./artifact";
 export * from "./assets";
+export * from "./avatar";
 export * from "./autopilot";
 export * from "./budget";
 export * from "./circuit-breaker";

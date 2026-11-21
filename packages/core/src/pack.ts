@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ASSET_ENTRY } from "./assets";
 import { autopilotSchema } from "./autopilot";
+import { avatarSpecSchema } from "./avatar";
 import { policySchema } from "./policy";
 import { workflowDefinitionSchema } from "./workflow";
 
@@ -45,6 +46,8 @@ export const agentFrontmatterSchema = z.object({
       network: z.string().optional(),
     })
     .optional(),
+  /** Optional 16×24 indexed sprite (97 §3.4); absent = procedural sprite. */
+  avatar: avatarSpecSchema.optional(),
 });
 
 export type AgentFrontmatter = z.infer<typeof agentFrontmatterSchema>;
