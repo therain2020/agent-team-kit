@@ -4,9 +4,16 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   type PackTool,
+  type PipelineNode,
+  type PipelineSpec,
+  type WorkflowDefinition,
   type WorkshopManifest,
+  pipelineSpecSchema,
   skillPackSchema,
+  sourceAssetSchema,
+  templateDefinitionSchema,
   toolPackSchema,
+  workflowDefinitionSchema,
   workshopManifestSchema,
 } from "@kit/core";
 import {
@@ -22,9 +29,11 @@ import {
   searchMarket,
   sha256Hex,
   writeFileAtomic,
+  writeJsonAtomic,
 } from "@kit/market";
-import { loadPack } from "@kit/pack";
-import { parse } from "yaml";
+import { getTemplatesRoot, loadPack } from "@kit/pack";
+import { parse, stringify } from "yaml";
+import { componentsRoot, loadComponentFromDir } from "./components";
 import { WORKSHOP_TOPIC } from "./publish";
 import {
   type WorkshopFileContent,
@@ -92,17 +101,41 @@ export interface WorkshopInstall {
   permissions: WorkshopPermissionSummary;
 }
 
+const COMPONENT_INSTALL_KINDS = [
+  "agent",
+  "workflow",
+  "toolpack",
+  "skillpack",
+] as const;
+
+type ComponentInstallKind = (typeof COMPONENT_INSTALL_KINDS)[number];
+
+function isComponentInstallKind(
+  kind: WorkshopManifest["kind"],
+): kind is ComponentInstallKind {
+  return (COMPONENT_INSTALL_KINDS as readonly string[]).includes(kind);
+}
+
 /**
- * Destination family for an install: pack-kind items land under packs/ so the
- * console pack library can load, simulate and open them in Studio; everything
- * else stays under workshop/.
+ * Destination family for an install, selected from `manifest.kind` (plan 88
+ * §3.4). Every asset lands in its own local library; the legacy `workshop/`
+ * directory is only read for pre-M3 installs.
  */
-export type WorkshopInstallScope = "packs" | "workshop";
+export type WorkshopInstallScope =
+  | "packs"
+  | "sources"
+  | "templates"
+  | "components"
+  | "pack-workflows";
 
 export interface WorkshopInstallTarget {
   scope: WorkshopInstallScope;
+  /** Directory whose children are install targets. */
   root: string;
+  /** Directory to swap into place, or the manifest file for file targets. */
   dir: string;
+  /** Directory targets are staged + swapped; file targets are written in place. */
+  format: "directory" | "file";
 }
 
 export interface WorkshopPackImport {
@@ -148,27 +181,81 @@ export function packsRoot(root?: string): string {
   );
 }
 
+/** Installed source library (`source.yaml` + `<name>.meta.json`). */
+export function sourcesRoot(root?: string): string {
+  return path.resolve(
+    root ?? process.env.KIT_SOURCES_ROOT ?? path.join(process.cwd(), "sources"),
+  );
+}
+
+/** Template library; defaults follow `@kit/pack`'s template registry. */
+export function templatesRoot(root?: string): string {
+  return getTemplatesRoot(root);
+}
+
+export interface InstallTargetOptions {
+  packsRoot?: string;
+  sourcesRoot?: string;
+  templatesRoot?: string;
+  componentsRoot?: string;
+  /** Host pack directory; required for `kind: pipeline` (plan 88 §3.4). */
+  hostPack?: string;
+}
+
+function assertInside(root: string, target: string): void {
+  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (target === root || !target.startsWith(prefix)) {
+    throw new Error("invalid workshop target");
+  }
+}
+
 /**
- * Pick the destination for an install from the manifest kind (plan 88 §3.4).
- * Pack-kind items belong in the pack library, so they install as
- * `packs/<manifest.id>`; every other kind stays in the workshop directory.
+ * Pick the destination for an install from the manifest kind (plan 88 §3.4):
+ * pack → `packs/`, source → `sources/<name>.yaml`, template → `templates/`,
+ * pipeline → the host pack's `workflows/`, components → `components/<kind>/`.
  */
 export function resolveInstallTarget(
   manifest: Pick<WorkshopManifest, "id" | "kind">,
-  options: { root?: string; packsRoot?: string } = {},
+  options: InstallTargetOptions = {},
 ): WorkshopInstallTarget {
-  const scope: WorkshopInstallScope =
-    manifest.kind === "pack" ? "packs" : "workshop";
-  const root =
-    scope === "packs"
-      ? packsRoot(options.packsRoot)
-      : workshopRoot(options.root);
-  const dir = path.join(root, manifest.id);
-  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (dir === root || !dir.startsWith(prefix)) {
-    throw new Error("invalid workshop target");
+  const { id, kind } = manifest;
+  if (kind === "pack") {
+    const root = packsRoot(options.packsRoot);
+    const dir = path.join(root, id);
+    assertInside(root, dir);
+    return { scope: "packs", root, dir, format: "directory" };
   }
-  return { scope, root, dir };
+  if (kind === "template") {
+    const root = templatesRoot(options.templatesRoot);
+    const dir = path.join(root, id);
+    assertInside(root, dir);
+    return { scope: "templates", root, dir, format: "directory" };
+  }
+  if (kind === "source") {
+    const root = sourcesRoot(options.sourcesRoot);
+    const dir = path.join(root, `${id}.yaml`);
+    assertInside(root, dir);
+    return { scope: "sources", root, dir, format: "file" };
+  }
+  if (kind === "pipeline") {
+    if (!options.hostPack) {
+      throw new Error(
+        "pipeline installs require a host pack; pass the target pack directory (--host-pack)",
+      );
+    }
+    const root = path.resolve(options.hostPack);
+    const dir = path.join(root, "workflows", `${id}.yaml`);
+    assertInside(root, dir);
+    return { scope: "pack-workflows", root, dir, format: "file" };
+  }
+  if (!isComponentInstallKind(kind)) {
+    throw new Error(`unsupported workshop kind: ${String(kind)}`);
+  }
+  const base = componentsRoot(options.componentsRoot);
+  const root = path.join(base, kind);
+  const dir = path.join(root, id);
+  assertInside(base, dir);
+  return { scope: "components", root, dir, format: "directory" };
 }
 
 export async function searchWorkshop(
@@ -266,10 +353,16 @@ export async function installWorkshop(input: {
   repo: string;
   ref?: string;
   token?: string;
-  /** Workshop directory for non-pack kinds. */
-  root?: string;
   /** Pack directory for `kind: pack` items. */
   packsRoot?: string;
+  /** Source library for `kind: source` items (default `./sources`). */
+  sourcesRoot?: string;
+  /** Template library for `kind: template` items. */
+  templatesRoot?: string;
+  /** Component library for agent/workflow/toolpack/skillpack items. */
+  componentsRoot?: string;
+  /** Host pack directory; required for `kind: pipeline` items. */
+  hostPack?: string;
   /** Replace an existing target directory instead of refusing. */
   overwrite?: boolean;
   acceptThirdParty: boolean;
@@ -333,10 +426,121 @@ export async function installWorkshop(input: {
   }
 
   const target = resolveInstallTarget(manifest, {
-    root: input.root,
     packsRoot: input.packsRoot,
+    sourcesRoot: input.sourcesRoot,
+    templatesRoot: input.templatesRoot,
+    componentsRoot: input.componentsRoot,
+    hostPack: input.hostPack,
   });
-  if (existsSync(target.dir) && input.overwrite !== true) {
+
+  const files =
+    target.format === "file"
+      ? target.scope === "sources"
+        ? await installSourceTarget({
+            target,
+            manifest,
+            entryContent: entryContent(manifest, contents),
+            repo: input.repo,
+            commit,
+            trust,
+            overwrite: input.overwrite === true,
+          })
+        : await installPipelineTarget({
+            target,
+            manifest,
+            entryContent: entryContent(manifest, contents),
+            repo: input.repo,
+            commit,
+            manifestSha256,
+            trust,
+            overwrite: input.overwrite === true,
+          })
+      : await installDirectoryTarget({
+          target,
+          manifest,
+          contents,
+          repo: input.repo,
+          commit,
+          manifestSha256,
+          trust,
+          overwrite: input.overwrite === true,
+        });
+
+  return {
+    repo: input.repo,
+    commit,
+    dir: target.dir,
+    scope: target.scope,
+    manifest,
+    manifestSha256,
+    files,
+    trust,
+    permissions,
+  };
+}
+
+function entryContent(
+  manifest: WorkshopManifest,
+  contents: WorkshopFileContent[],
+): string {
+  const entry = contents.find((file) => file.file === manifest.entry);
+  if (!entry) {
+    throw new Error(`workshop entry was not downloaded: ${manifest.entry}`);
+  }
+  return entry.content;
+}
+
+function installRecord(input: {
+  manifest: WorkshopManifest;
+  repo: string;
+  commit: string;
+  manifestSha256: string;
+  files: Record<string, string>;
+  trust: WorkshopTrust;
+}): Record<string, unknown> {
+  const { manifest } = input;
+  // The entry file is the single source of truth for a component's version
+  // (plan 88 §4 "文件唯一事实源"); copying the manifest version here would
+  // turn harmless `1.0.0` vs `1.0` differences into lockfile mismatches.
+  const component = isComponentInstallKind(manifest.kind);
+  return {
+    kind: manifest.kind,
+    id: manifest.id,
+    name: manifest.name,
+    ...(component ? {} : { version: manifest.version }),
+    entry: manifest.entry,
+    license: manifest.license,
+    topics: manifest.topics,
+    repo: input.repo,
+    commit: input.commit,
+    manifestSha256: input.manifestSha256,
+    manifest: {
+      id: manifest.id,
+      name: manifest.name,
+      version: manifest.version,
+      kind: manifest.kind,
+      description: manifest.description,
+    },
+    files: input.files,
+    installedAt: new Date().toISOString(),
+    permissions: manifest.permissions,
+    trust: input.trust,
+    secretScan: "passed",
+  };
+}
+
+async function installDirectoryTarget(input: {
+  target: WorkshopInstallTarget;
+  manifest: WorkshopManifest;
+  contents: WorkshopFileContent[];
+  repo: string;
+  commit: string;
+  manifestSha256: string;
+  trust: WorkshopTrust;
+  overwrite: boolean;
+}): Promise<string[]> {
+  const { target, manifest, contents } = input;
+  if (existsSync(target.dir) && !input.overwrite) {
     throw new Error(
       `install target already exists: ${target.scope}/${manifest.id}; pass overwrite to replace it`,
     );
@@ -365,6 +569,31 @@ export async function installWorkshop(input: {
       hashes[file] = sha256Hex(content);
     }
 
+    const entry = await readFile(
+      path.join(staging, manifest.entry),
+      "utf8",
+    ).catch(() => "");
+
+    // The record is provenance, and for components its `entry` is what the
+    // library loader reads; write it before validating so the staged directory
+    // is judged in exactly the shape it will have after the swap.
+    await writeFile(
+      path.join(staging, ".workshop.json"),
+      JSON.stringify(
+        installRecord({
+          manifest,
+          repo: input.repo,
+          commit: input.commit,
+          manifestSha256: input.manifestSha256,
+          files: hashes,
+          trust: input.trust,
+        }),
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
     if (manifest.kind === "pack") {
       const loaded = await loadPack(staging);
       if (!loaded.ok) {
@@ -376,10 +605,22 @@ export async function installWorkshop(input: {
         loaded.toolPacks.flatMap((toolPack) => toolPack.tools),
         manifest,
       );
+    } else if (manifest.kind === "template") {
+      const parsed = templateDefinitionSchema.safeParse(parse(entry));
+      if (!parsed.success) {
+        throw new Error(
+          `installed template is invalid: ${parsed.error.issues
+            .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+            .join("; ")}`,
+        );
+      }
+      if (parsed.data.id !== manifest.id) {
+        throw new Error(
+          `installed template id "${parsed.data.id}" does not match manifest id "${manifest.id}"`,
+        );
+      }
     } else if (manifest.kind === "toolpack") {
-      const parsed = toolPackSchema.safeParse(
-        parse(await readFile(path.join(staging, manifest.entry), "utf8")),
-      );
+      const parsed = toolPackSchema.safeParse(parse(entry));
       if (!parsed.success) {
         throw new Error(
           `installed toolpack is invalid: ${parsed.error.issues
@@ -389,9 +630,7 @@ export async function installWorkshop(input: {
       }
       assertToolPermissions(parsed.data.tools, manifest);
     } else if (manifest.kind === "skillpack") {
-      const parsed = skillPackSchema.safeParse(
-        parse(await readFile(path.join(staging, manifest.entry), "utf8")),
-      );
+      const parsed = skillPackSchema.safeParse(parse(entry));
       if (!parsed.success) {
         throw new Error(
           `installed skillpack is invalid: ${parsed.error.issues
@@ -411,38 +650,22 @@ export async function installWorkshop(input: {
       }
     }
 
-    await writeFile(
-      path.join(staging, ".workshop.json"),
-      JSON.stringify(
-        {
-          kind: manifest.kind,
-          id: manifest.id,
-          name: manifest.name,
-          version: manifest.version,
-          entry: manifest.entry,
-          license: manifest.license,
-          topics: manifest.topics,
-          repo: input.repo,
-          commit,
-          manifestSha256,
-          manifest: {
-            id: manifest.id,
-            name: manifest.name,
-            version: manifest.version,
-            kind: manifest.kind,
-            description: manifest.description,
-          },
-          files: hashes,
-          installedAt: new Date().toISOString(),
-          permissions: manifest.permissions,
-          trust,
-          secretScan: "passed",
-        },
-        null,
-        2,
-      ),
-      "utf8",
-    );
+    if (isComponentInstallKind(manifest.kind)) {
+      // Validate against the exact rules `listComponents` applies after the
+      // swap, so a component can never install into an invalid library slot.
+      const loaded = await loadComponentFromDir(
+        manifest.kind,
+        manifest.id,
+        staging,
+      );
+      if (!loaded.ok) {
+        throw new Error(
+          `installed ${manifest.kind} is invalid: ${loaded.issues
+            .map((issue) => `${issue.code} ${issue.path}: ${issue.message}`)
+            .join("; ")}`,
+        );
+      }
+    }
   } catch (error) {
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -454,17 +677,306 @@ export async function installWorkshop(input: {
     id: manifest.id,
   });
 
-  return {
-    repo: input.repo,
-    commit,
-    dir: target.dir,
-    scope: target.scope,
-    manifest,
-    manifestSha256,
-    files,
-    trust,
-    permissions,
+  return files;
+}
+
+const BUILTIN_SOURCE_NAMES = new Set(["hn", "arxiv", "github"]);
+
+async function installSourceTarget(input: {
+  target: WorkshopInstallTarget;
+  manifest: WorkshopManifest;
+  entryContent: string;
+  repo: string;
+  commit: string;
+  trust: WorkshopTrust;
+  overwrite: boolean;
+}): Promise<string[]> {
+  const { target, manifest } = input;
+  const parsed = sourceAssetSchema.safeParse(parse(input.entryContent));
+  if (!parsed.success) {
+    throw new Error(
+      `installed source is invalid: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
+  }
+  const name = parsed.data.metadata.name;
+  if (name !== manifest.id) {
+    throw new Error(
+      `source name "${name}" does not match manifest id "${manifest.id}"`,
+    );
+  }
+  if (BUILTIN_SOURCE_NAMES.has(name)) {
+    throw new Error(`source name is reserved by a builtin: ${name}`);
+  }
+
+  const manifestPath = target.dir;
+  const metaPath = path.join(target.root, `${manifest.id}.meta.json`);
+  if (existsSync(manifestPath) && !input.overwrite) {
+    throw new Error(
+      `install target already exists: sources/${manifest.id}.yaml; pass overwrite to replace it`,
+    );
+  }
+
+  const previous = {
+    manifest: existsSync(manifestPath)
+      ? await readFile(manifestPath, "utf8")
+      : null,
+    meta: existsSync(metaPath) ? await readFile(metaPath, "utf8") : null,
   };
+  const entrySha256 = sha256Hex(input.entryContent);
+  const homepage = (parsed.data.metadata as { homepage?: unknown }).homepage;
+  const meta = {
+    kind: "source",
+    id: name,
+    name,
+    version: parsed.data.metadata.version,
+    entry: manifest.entry,
+    license: manifest.license,
+    repo: input.repo,
+    commit: input.commit,
+    manifestSha256: entrySha256,
+    installedAt: new Date().toISOString(),
+    trust: input.trust.level,
+    trustDetail: input.trust,
+    permissions: { network: true, filesystem: "readonly", code: false },
+    files: { [manifest.entry]: entrySha256 },
+    manifest: {
+      id: name,
+      name,
+      version: parsed.data.metadata.version,
+      kind: "source",
+      description: manifest.description,
+    },
+    ...(typeof homepage === "string" ? { homepage } : {}),
+    secretScan: "passed",
+  };
+
+  try {
+    await writeFileAtomic(manifestPath, input.entryContent);
+    await writeJsonAtomic(metaPath, meta);
+  } catch (error) {
+    await restoreFile(manifestPath, previous.manifest);
+    await restoreFile(metaPath, previous.meta);
+    throw error;
+  }
+
+  return [manifest.entry];
+}
+
+async function installPipelineTarget(input: {
+  target: WorkshopInstallTarget;
+  manifest: WorkshopManifest;
+  entryContent: string;
+  repo: string;
+  commit: string;
+  manifestSha256: string;
+  trust: WorkshopTrust;
+  overwrite: boolean;
+}): Promise<string[]> {
+  const { target, manifest } = input;
+  const host = target.root;
+  const hostPack = await loadPack(host);
+  if (!hostPack.ok) {
+    throw new Error(
+      `pipeline host pack is invalid: ${hostPack.errors.join("; ")}`,
+    );
+  }
+
+  const parsed = pipelineSpecSchema.safeParse(parse(input.entryContent));
+  if (!parsed.success) {
+    throw new Error(
+      `installed pipeline is invalid: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
+  }
+  if (parsed.data.id !== manifest.id) {
+    throw new Error(
+      `pipeline id "${parsed.data.id}" does not match manifest id "${manifest.id}"`,
+    );
+  }
+
+  const workflow = pipelineWorkflow(parsed.data);
+  const workflowPath = target.dir;
+  const relative = path.relative(host, workflowPath).split(path.sep).join("/");
+  if (existsSync(workflowPath) && !input.overwrite) {
+    throw new Error(
+      `install target already exists: ${relative}; pass overwrite to replace it`,
+    );
+  }
+
+  const teamPath = path.join(host, "team.yaml");
+  const recordPath = path.join(
+    path.dirname(workflowPath),
+    `${manifest.id}.workshop.json`,
+  );
+  const previous = {
+    workflow: existsSync(workflowPath)
+      ? await readFile(workflowPath, "utf8")
+      : null,
+    team: await readFile(teamPath, "utf8"),
+    record: existsSync(recordPath) ? await readFile(recordPath, "utf8") : null,
+  };
+
+  try {
+    await writeFileAtomic(workflowPath, stringify(workflow));
+    const team = (parse(previous.team) ?? {}) as Record<string, unknown>;
+    const workflows = Array.isArray(team.workflows)
+      ? ([...team.workflows] as unknown[])
+      : [];
+    if (!workflows.includes(relative)) {
+      workflows.push(relative);
+    }
+    await writeFileAtomic(teamPath, stringify({ ...team, workflows }));
+    await writeJsonAtomic(recordPath, {
+      ...installRecord({
+        manifest,
+        repo: input.repo,
+        commit: input.commit,
+        manifestSha256: input.manifestSha256,
+        files: { [relative]: sha256Hex(stringify(workflow)) },
+        trust: input.trust,
+      }),
+      target: relative,
+    });
+
+    const loaded = await loadPack(host);
+    if (!loaded.ok) {
+      throw new Error(
+        `pipeline could not be registered in the host pack: ${loaded.errors.join("; ")}`,
+      );
+    }
+  } catch (error) {
+    await restoreFile(workflowPath, previous.workflow);
+    await restoreFile(teamPath, previous.team);
+    await restoreFile(recordPath, previous.record);
+    throw error;
+  }
+
+  return [relative];
+}
+
+async function restoreFile(
+  file: string,
+  previous: string | null,
+): Promise<void> {
+  if (previous === null) {
+    await rm(file, { force: true }).catch(() => undefined);
+    return;
+  }
+  await writeFileAtomic(file, previous).catch(() => undefined);
+}
+
+/**
+ * Project a pipeline graph onto the host pack's workflow format (plan 88
+ * §3.4: pipelines land in the host pack's `workflows/` and run there).
+ *
+ * Pack stages have no native `human` type, so human nodes become a gate stage
+ * (`type: workflow` plus a required approval) and subflow nodes become
+ * `type: workflow` stages. Agent nodes bind their component id, falling back
+ * to the node id so a host pack's same-named agent is used.
+ */
+function pipelineWorkflow(spec: PipelineSpec): WorkflowDefinition {
+  const order = orderPipelineNodes(spec);
+  const outputsById = new Map(
+    spec.graph.nodes.map((node) => [node.id, node.outputs] as const),
+  );
+  const upstream = new Map<string, string[]>();
+  for (const edge of spec.graph.edges) {
+    upstream.set(edge.to, [...(upstream.get(edge.to) ?? []), edge.from]);
+  }
+  const bindings = new Map(
+    spec.bindings.map((binding) => [binding.node, binding.component] as const),
+  );
+
+  const stages = order.map((node) => {
+    const parents = upstream.get(node.id) ?? [];
+    const inputs = node.inputs.length
+      ? node.inputs
+      : parents.flatMap((parent) => outputsById.get(parent) ?? []);
+    const outputs = node.outputs.length ? node.outputs : ["result"];
+    const stage: Record<string, unknown> = {
+      id: node.id,
+      inputs: inputs.length ? inputs : ["task"],
+      outputs,
+    };
+
+    if (node.type === "agent") {
+      stage.type = "agent";
+      const ref = bindings.get(node.id) ?? node.component;
+      stage.agent = ref?.kind === "agent" ? ref.id : node.id;
+    } else if (node.type === "coder") {
+      stage.type = "coder";
+      stage.coder = "dsh";
+    } else if (node.type === "human") {
+      stage.type = "workflow";
+      stage.approval = node.approval ?? {
+        mode: "required",
+        position: "before",
+        riskClass: "medium",
+        ttl: "7d",
+      };
+    } else {
+      stage.type = "workflow";
+    }
+
+    if (node.gate) {
+      stage.gate = node.gate;
+    }
+    if (node.type !== "human" && node.approval) {
+      stage.approval = node.approval;
+    }
+    if (node.position) {
+      stage.position = node.position;
+    }
+    if (parents.length === 1) {
+      stage.inputFrom = parents[0];
+    } else if (parents.length > 1) {
+      stage.inputsFrom = parents;
+    }
+    return stage;
+  });
+
+  return workflowDefinitionSchema.parse({
+    id: spec.id,
+    version: spec.version,
+    trigger: { event: "task.received" },
+    stages,
+    ...(spec.delivery ? { delivery: spec.delivery } : {}),
+  });
+}
+
+/** Stable topological order; pipelines are acyclic by contract. */
+function orderPipelineNodes(spec: PipelineSpec): PipelineNode[] {
+  const nodes = spec.graph.nodes;
+  const indegree = new Map<string, number>(nodes.map((node) => [node.id, 0]));
+  const children = new Map<string, string[]>();
+  for (const edge of spec.graph.edges) {
+    indegree.set(edge.to, (indegree.get(edge.to) ?? 0) + 1);
+    children.set(edge.from, [...(children.get(edge.from) ?? []), edge.to]);
+  }
+  const byId = new Map(nodes.map((node) => [node.id, node] as const));
+  const queue = nodes.filter((node) => (indegree.get(node.id) ?? 0) === 0);
+  const ordered: PipelineNode[] = [];
+  while (queue.length > 0) {
+    const node = queue.shift() as PipelineNode;
+    ordered.push(node);
+    for (const child of children.get(node.id) ?? []) {
+      const remaining = (indegree.get(child) ?? 0) - 1;
+      indegree.set(child, remaining);
+      if (remaining === 0) {
+        const next = byId.get(child);
+        if (next) {
+          queue.push(next);
+        }
+      }
+    }
+  }
+  if (ordered.length !== nodes.length) {
+    throw new Error("pipeline graph contains a cycle");
+  }
+  return ordered;
 }
 
 export async function listInstalledWorkshop(

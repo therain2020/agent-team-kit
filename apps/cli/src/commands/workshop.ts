@@ -56,9 +56,16 @@ export function registerWorkshop(program: Command): void {
     .command("install <repo>")
     .description("Install a workshop item at a pinned commit")
     .option("--ref <ref>", "commit or branch")
+    .option("--packs-root <dir>", "pack library (default: ./packs)")
+    .option("--sources-root <dir>", "source library (default: ./sources)")
+    .option("--templates-root <dir>", "template library (default: ./templates)")
     .option(
-      "--target <dir>",
-      "workshop root for non-pack items (default: ./workshop); pack items install into ./packs",
+      "--components-root <dir>",
+      "component library (default: ./components)",
+    )
+    .option(
+      "--host-pack <dir>",
+      "host pack for kind pipeline (writes <pack>/workflows/<id>.yaml)",
     )
     .option("--overwrite", "replace an existing install target", false)
     .option("--yes", "accept third-party content", false)
@@ -83,7 +90,11 @@ export function registerWorkshop(program: Command): void {
         repo: string,
         options: {
           ref?: string;
-          target?: string;
+          packsRoot?: string;
+          sourcesRoot?: string;
+          templatesRoot?: string;
+          componentsRoot?: string;
+          hostPack?: string;
           overwrite?: boolean;
           yes: boolean;
           acceptUnsigned: boolean;
@@ -108,7 +119,11 @@ export function registerWorkshop(program: Command): void {
           const installed = await installWorkshop({
             repo,
             ref: options.ref,
-            root: options.target,
+            packsRoot: options.packsRoot,
+            sourcesRoot: options.sourcesRoot,
+            templatesRoot: options.templatesRoot,
+            componentsRoot: options.componentsRoot,
+            hostPack: options.hostPack,
             overwrite: options.overwrite === true,
             acceptThirdParty: true,
             acceptUnsigned: options.acceptUnsigned,

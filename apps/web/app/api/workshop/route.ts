@@ -1,7 +1,10 @@
 import { sameOriginError } from "@/lib/http";
+import { resolvePackDir } from "@/lib/paths";
 import {
+  getWorkshopComponentsRoot,
   getWorkshopPacksRoot,
-  getWorkshopRoot,
+  getWorkshopSourcesRoot,
+  getWorkshopTemplatesRoot,
   loadInstalledWorkshop,
   searchWorkshopMarket,
 } from "@/lib/workshop";
@@ -41,6 +44,7 @@ export async function POST(request: Request) {
     acceptUnsigned?: unknown;
     acceptHighRisk?: unknown;
     overwrite?: unknown;
+    hostPack?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -57,13 +61,34 @@ export async function POST(request: Request) {
     );
   }
 
+  let hostPack: string | undefined;
+  if (body.hostPack !== undefined) {
+    if (typeof body.hostPack !== "string") {
+      return NextResponse.json(
+        { error: "hostPack must be a pack name" },
+        { status: 400 },
+      );
+    }
+    const resolved = resolvePackDir(body.hostPack);
+    if (!resolved) {
+      return NextResponse.json(
+        { error: `unknown pack: ${body.hostPack}` },
+        { status: 400 },
+      );
+    }
+    hostPack = resolved;
+  }
+
   try {
     const installed = await installWorkshop({
       repo: body.repo,
       ref: typeof body.ref === "string" ? body.ref : undefined,
       token: process.env.GITHUB_TOKEN,
-      root: getWorkshopRoot(),
       packsRoot: getWorkshopPacksRoot(),
+      sourcesRoot: getWorkshopSourcesRoot(),
+      templatesRoot: getWorkshopTemplatesRoot(),
+      componentsRoot: getWorkshopComponentsRoot(),
+      hostPack,
       overwrite: body.overwrite === true,
       acceptThirdParty: true,
       allowCode: body.allowCode === true,

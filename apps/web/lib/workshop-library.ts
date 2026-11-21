@@ -73,10 +73,15 @@ export function matchesAssetKind(
   return manifestAssetKind(manifestKind) === wanted;
 }
 
-/** Where an install of this partition lands, e.g. `packs/radar`. */
+/**
+ * Where an install of this partition lands, e.g. `packs/radar`. `manifestKind`
+ * and `host` refine component and pipeline paths (plan 88 §3.4).
+ */
 export function installDestination(
   kind: WorkshopAssetKind,
   id: string,
+  manifestKind?: string,
+  host?: string,
 ): string {
   switch (kind) {
     case "pack":
@@ -84,9 +89,9 @@ export function installDestination(
     case "source":
       return `sources/${id}`;
     case "component":
-      return `components/<kind>/${id}`;
+      return `components/${manifestKind ?? "<kind>"}/${id}`;
     case "pipeline":
-      return `packs/<host>/workflows/${id}.yaml`;
+      return `packs/${host || "<host>"}/workflows/${id}.yaml`;
     case "template":
       return `templates/${id}`;
   }
