@@ -58,6 +58,7 @@ export async function main(argv: string[]): Promise<number> {
     "supervisorStatePath",
     argValue(argv, "--supervisor-state"),
   );
+  assignPath(options, "tthwPath", argValue(argv, "--tthw"));
   const bundle = await collectEvidence(options);
   const report = buildGateReport(bundle);
 
@@ -134,6 +135,7 @@ Options:
   --sources <dir>           Installed sources root (default: <repo>/sources)
   --reactions <file>        Reaction samples JSONL (default: <signals>/reactions.jsonl)
   --supervisor-state <file> kit up supervisor state (default: <repo>/.tmp/supervisor/state.json)
+  --tthw <file>             zero-config TTHW ledger (default: <home>/cold-start-tthw.json)
   --days <n>                Window days, 1-90 (default: ${DEFAULT_WINDOW_DAYS})
   --now <iso>               Window end timestamp (default: now; use for replay)
   --json                    Print the report as JSON
@@ -151,7 +153,8 @@ type PathOptionKey =
   | "signalsRoot"
   | "sourcesRoot"
   | "reactionsPath"
-  | "supervisorStatePath";
+  | "supervisorStatePath"
+  | "tthwPath";
 
 function assignPath(
   options: CollectOptions,

@@ -1,7 +1,9 @@
 import { decideApproval } from "@/lib/decisions";
 import { MAX_BATCH_SIZE, validateBatchInput } from "@/lib/factory";
+import { recordGateEvidenceSafely } from "@/lib/gate-evidence";
 import { sameOriginError } from "@/lib/http";
 import { ensureStoreSchema, getStore } from "@/lib/store";
+import { GATE_EVIDENCE_KIND } from "@kit/activity";
 import { newId } from "@kit/core";
 import { findApprovalRequest } from "@kit/manager";
 import { NextResponse } from "next/server";
@@ -209,6 +211,28 @@ export async function POST(request: Request) {
   }
 
   const succeeded = results.filter((result) => result.ok).length;
+  // Pixel-factory evidence (85 §5.2 S11): the batch path is the `/factory`
+  // release lane. Recorded after the loop so per-item CAS failures are counted
+  // rather than inflated; a zero-target batch records nothing.
+  if (targets.length > 0) {
+    await recordGateEvidenceSafely({
+      runId: targets.length === 1 ? targets[0]?.runId : undefined,
+      agentId: "operator",
+      kind:
+        decision === "approve"
+          ? GATE_EVIDENCE_KIND.factoryBatchApproved
+          : GATE_EVIDENCE_KIND.factoryBatchRejected,
+      status: succeeded === results.length ? "completed" : "partial",
+      summary: `batch ${decision} via factory: ${succeeded}/${results.length} item(s)`,
+      payload: {
+        batchId,
+        decision,
+        requested: targets.length,
+        succeeded,
+        failed: results.length - succeeded,
+      },
+    });
+  }
   return NextResponse.json({
     batchId,
     decision,

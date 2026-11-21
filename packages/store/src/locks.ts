@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { FileLockTimeoutError, acquireFileLock } from "@kit/core/fs-lock";
 import type { SqlClient } from "./db";
+import { appendOp } from "./op-log";
 
 /**
  * Run `fn` while holding a Postgres advisory lock. Returns null when the lock
@@ -47,7 +48,16 @@ export async function withStoreLock<T>(
   fn: () => Promise<T>,
 ): Promise<T | null> {
   if (store.driver === "postgres") {
-    return withAdvisoryLock(store.sql, key, fn);
+    let acquired = false;
+    const result = await withAdvisoryLock(store.sql, key, async () => {
+      acquired = true;
+      await recordLockOp(store, key, "lock.acquired", "postgres");
+      return fn();
+    });
+    if (!acquired) {
+      await recordLockOp(store, key, "lock.contended", "postgres");
+    }
+    return result;
   }
 
   const digest = createHash("sha256").update(key).digest("hex").slice(0, 16);
@@ -65,14 +75,49 @@ export async function withStoreLock<T>(
       pollMs: 50,
     });
     try {
+      await recordLockOp(store, key, "lock.acquired", "sqlite");
       return await fn();
     } finally {
       handle.release();
     }
   } catch (error) {
     if (error instanceof FileLockTimeoutError) {
+      await recordLockOp(store, key, "lock.contended", "sqlite");
       return null;
     }
     throw error;
+  }
+}
+
+/**
+ * Appends single-writer lock evidence to the unified op log (85 §5.2 S9).
+ * Audit must never break the critical section, so failures are logged only.
+ * The gate collector reads `lock.*` ops as concurrency/serialization evidence.
+ */
+async function recordLockOp(
+  store: LockableStore,
+  key: string,
+  op: "lock.acquired" | "lock.contended",
+  driver: "postgres" | "sqlite",
+): Promise<void> {
+  try {
+    await appendOp(
+      { sql: store.sql },
+      {
+        workspaceId: "default",
+        entityKind: "store_lock",
+        entityId: key.slice(0, 200),
+        op,
+        actor: `store:${process.pid}`,
+        origin: "system",
+        payload: { key: key.slice(0, 200), driver },
+      },
+    );
+  } catch (error) {
+    console.error(
+      `[store] failed to audit ${op} for ${key}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 }

@@ -1,3 +1,4 @@
+import { recordGateEvidenceSafely } from "@/lib/gate-evidence";
 import { sameOriginError } from "@/lib/http";
 import {
   getWorkshopPacksRoot,
@@ -5,6 +6,7 @@ import {
   loadInstalledWorkshop,
   searchWorkshopMarket,
 } from "@/lib/workshop";
+import { GATE_EVIDENCE_KIND } from "@kit/activity";
 import { installWorkshop } from "@kit/workshop";
 import { NextResponse } from "next/server";
 
@@ -69,6 +71,22 @@ export async function POST(request: Request) {
       allowCode: body.allowCode === true,
       acceptUnsigned: body.acceptUnsigned === true,
       acceptHighRisk: body.acceptHighRisk === true,
+    });
+    // Workshop evidence (85 §5.2 S10): an asset was installed from the market
+    // into the local library. Best-effort audit only.
+    await recordGateEvidenceSafely({
+      agentId: "operator",
+      kind: GATE_EVIDENCE_KIND.workshopComponentInstalled,
+      status: "completed",
+      summary: `installed ${installed.manifest.kind} ${installed.manifest.id}@${installed.manifest.version} from ${installed.repo}`,
+      payload: {
+        repo: installed.repo,
+        commit: installed.commit,
+        kind: installed.manifest.kind,
+        id: installed.manifest.id,
+        version: installed.manifest.version,
+        scope: installed.scope,
+      },
     });
     return NextResponse.json(
       {

@@ -1,5 +1,7 @@
+import { recordGateEvidenceSafely } from "@/lib/gate-evidence";
 import { sameOriginError } from "@/lib/http";
 import { getComponentsRoot, resolvePackDir } from "@/lib/paths";
+import { GATE_EVIDENCE_KIND } from "@kit/activity";
 import { COMPONENT_KINDS, type ComponentKind } from "@kit/core";
 import {
   AssemblyError,
@@ -7,6 +9,7 @@ import {
   assembleComponents,
 } from "@kit/pack";
 import { workshopComponentLibrary } from "@kit/workshop";
+import path from "node:path";
 import { NextResponse } from "next/server";
 
 /**
@@ -69,6 +72,18 @@ export async function POST(
       },
       workshopComponentLibrary(getComponentsRoot()),
     );
+    // Workshop evidence (85 §5.2 S10): components were bound into a pack from
+    // the local library and recorded in the lockfile. Best-effort audit only.
+    await recordGateEvidenceSafely({
+      agentId: "operator",
+      kind: GATE_EVIDENCE_KIND.workshopComponentAssembled,
+      status: "completed",
+      summary: `assembled ${components.length} component(s) into ${path.basename(packDir)}`,
+      payload: {
+        pack: path.basename(packDir),
+        components,
+      },
+    });
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     if (error instanceof AssemblyError) {
