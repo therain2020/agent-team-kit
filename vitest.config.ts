@@ -18,6 +18,10 @@ export default defineConfig({
         replacement: path.join(root, "packages/core/src/index.ts"),
       },
       {
+        find: /^@kit\/change\/rollback$/,
+        replacement: path.join(root, "packages/change/src/rollback.ts"),
+      },
+      {
         find: /^@kit\/core\/fs-lock$/,
         replacement: path.join(root, "packages/core/src/fs-lock.ts"),
       },

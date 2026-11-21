@@ -96,6 +96,8 @@
   checklist and evidence flow for the first 7 days.
 - [gate-report.md](./gate-report.md) — rerunnable 1.0 gate evidence report,
   local sources and how to read GAP entries.
+- [rollback-drill.md](./rollback-drill.md) — code and instruction rollback
+  drill, measured RTO and the G6-compatible evidence record.
 - [compose-gate.md](./compose-gate.md) — C-0 check: new input surfaces declare
   a compose kind, deterministic fallback and review step.
 - `packs/self-improve/` — Cyber and UX squads for this repo.
