@@ -17,7 +17,9 @@ export type ApprovalKind =
   | "stage_before"
   | "stage_after"
   | "gate_failure"
-  | "budget_exceeded";
+  | "budget_exceeded"
+  /** Evolution promotion approval (70 §3.1); roles live in `requiredRole`. */
+  | "promotion";
 
 export const APPROVAL_STATUSES: readonly ApprovalStatus[] = [
   "queued",
@@ -45,6 +47,11 @@ export interface ApprovalRecord {
   assignee: string | null;
   assignedAt: string | null;
   /**
+   * Subject the approval is keyed to when it is not a run stage (for example
+   * `promotion:<variantId>:<target>`). Null for stage approvals.
+   */
+  subjectRef: string | null;
+  /**
    * ChangeProposal substrate when this request guards a pipeline change
    * (85.3.5.5); null for stage/run approvals.
    */
@@ -71,6 +78,8 @@ export interface EnqueueApprovalInput {
   requester?: string;
   requiredRole?: string | null;
   payloadRef?: string | null;
+  /** Non-run subject key (evolution promotions use `promotion:<id>`). */
+  subjectRef?: string | null;
   slaDueAt?: string | null;
   expiresAt?: string | null;
   /** ChangeProposal substrate (code/prompt/workflow/skill), when applicable. */
@@ -85,6 +94,10 @@ export interface ApprovalQuery {
   status?: ApprovalStatus;
   /** Narrow to one job/run; the job hub lists every approval of a job. */
   runId?: string;
+  /** Narrow to one approval kind (e.g. `promotion`). */
+  kind?: string;
+  /** Narrow to one non-run subject (e.g. `promotion:<variantId>`). */
+  subjectRef?: string;
   /** Narrow to one change proposal. */
   changeId?: string;
   /**
@@ -148,6 +161,7 @@ interface ApprovalRow {
   decision_reason: string | null;
   assignee: string | null;
   assigned_at: string | Date | null;
+  subject_ref: string | null;
   substrate: string | null;
   change_id: string | null;
   version: number | string | bigint;
@@ -185,16 +199,17 @@ export class ApprovalService {
     await this.store.sql`
       INSERT INTO approvals (
         approval_id, workspace_id, run_id, stage_id, kind, status, requester,
-        required_role, payload_ref, sla_due_at, expires_at, decision_by,
-        decision_at, decision_reason, substrate, change_id, version, created_at
+        required_role, payload_ref, subject_ref, sla_due_at, expires_at,
+        decision_by, decision_at, decision_reason, substrate, change_id,
+        version, created_at
       ) VALUES (
         ${input.approvalId}, ${input.workspaceId}, ${input.runId},
         ${input.stageId ?? null}, ${input.kind}, ${"queued"},
         ${input.requester ?? "manager"}, ${input.requiredRole ?? null},
-        ${input.payloadRef ?? null}, ${input.slaDueAt ?? null},
-        ${input.expiresAt ?? null}, ${null}, ${null}, ${null},
-        ${input.substrate ?? null}, ${input.changeId ?? null}, ${1},
-        ${createdAt}
+        ${input.payloadRef ?? null}, ${input.subjectRef ?? null},
+        ${input.slaDueAt ?? null}, ${input.expiresAt ?? null}, ${null},
+        ${null}, ${null}, ${input.substrate ?? null},
+        ${input.changeId ?? null}, ${1}, ${createdAt}
       )
       ON CONFLICT (approval_id) DO NOTHING
     `;
@@ -248,6 +263,12 @@ export class ApprovalService {
     const runIdFilter = query.runId
       ? this.store.sql`AND a.run_id = ${query.runId}`
       : this.store.sql``;
+    const kindFilter = query.kind
+      ? this.store.sql`AND a.kind = ${query.kind}`
+      : this.store.sql``;
+    const subjectFilter = query.subjectRef
+      ? this.store.sql`AND a.subject_ref = ${query.subjectRef}`
+      : this.store.sql``;
     const changeIdFilter = query.changeId
       ? this.store.sql`AND a.change_id = ${query.changeId}`
       : this.store.sql``;
@@ -275,6 +296,8 @@ export class ApprovalService {
           ${workspaceFilter}
           ${statusFilter}
           ${runIdFilter}
+          ${kindFilter}
+          ${subjectFilter}
           ${changeIdFilter}
           ${runFilter}
           ${cursorFilter}
@@ -297,6 +320,8 @@ export class ApprovalService {
           ${workspaceFilter}
           ${statusFilter}
           ${runIdFilter}
+          ${kindFilter}
+          ${subjectFilter}
           ${changeIdFilter}
           ${runFilter}
           ${cursorFilter}
@@ -491,6 +516,7 @@ function mapRow(row: ApprovalRow): ApprovalRecord {
     decisionReason: row.decision_reason,
     assignee: row.assignee ?? null,
     assignedAt: toIso(row.assigned_at),
+    subjectRef: row.subject_ref ?? null,
     substrate: row.substrate ?? null,
     changeId: row.change_id ?? null,
     version: Number(row.version),

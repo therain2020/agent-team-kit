@@ -305,8 +305,18 @@ CREATE TABLE IF NOT EXISTS evolution_decisions (
   trigger_kind TEXT NOT NULL,
   reason TEXT NOT NULL,
   actor TEXT NOT NULL,
+  variant_kind TEXT,
+  subject_ref TEXT,
+  exemption_ref TEXT,
   created_at TIMESTAMPTZ NOT NULL
 );
+
+ALTER TABLE evolution_decisions
+  ADD COLUMN IF NOT EXISTS variant_kind TEXT;
+ALTER TABLE evolution_decisions
+  ADD COLUMN IF NOT EXISTS subject_ref TEXT;
+ALTER TABLE evolution_decisions
+  ADD COLUMN IF NOT EXISTS exemption_ref TEXT;
 
 CREATE TABLE IF NOT EXISTS evolution_meta (
   workspace_id TEXT NOT NULL,
@@ -787,6 +797,7 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_reason TEXT,
   assignee TEXT,
   assigned_at TIMESTAMPTZ,
+  subject_ref TEXT,
   substrate TEXT,
   change_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
@@ -799,8 +810,11 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS subject_ref TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS substrate TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS change_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_approvals_subject
+  ON approvals(workspace_id, subject_ref, status);
 CREATE INDEX IF NOT EXISTS idx_approvals_change
   ON approvals(change_id, created_at DESC);
 
@@ -1426,8 +1440,15 @@ CREATE TABLE IF NOT EXISTS evolution_decisions (
   trigger_kind TEXT NOT NULL,
   reason TEXT NOT NULL,
   actor TEXT NOT NULL,
+  variant_kind TEXT,
+  subject_ref TEXT,
+  exemption_ref TEXT,
   created_at TEXT NOT NULL
 );
+
+ALTER TABLE evolution_decisions ADD COLUMN variant_kind TEXT;
+ALTER TABLE evolution_decisions ADD COLUMN subject_ref TEXT;
+ALTER TABLE evolution_decisions ADD COLUMN exemption_ref TEXT;
 
 CREATE TABLE IF NOT EXISTS evolution_meta (
   workspace_id TEXT NOT NULL,
@@ -1918,6 +1939,7 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_reason TEXT,
   assignee TEXT,
   assigned_at TEXT,
+  subject_ref TEXT,
   substrate TEXT,
   change_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
@@ -1930,8 +1952,11 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN assignee TEXT;
 ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
+ALTER TABLE approvals ADD COLUMN subject_ref TEXT;
 ALTER TABLE approvals ADD COLUMN substrate TEXT;
 ALTER TABLE approvals ADD COLUMN change_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_approvals_subject
+  ON approvals(workspace_id, subject_ref, status);
 CREATE INDEX IF NOT EXISTS idx_approvals_change
   ON approvals(change_id, created_at DESC);
 

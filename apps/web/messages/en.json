@@ -913,7 +913,8 @@
       "traffic_change": "traffic change",
       "evaluate": "evaluate",
       "rollback": "rollback",
-      "promote": "promote"
+      "promote": "promote",
+      "promotion_gate": "promotion gate"
     },
     "trigger": {
       "manual": "manual",
@@ -1051,6 +1052,15 @@
     "reasonPlaceholder": "manual rollback from console",
     "variant": "Variant",
     "targetPack": "Target pack",
+    "variantKind": "Variant kind",
+    "kindOption": {
+      "context": "context (prompts)",
+      "tool": "tool (skills, tools)",
+      "architecture": "architecture (roles, workflows)"
+    },
+    "architectureHint": "Architecture promotions need operator, security and architecture approvals, a non-LIVE validation and the same workspace. Request the approvals, then decide them in the approvals inbox.",
+    "requestApprovals": "Request approvals",
+    "approvalsRequested": "{count} approvals queued.",
     "applyChanges": "Apply changes (otherwise dry run)",
     "typePromote": "Type \"PROMOTE\" to confirm",
     "cancel": "Cancel",
