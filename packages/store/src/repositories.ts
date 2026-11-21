@@ -57,6 +57,7 @@ import {
   runbooks,
   runs,
   stages,
+  triggerRuns,
 } from "./schema";
 import {
   VersionConflictError,
@@ -306,6 +307,59 @@ export interface AutopilotStateStore {
   insertIfMissing(record: AutopilotStateRecord): Promise<void>;
   /** Optimistic update; returns false and leaves the record untouched on a version conflict. */
   update(record: AutopilotStateRecord): Promise<boolean>;
+}
+
+/**
+ * One trigger firing (96 §3.1): `status` is `started`, `existing` (the job
+ * dedupe key was already used) or `failed` (retryable by dedupe key).
+ */
+export interface TriggerRunRecord {
+  triggerRunId: string;
+  workspaceId: string;
+  triggerId: string;
+  /** Trigger kind (`schedule`, `event`, `manual`, `information`). */
+  kind: string;
+  routeId: string;
+  jobKind: string;
+  dedupeKey: string;
+  jobId: string | null;
+  status: string;
+  launchedAt: string;
+  estimateCny: number;
+  payloadRef: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TriggerRunListOptions {
+  triggerId?: string;
+  status?: string;
+  since?: string;
+  limit?: number;
+}
+
+export interface TriggerRunStore {
+  /** Inserts the slot; returns false when `(triggerId, dedupeKey)` exists. */
+  create(record: TriggerRunRecord): Promise<boolean>;
+  get(triggerRunId: string): Promise<TriggerRunRecord | null>;
+  findByDedupeKey(
+    triggerId: string,
+    dedupeKey: string,
+  ): Promise<TriggerRunRecord | null>;
+  list(
+    workspaceId: string,
+    options?: TriggerRunListOptions,
+  ): Promise<TriggerRunRecord[]>;
+  /** Write-back after `startJob`: attaches the job id and terminal status. */
+  finish(
+    triggerRunId: string,
+    jobId: string | null,
+    status: string,
+    estimateCny: number,
+    lastError: string | null,
+    updatedAt: string,
+  ): Promise<boolean>;
 }
 
 export interface ManagerSessionRecord {
@@ -1377,6 +1431,64 @@ export function fromAutopilotRow(
   };
 }
 
+export function toTriggerRunRow(record: TriggerRunRecord) {
+  return {
+    triggerRunId: record.triggerRunId,
+    workspaceId: record.workspaceId,
+    triggerId: record.triggerId,
+    triggerKind: record.kind,
+    routeId: record.routeId,
+    jobKind: record.jobKind,
+    dedupeKey: record.dedupeKey,
+    jobId: record.jobId,
+    status: record.status,
+    launchedAt: record.launchedAt,
+    estimateCny: String(record.estimateCny),
+    payloadRef: record.payloadRef,
+    lastError: record.lastError,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
+interface TriggerRunRowLike {
+  triggerRunId: string;
+  workspaceId: string;
+  triggerId: string;
+  triggerKind: string;
+  routeId: string;
+  jobKind: string;
+  dedupeKey: string;
+  jobId: string | null;
+  status: string;
+  launchedAt: string;
+  estimateCny: string | number;
+  payloadRef: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function fromTriggerRunRow(row: TriggerRunRowLike): TriggerRunRecord {
+  return {
+    triggerRunId: row.triggerRunId,
+    workspaceId: row.workspaceId,
+    triggerId: row.triggerId,
+    kind: row.triggerKind,
+    routeId: row.routeId,
+    jobKind: row.jobKind,
+    dedupeKey: row.dedupeKey,
+    jobId: row.jobId ?? null,
+    status: row.status,
+    launchedAt: row.launchedAt,
+    estimateCny: Number(row.estimateCny ?? 0),
+    payloadRef: row.payloadRef ?? null,
+    lastError: row.lastError ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 export function nextManagerSessionWindow(
   existing: ManagerSessionRecord | null,
   input: {
@@ -1547,6 +1659,91 @@ export class PostgresAutopilotStateStore implements AutopilotStateStore {
     }
     record.version = Number(row.version);
     return true;
+  }
+}
+
+export class PostgresTriggerRunStore implements TriggerRunStore {
+  constructor(private readonly db: Database) {}
+
+  async create(record: TriggerRunRecord): Promise<boolean> {
+    const rows = await this.db
+      .insert(triggerRuns)
+      .values(toTriggerRunRow(record))
+      .onConflictDoNothing()
+      .returning({ triggerRunId: triggerRuns.triggerRunId });
+    return rows.length > 0;
+  }
+
+  async get(triggerRunId: string): Promise<TriggerRunRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(triggerRuns)
+      .where(eq(triggerRuns.triggerRunId, triggerRunId))
+      .limit(1);
+    return row ? fromTriggerRunRow(row) : null;
+  }
+
+  async findByDedupeKey(
+    triggerId: string,
+    dedupeKey: string,
+  ): Promise<TriggerRunRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(triggerRuns)
+      .where(
+        and(
+          eq(triggerRuns.triggerId, triggerId),
+          eq(triggerRuns.dedupeKey, dedupeKey),
+        ),
+      )
+      .limit(1);
+    return row ? fromTriggerRunRow(row) : null;
+  }
+
+  async list(
+    workspaceId: string,
+    options: TriggerRunListOptions = {},
+  ): Promise<TriggerRunRecord[]> {
+    const limit = Math.max(1, Math.min(options.limit ?? 50, 5000));
+    const conditions: SQL[] = [eq(triggerRuns.workspaceId, workspaceId)];
+    if (options.triggerId) {
+      conditions.push(eq(triggerRuns.triggerId, options.triggerId));
+    }
+    if (options.status) {
+      conditions.push(eq(triggerRuns.status, options.status));
+    }
+    if (options.since) {
+      conditions.push(sql`${triggerRuns.launchedAt} >= ${options.since}`);
+    }
+    const rows = await this.db
+      .select()
+      .from(triggerRuns)
+      .where(and(...conditions))
+      .orderBy(desc(triggerRuns.launchedAt))
+      .limit(limit);
+    return rows.map(fromTriggerRunRow);
+  }
+
+  async finish(
+    triggerRunId: string,
+    jobId: string | null,
+    status: string,
+    estimateCny: number,
+    lastError: string | null,
+    updatedAt: string,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(triggerRuns)
+      .set({
+        jobId,
+        status,
+        estimateCny: String(estimateCny),
+        lastError,
+        updatedAt,
+      })
+      .where(eq(triggerRuns.triggerRunId, triggerRunId))
+      .returning({ triggerRunId: triggerRuns.triggerRunId });
+    return rows.length > 0;
   }
 }
 

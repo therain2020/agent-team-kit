@@ -24,6 +24,7 @@
     "@kit/store": "workspace:*",
     "@kit/telemetry": "workspace:*",
     "@kit/tools": "workspace:*",
+    "@kit/trigger": "workspace:*",
     "@kit/workflow": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@temporalio/activity": "^1.15.0",

@@ -131,7 +131,8 @@ describe("runtime canary routing", () => {
     expect(input.origin).toEqual({
       kind: "event",
       triggerId: "tech-radar:flash-radar",
-      triggerRunId: "evt_canary_test",
+      // T3: the origin points at the TriggerRun (one per firing), not the event.
+      triggerRunId: expect.stringMatching(/^trg_/),
     });
     expect(
       input.stages.find((stage) => stage.stageName === "summarize")

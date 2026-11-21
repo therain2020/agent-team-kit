@@ -26,6 +26,7 @@ import {
   PostgresRunStore,
   PostgresRunbookStore,
   PostgresStageStore,
+  PostgresTriggerRunStore,
 } from "./repositories";
 import {
   SqliteArtifactStore,
@@ -43,6 +44,7 @@ import {
   SqliteRunStore,
   SqliteRunbookStore,
   SqliteStageStore,
+  SqliteTriggerRunStore,
 } from "./repositories.sqlite";
 import { createS3Client } from "./s3";
 
@@ -75,6 +77,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
           incidents: new PostgresIncidentStore(handle.db),
           runbooks: new PostgresRunbookStore(handle.db),
           drills: new PostgresDrillStore(handle.db),
+          triggerRuns: new PostgresTriggerRunStore(handle.db),
         }
       : {
           events: new SqliteEventStore(handle.db),
@@ -92,6 +95,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
           incidents: new SqliteIncidentStore(handle.db),
           runbooks: new SqliteRunbookStore(handle.db),
           drills: new SqliteDrillStore(handle.db),
+          triggerRuns: new SqliteTriggerRunStore(handle.db),
         };
 
   const { blobs, artifactStore } = repositories;
