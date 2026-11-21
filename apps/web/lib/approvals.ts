@@ -210,6 +210,8 @@ export async function loadPendingApprovals(
         assignee: item.assignee,
         version: item.version,
         runStatus: item.runStatus,
+        substrate: item.substrate,
+        changeId: item.changeId,
       };
       return toApiApprovalItem(entity, payload);
     }),

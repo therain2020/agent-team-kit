@@ -1,0 +1,35 @@
+version: 1
+actions:
+  - match: tool.repo_list
+    class: A
+  - match: tool.repo_read
+    class: A
+  - match: tool.repo_search
+    class: A
+  - match: tool.repo_diff
+    class: A
+  - match: tool.security_scan_code
+    class: A
+  - match: tool.workspace_diff
+    class: A
+  - match: tool.repo_typecheck
+    class: B
+  - match: tool.repo_test
+    class: B
+  - match: tool.repo_lint
+    class: B
+  - match: tool.repo_build
+    class: B
+  - match: tool.workspace_write
+    class: B
+  - match: tool.http_fetch
+    class: B
+  - match: tool.browser_inspect
+    class: B
+  - match: tool.deliver_external
+    class: C
+    approval:
+      ttl: 2h
+      scope: per_item
+  - match: tool.delete
+    class: D
