@@ -101,6 +101,9 @@ function eventRecord(
       risk: 0.1,
       confidence: 0.8,
       reasons: ["test signal"],
+      model: "heuristic",
+      profileVersion: 1,
+      flags: [],
     },
   });
   return recordFrom(
