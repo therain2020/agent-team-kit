@@ -10,6 +10,7 @@
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",
     "@kit/engine": "workspace:*",
+    "@kit/evolution": "workspace:*",
     "@kit/iteration": "workspace:*",
     "@kit/model": "workspace:*",
     "@kit/ops": "workspace:*",

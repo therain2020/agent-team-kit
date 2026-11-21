@@ -6,7 +6,7 @@ import type {
 } from "@kit/core";
 import type { PackRunVariant } from "@kit/workflow";
 
-export type JobKind = "packRun" | "iteration";
+export type JobKind = "packRun" | "iteration" | "evolution";
 /** Origins a caller may request; `unknown` is reserved for historical rows. */
 export type JobOriginKind = Exclude<RunOriginKind, "unknown">;
 /** @deprecated Use `JobOriginKind`; kept for existing string call sites. */
@@ -45,6 +45,23 @@ export function normalizeJobOrigin(origin?: StartJobOrigin): JobOriginRecord {
 
 export type JobRunMode = "DRY_RUN" | "LIVE";
 export type JobApplyMode = "none" | "low" | "low-medium";
+
+/**
+ * Evolution job options (96 §5.3). The job shell only starts the existing
+ * 70/85.3.5 cycle: proposals, scoring, promotion and rollback stay in
+ * `@kit/evolution` and its ChangeProposal pipeline (#82~#90).
+ */
+export interface EvolutionJobOptions {
+  evidenceFile?: string;
+  agentId?: string;
+  autoApply?: boolean;
+  budgetCny?: number;
+  /** Explore even when no failure signals exist (operator-triggered cycles). */
+  force?: boolean;
+  /** Overrides for tests and variant labs; defaults derive from the pack. */
+  variantsRoot?: string;
+  cyclesRoot?: string;
+}
 
 export interface MissionInput {
   manager?: string;
@@ -98,6 +115,8 @@ export interface StartJobInput {
   /** Queue priority (60 §2); derived from the triggering event when absent. */
   priority?: PriorityClass;
   mission?: MissionInput;
+  /** Required when `kind` is `evolution`. */
+  evolution?: EvolutionJobOptions;
 }
 
 export interface StartJobResult {

@@ -808,6 +808,27 @@ CREATE INDEX IF NOT EXISTS idx_approvals_inbox
 CREATE INDEX IF NOT EXISTS idx_approvals_run
   ON approvals(run_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS manager_decisions (
+  decision_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  request_id TEXT,
+  option TEXT NOT NULL,
+  note TEXT NOT NULL,
+  rationale TEXT,
+  decided_by TEXT NOT NULL,
+  policy_id TEXT,
+  scope TEXT,
+  trigger_id TEXT,
+  batch_id TEXT,
+  risk_class TEXT,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_manager_decisions_run
+  ON manager_decisions(run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_manager_decisions_policy
+  ON manager_decisions(workspace_id, policy_id, created_at DESC);
+
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS subject_ref TEXT;
@@ -1949,6 +1970,27 @@ CREATE INDEX IF NOT EXISTS idx_approvals_inbox
   ON approvals(workspace_id, status, sla_due_at);
 CREATE INDEX IF NOT EXISTS idx_approvals_run
   ON approvals(run_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS manager_decisions (
+  decision_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  request_id TEXT,
+  option TEXT NOT NULL,
+  note TEXT NOT NULL,
+  rationale TEXT,
+  decided_by TEXT NOT NULL,
+  policy_id TEXT,
+  scope TEXT,
+  trigger_id TEXT,
+  batch_id TEXT,
+  risk_class TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_manager_decisions_run
+  ON manager_decisions(run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_manager_decisions_policy
+  ON manager_decisions(workspace_id, policy_id, created_at DESC);
 
 ALTER TABLE approvals ADD COLUMN assignee TEXT;
 ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
