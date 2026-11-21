@@ -20,6 +20,11 @@ const STATUS_STYLE: Record<
     dot: "bg-amber-400",
     pulse: true,
   },
+  polling: {
+    text: "border-sky-500/30 bg-sky-500/10 text-sky-200",
+    dot: "bg-sky-400",
+    pulse: true,
+  },
   offline: {
     text: "border-red-500/30 bg-red-500/10 text-red-200",
     dot: "bg-red-400",
@@ -39,7 +44,7 @@ export function WorldStatus({
   className?: string;
   hideWhenLive?: boolean;
 }) {
-  const { status, lastUpdatedAt } = useWorld();
+  const { status, lastUpdatedAt, degraded } = useWorld();
   const t = useTranslations("world");
   const locale = useLocale();
   const now = useNow();
@@ -75,6 +80,14 @@ export function WorldStatus({
         aria-hidden="true"
       />
       <span aria-live="polite">{t(status)}</span>
+      {degraded ? (
+        <span
+          className="border border-amber-500/40 px-1 text-[9px] uppercase"
+          title={t("degradedHint")}
+        >
+          {t("degraded")}
+        </span>
+      ) : null}
       {updated ? (
         <span className="text-current/70">
           · {t("lastUpdated", { when: updated })}
