@@ -17,7 +17,7 @@ import {
   type AgentRole,
   type ComponentKind,
   type PipelineSpec,
-  type WorkflowStage,
+  type WorkflowDefinition,
   agentRoleSchema,
   pipelineSpecSchema,
   workflowDefinitionSchema,
@@ -27,6 +27,7 @@ import {
   type ComponentLibrary,
   type DraftStage,
   type LoadResult,
+  type LoadedPack,
   assembleComponents,
   inferAgentRole,
   loadPack,
@@ -70,6 +71,7 @@ const DEFAULT_AGENT_MODEL = "deepseek-flash";
 const DEFAULT_MANAGER_MODEL = "deepseek-pro";
 
 type LoadedPackOk = Extract<LoadResult, { ok: true }>;
+type WorkflowStage = WorkflowDefinition["stages"][number];
 
 export type ManufactureAssetKind =
   | "agent"
@@ -274,6 +276,22 @@ export interface ManufactureDeps {
   library?: ComponentLibrary;
 }
 
+/**
+ * `ManufactureAgentDraft.type` is a union ("agent" | "manager"), so a plain
+ * `draft.type === "agent" || ...` check leaves the member in the residual
+ * union (TypeScript only removes a member for unit-typed discriminants). A
+ * user-defined guard keeps the later branches correctly narrowed.
+ */
+function isAgentDraft(draft: ManufactureDraft): draft is ManufactureAgentDraft {
+  return draft.type === "agent" || draft.type === "manager";
+}
+
+function isComponentDraft(
+  draft: ManufactureDraft,
+): draft is ManufactureComponentDraft {
+  return draft.type === "component";
+}
+
 export class ManufactureError extends JobError {
   readonly issues: ManufactureIssue[];
 
@@ -329,7 +347,7 @@ export async function draftManufacture(
 
   applyAgentFields(result.draft, input.agentFields);
   const issues = await validateDraft(packDir, loaded, result.draft);
-  if (result.draft.type === "component" && input.availableComponents) {
+  if (isComponentDraft(result.draft) && input.availableComponents) {
     issues.push(...missingComponents(result.draft, input.availableComponents));
   }
   const risk = assessRisk(result.draft, loaded);
@@ -858,11 +876,11 @@ Rules:
 
 export async function validateDraft(
   packDir: string,
-  loaded: LoadedPackOk,
+  loaded: LoadedPack,
   draft: ManufactureDraft,
 ): Promise<ManufactureIssue[]> {
   const issues: ManufactureIssue[] = [];
-  if (draft.type === "agent" || draft.type === "manager") {
+  if (isAgentDraft(draft)) {
     const catalog = await packCatalog(loaded.dir);
     validateAgentDraft(
       loaded,
@@ -882,7 +900,7 @@ export async function validateDraft(
 }
 
 function validateAgentDraft(
-  loaded: LoadedPackOk,
+  loaded: LoadedPack,
   draft: ManufactureAgentDraft,
   issues: ManufactureIssue[],
   knownTools: string[],
@@ -987,7 +1005,7 @@ function validateAgentDraft(
 
 async function validateWorkflowDraft(
   packDir: string,
-  loaded: LoadedPackOk,
+  loaded: LoadedPack,
   draft: ManufactureWorkflowDraft,
   issues: ManufactureIssue[],
 ): Promise<void> {
@@ -1166,10 +1184,10 @@ export function missingComponents(
 
 export function assessRisk(
   draft: ManufactureDraft,
-  loaded: LoadedPackOk,
+  loaded: LoadedPack,
 ): ManufactureRisk {
   const reasons: string[] = [];
-  if (draft.type === "agent" || draft.type === "manager") {
+  if (isAgentDraft(draft)) {
     const existing =
       draft.type === "manager"
         ? [...loaded.agents.entries()].find(
@@ -1582,7 +1600,7 @@ async function applyDraftToPack(
   const writes: Array<{ relative: string; content: string }> = [];
   let nextTeam = teamRaw;
 
-  if (draft.type === "agent" || draft.type === "manager") {
+  if (isAgentDraft(draft)) {
     const relative =
       draft.type === "manager"
         ? (loadedManagerFile(teamRaw) ?? `agents/${draft.id}.md`)

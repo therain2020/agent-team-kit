@@ -232,6 +232,7 @@
         "@kit/pack": "workspace:*",
         "@kit/store": "workspace:*",
         "@kit/workflow": "workspace:*",
+        "yaml": "^2.6.1",
       },
     },
     "packages/manager": {
