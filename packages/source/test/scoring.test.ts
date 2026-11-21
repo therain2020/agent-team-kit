@@ -256,6 +256,12 @@ describe("draftInterestProfile (#128, D-64)", () => {
     expect(draft.thresholds).toEqual(DEFAULT_INTEREST_PROFILE.thresholds);
   });
 
+  it("keeps inclusion topics that share a clause with an exclusion marker", () => {
+    const draft = draftInterestProfile("track AI agents except crypto");
+    expect(draft.topics).toEqual(expect.arrayContaining(["ai", "agents"]));
+    expect(draft.exclusions).toEqual(["crypto"]);
+  });
+
   it("merges the current profile as context without side effects", () => {
     const base = profile({ topics: ["security"], dailyBudgetCny: 3 });
     const draft = draftInterestProfile("more about ai agents", base);

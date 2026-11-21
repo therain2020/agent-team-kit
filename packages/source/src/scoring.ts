@@ -437,13 +437,20 @@ export function draftInterestProfile(
   const exclusions: string[] = [];
   const inclusionClauses: string[] = [];
 
-  for (const clause of trimmed.split(/[;；\n]|[,，、]|\b(?:but|except)\b/i)) {
+  for (const clause of trimmed.split(/[;；\n]|[,，、]/)) {
     const lower = clause.toLowerCase();
-    const marker = EXCLUSION_MARKERS.find((value) => lower.includes(value));
+    const marker = EXCLUSION_MARKERS.map((value) => ({
+      value,
+      index: lower.indexOf(value),
+    }))
+      .filter((entry) => entry.index >= 0)
+      .sort((a, b) => a.index - b.index)[0];
     if (marker) {
-      const rest = clause.slice(
-        clause.toLowerCase().indexOf(marker) + marker.length,
-      );
+      const before = clause.slice(0, marker.index).trim();
+      if (before) {
+        inclusionClauses.push(before);
+      }
+      const rest = clause.slice(marker.index + marker.value.length);
       exclusions.push(...extractTerms(rest));
     } else if (clause.trim()) {
       inclusionClauses.push(clause);
