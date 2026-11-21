@@ -9,7 +9,7 @@ gates and the single `@kit/job.startJob` write (plan 96, D-68).
 | Object | Purpose |
 |---|---|
 | `Trigger` | `schedule`, `event`, `manual` or `information` declaration |
-| `EventRoute` | The job shape one trigger launches (`packRun`, `iteration`; `evolution` is mapped for #95) |
+| `EventRoute` | The job shape one trigger launches (`packRun`, `iteration`, `evolution`) |
 | `TriggerRun` | One firing, one-to-one with a job id, stored in `trigger_runs` |
 
 `fireTrigger({ triggerId, dedupeKey, payloadRef? })` is the only dispatch entry.
@@ -33,7 +33,9 @@ twice. Local and Scale share gates 1–7; only the job engine differs.
 
 - `schedules` → schedule Trigger + `packRun` route
 - `iterations` → schedule Trigger + `iteration` route
-- `evolution` → schedule Trigger + `evolution` route (execution lands in #95)
+- `evolution` → schedule Trigger + `evolution` route (`jobKind=evolution`
+  through the same gates; the cycle record is the job record and its id is
+  written back to `TriggerRun.jobId`)
 
 The file must keep `version: 1`. Unknown keys, an invalid cron or a malformed
 mapping reject the pack with a migration hint instead of silently dropping the
@@ -53,3 +55,11 @@ silently escalate a dry-run trigger.
 Ad-hoc firings use `manual:<actor>` as the trigger id and `origin.kind=manual`;
 they are not covered by autonomous auto-approval unless the policy uses
 `scope: all`. The console exposes the same adapter at `POST /api/triggers`.
+
+## Auto-approval
+
+Auto-approval is a policy layer on **jobs**, not a trigger (`@kit/manager`,
+96 §5.2). The default scope covers `schedule`, `event` and `information` jobs;
+manual/web/cli jobs are skipped unless `approval.autoApprove.scope: all` is set
+explicitly. Every policy decision is persisted in `manager_decisions` with
+`policyId`, `scope`, `triggerId`, `runId`, `requestId` and `rationale`.

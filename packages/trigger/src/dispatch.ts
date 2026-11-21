@@ -93,16 +93,6 @@ export async function fireTrigger(
   }
   const { trigger, route } = resolved;
   const triggerKind = trigger.kind;
-  if (route.jobKind === "evolution") {
-    // Mapped for the read model; executable scheduling lands with #95 (T4).
-    return {
-      ...base,
-      status: "failed",
-      dispatch: "FAILED",
-      gate: null,
-      reason: "evolution routing is delivered by #95",
-    };
-  }
 
   // Gate 1 — kill switch.
   emit("kill-switch");
@@ -175,9 +165,16 @@ export async function fireTrigger(
 
   // Gate 5 — budget ledger admission (four-level hard caps).
   emit("budget-ledger");
+  // Pack runs derive the id from the dedupe key for bucketing; iterations and
+  // evolution jobs need a stable id up front so the ledger admits the row the
+  // job will use.
   const plannedRunId =
     input.runId ??
-    (route.jobKind === "packRun" ? dedupeRunId(input.dedupeKey) : newId("it"));
+    (route.jobKind === "packRun"
+      ? dedupeRunId(input.dedupeKey)
+      : route.jobKind === "evolution"
+        ? newId("evo")
+        : newId("it"));
   let admitted: AdmitRunResult;
   try {
     admitted = await admitRoute(
@@ -565,7 +562,16 @@ export async function loadTriggerUsage(
       })
     ).filter((row) => row.status !== "failed");
     for (const row of rows) {
-      const actual = row.jobId ? await runManifestCost(store, row.jobId) : 0;
+      const manifestCost = row.jobId
+        ? await runManifestCost(store, row.jobId)
+        : 0;
+      // Evolution jobs keep their spend on the cycle record (#86); prefer the
+      // larger of the two so neither substrate hides cost from the budget.
+      const evolutionCost =
+        row.jobKind === "evolution" && row.jobId
+          ? await evolutionCycleCost(store, row.jobId)
+          : 0;
+      const actual = Math.max(manifestCost, evolutionCost);
       costCny += actual > 0 ? actual : row.estimateCny;
     }
   }
@@ -574,6 +580,21 @@ export async function loadTriggerUsage(
     runs: Math.max(slotCount, tableRuns),
     costCny: round4(costCny),
   };
+}
+
+async function evolutionCycleCost(
+  store: Store,
+  cycleId: string,
+): Promise<number> {
+  try {
+    const rows = await store.sql<Array<{ cost_cny: string | number | null }>>`
+      SELECT cost_cny FROM evolution_cycles WHERE cycle_id = ${cycleId} LIMIT 1
+    `;
+    const value = Number(rows[0]?.cost_cny ?? 0);
+    return Number.isFinite(value) && value > 0 ? round4(value) : 0;
+  } catch {
+    return 0;
+  }
 }
 
 async function runManifestCost(store: Store, runId: string): Promise<number> {
@@ -610,6 +631,11 @@ async function estimateRouteCost(
   route: EventRoute,
   repoRoot: string,
 ): Promise<number> {
+  if (route.jobKind === "evolution") {
+    // The cycle enforces its own budget; the route value is the trigger-level
+    // estimate the budget gates project against.
+    return route.evolution?.budgetCny ?? 0;
+  }
   if (route.jobKind !== "packRun" || !route.workflow) {
     return 0;
   }
@@ -690,6 +716,33 @@ function buildStartJobInput(
     ...(input.reactionRuleId ? { reactionRuleId: input.reactionRuleId } : {}),
     actor: input.actor ?? trigger.actor,
   } as const;
+
+  if (route.jobKind === "evolution") {
+    const evidence = route.evolution?.evidenceFile;
+    const evidenceFile = evidence
+      ? path.isAbsolute(evidence)
+        ? evidence
+        : path.resolve(resolvePackPath(repoRoot, route.packDir), evidence)
+      : undefined;
+    return {
+      kind: "evolution" as const,
+      packDir: route.packDir,
+      evolution: {
+        ...(evidenceFile ? { evidenceFile } : {}),
+        ...(route.evolution?.agent ? { agentId: route.evolution.agent } : {}),
+        autoApply: route.evolution?.autoApply ?? false,
+        ...(route.evolution?.budgetCny !== undefined
+          ? { budgetCny: route.evolution.budgetCny }
+          : {}),
+      },
+      runMode: route.runMode,
+      stub: process.env.KIT_MODEL_MODE === "stub",
+      dedupeKey: input.dedupeKey,
+      runId,
+      workspaceId,
+      origin,
+    };
+  }
 
   if (route.jobKind === "iteration") {
     return {

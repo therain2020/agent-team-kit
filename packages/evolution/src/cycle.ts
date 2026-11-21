@@ -169,6 +169,12 @@ export interface EvolutionCycleRecord {
 
 export interface CycleOptions {
   packDir: string;
+  /**
+   * Caller-owned cycle id. The trigger plane reserves the job id before the
+   * cycle starts, so the ledger admission, TriggerRun and cycle record share
+   * one identity.
+   */
+  cycleId?: string;
   agentId?: string;
   inputFile: string;
   hypothesis?: string;
@@ -219,7 +225,7 @@ export interface CycleOptions {
 export async function runEvolutionCycle(
   options: CycleOptions,
 ): Promise<EvolutionCycleRecord> {
-  const cycleId = newId("cyc");
+  const cycleId = options.cycleId?.trim() || newId("cyc");
   const createdAt = new Date().toISOString();
   const packDir = path.resolve(options.packDir);
   const archivePath = options.archivePath ?? "variants/archive.jsonl";

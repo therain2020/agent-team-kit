@@ -8,6 +8,7 @@ import { CircuitBreakerService } from "./circuit-breaker-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
 import { CostLedger } from "./cost-ledger";
 import { createDb } from "./db";
+import { DecisionService } from "./decision-service";
 import { SqlEventSpoolStore } from "./event-spool";
 import { InformationService } from "./information-service";
 import { InterestProfileService } from "./interest-profile-service";
@@ -114,6 +115,11 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     blobs,
     blobClient,
   });
+  /** Policy provenance for every manager decision (96 §5.2). */
+  const decisions = new DecisionService({
+    sql: handle.sql,
+    driver: handle.driver,
+  });
 
   return {
     config,
@@ -138,6 +144,7 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     /** ReactionRule versions and audit (98 I-3, 96 T6). */
     reactionRules: new ReactionRuleService({ sql: handle.sql }),
     approvals,
+    decisions,
     budgetService: new BudgetService({
       sql: handle.sql,
       driver: handle.driver,

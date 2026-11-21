@@ -15,6 +15,7 @@ import {
   enqueueLocalIteration,
   enqueueLocalRun,
 } from "@kit/engine";
+import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
 import {
   buildPackRun,
   loadPack,
@@ -72,6 +73,16 @@ export async function startJob(
     throw new JobError(
       "invalid_pack",
       `invalid pack: ${loaded.errors.join("; ")}`,
+    );
+  }
+  if (input.kind === "evolution") {
+    return await startEvolutionJob(
+      store,
+      input,
+      runMode,
+      packDir,
+      loaded,
+      workspaceId,
     );
   }
   if (input.kind === "iteration") {
@@ -315,6 +326,102 @@ export async function abortJob(
     `;
   }
   return { jobId, kind, cancelled: true };
+}
+
+/**
+ * Evolution is a scheduled job, not an inline tick (96 §5.3). The job shell
+ * starts the existing cycle; proposals, scoring, promotion and rollback remain
+ * in `@kit/evolution` and its ChangeProposal pipeline. The cycle row is the
+ * job record, so `TriggerRun.jobId` points at `cycleId`.
+ *
+ * Executed inline for both engines: there is no evolution queue worker yet,
+ * and the previous daemon already ran the cycle synchronously. Queueing the
+ * cycle is a follow-up once `@kit/job` owns an evolution worker.
+ */
+async function startEvolutionJob(
+  store: Store,
+  input: StartJobInput,
+  runMode: JobRunMode,
+  packDir: string,
+  loaded: Awaited<ReturnType<typeof loadPack>>,
+  workspaceId: string,
+): Promise<StartJobResult> {
+  if (!loaded.ok) {
+    throw new JobError("invalid_pack", "invalid pack");
+  }
+  const options = input.evolution ?? {};
+  if (!options.evidenceFile) {
+    throw new JobError(
+      "evidence_required",
+      "evolution job requires an evidence file",
+    );
+  }
+  const evidenceFile = path.isAbsolute(options.evidenceFile)
+    ? options.evidenceFile
+    : path.resolve(packDir, options.evidenceFile);
+  // The trigger plane reserves the job id before dispatch, so a crash between
+  // `startJob` and the TriggerRun write-back replays as the same cycle.
+  const cycleId = input.runId?.trim();
+  if (cycleId) {
+    const existing = await store.sql<Array<{ cycle_id: string }>>`
+      SELECT cycle_id FROM evolution_cycles
+      WHERE cycle_id = ${cycleId} LIMIT 1
+    `;
+    if (existing[0]) {
+      return {
+        jobId: cycleId,
+        kind: "evolution",
+        workflowId: `evolution-${cycleId}`,
+        engine: "local",
+        runMode,
+        pack: loaded.pack.metadata.name,
+        deduped: true,
+      };
+    }
+  }
+  const variantsRoot = path.resolve(
+    options.variantsRoot ?? path.join(path.dirname(packDir), "variants"),
+  );
+  const archivePath = path.join(variantsRoot, "archive.jsonl");
+  const cyclesPath = path.join(variantsRoot, "cycles.jsonl");
+  const statePath = path.join(variantsRoot, "state.json");
+  const repo = new StoreEvolutionRepository(store, {
+    workspaceId,
+    variantsRoot,
+    archivePath,
+    cyclesPath,
+    statePath,
+  });
+  const record = await runEvolutionCycle({
+    packDir,
+    ...(cycleId ? { cycleId } : {}),
+    ...(options.agentId ? { agentId: options.agentId } : {}),
+    inputFile: evidenceFile,
+    ...(options.force ? { force: true } : {}),
+    autoApply: options.autoApply ?? false,
+    ...(options.budgetCny !== undefined
+      ? { budgetCny: options.budgetCny }
+      : {}),
+    ...(options.cyclesRoot
+      ? { cyclesRoot: path.resolve(options.cyclesRoot) }
+      : {}),
+    variantsRoot,
+    archivePath,
+    cyclesPath,
+    statePath,
+    stub: input.stub === true,
+    repo,
+    workspaceId,
+  });
+
+  return {
+    jobId: record.cycleId,
+    kind: "evolution",
+    workflowId: `evolution-${record.cycleId}`,
+    engine: "local",
+    runMode,
+    pack: loaded.pack.metadata.name,
+  };
 }
 
 async function startPackRunJob(

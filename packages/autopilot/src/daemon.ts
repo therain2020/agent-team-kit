@@ -1,13 +1,5 @@
 import path from "node:path";
-import { isAutoApproveOriginEligible, resolveKillSwitch } from "@kit/core";
-import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
-import {
-  backfillApprovals,
-  decideApprovalRecord,
-  findApprovalRequest,
-  findDecisionForRequest,
-  recordDecision,
-} from "@kit/manager";
+import { resolveKillSwitch } from "@kit/core";
 import { getActiveAutonomyPreset, getOpsGate } from "@kit/ops";
 import {
   appendOp,
@@ -22,14 +14,13 @@ import {
   loadTriggerUsage,
   registryFromPlane,
 } from "@kit/trigger";
-import { createTemporalClient } from "@kit/workflow";
+import { runApprovalTick } from "./approvals";
 import { nextCronOccurrence } from "./cron";
 import { applyAutonomyPreset } from "./preset";
 import { type AutopilotState, ensureState, saveState } from "./state";
 
 const WORKSPACE_ID = "default";
 const TICK_MS = 30_000;
-const RISK_RANK = { low: 0, medium: 1, high: 2 } as const;
 
 export interface TickResult {
   packs: number;
@@ -74,7 +65,6 @@ export async function runAutopilotTick(
   const store = await initStore(
     loadStoreConfig({ ...process.env, KIT_BLOB_ROOT: blobRoot }),
   );
-  let temporal: Awaited<ReturnType<typeof createTemporalClient>> | undefined;
   const gate = await getOpsGate(store, now, WORKSPACE_ID);
   if (gate.readOnly) {
     result.nightMode = true;
@@ -111,9 +101,7 @@ export async function runAutopilotTick(
       store,
       `kit:autopilot:${WORKSPACE_ID}`,
       async () => {
-        // Approvals maintenance runs before scheduling so backfilled rows and
-        // SLA expiries are visible to the same tick's auto-approval pass.
-        await maintainApprovals(store, now, result);
+        const activePacks: TriggerPlanePack[] = [];
         for (const pack of packs) {
           try {
             const state = await ensureState(
@@ -137,6 +125,7 @@ export async function runAutopilotTick(
               continue;
             }
             result.enabled += 1;
+            activePacks.push(pack);
 
             if (!gate.readOnly) {
               await processSchedules({
@@ -161,24 +150,14 @@ export async function runAutopilotTick(
                 result,
               });
 
-              await processAutoApprovals({
-                pack,
-                state,
-                now,
-                store,
-                result,
-                getTemporal: async () => {
-                  temporal ??= await createTemporalClient();
-                  return temporal;
-                },
-              });
-
-              await processEvolution({
+              await processEvolutionTriggers({
                 pack,
                 state,
                 now,
                 dryRun: options.dryRun ?? false,
+                repoRoot,
                 store,
+                registry,
                 result,
               });
             }
@@ -211,6 +190,27 @@ export async function runAutopilotTick(
             result.errors.push(`${pack.dirName}: ${message}`);
           }
         }
+
+        // Approval maintenance is global; the policy pass only sees packs the
+        // loop actually enabled. Both live in `@kit/manager` (96 §5.2).
+        try {
+          const approvals = await runApprovalTick({
+            store,
+            now,
+            packs: activePacks,
+            readOnly: gate.readOnly,
+          });
+          result.expired = [...(result.expired ?? []), ...approvals.expired];
+          result.autoApproved.push(...approvals.approved);
+          result.aborted.push(...approvals.aborted);
+          result.errors.push(...approvals.errors);
+        } catch (error) {
+          result.errors.push(
+            `approvals: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
         return true;
       },
     );
@@ -218,9 +218,6 @@ export async function runAutopilotTick(
       result.errors.push("autopilot tick skipped: another tick holds the lock");
     }
   } finally {
-    if (temporal) {
-      await temporal.connection.close();
-    }
     await store.close();
   }
 
@@ -325,6 +322,24 @@ async function processIterations(input: {
 }
 
 /**
+ * Evolution used to execute inside the tick. It is now one more cron-backed
+ * trigger: due slots advance here, and `fireTrigger` runs the gate sequence
+ * before handing the job to `startJob` (96 §5.3).
+ */
+async function processEvolutionTriggers(input: {
+  pack: PackContext;
+  state: AutopilotState;
+  now: Date;
+  dryRun: boolean;
+  repoRoot: string;
+  store: Awaited<ReturnType<typeof initStore>>;
+  registry: ReturnType<typeof registryFromPlane>;
+  result: TickResult;
+}): Promise<boolean> {
+  return processDueTriggers({ ...input, jobKind: "evolution" });
+}
+
+/**
  * One scheduling loop for every cron-backed trigger. Due slots advance here;
  * everything else (gates, budget, startJob, TriggerRun write-back) belongs to
  * `fireTrigger`, so adding a trigger kind never touches this function.
@@ -338,7 +353,7 @@ async function processDueTriggers(input: {
   store: Awaited<ReturnType<typeof initStore>>;
   registry: ReturnType<typeof registryFromPlane>;
   result: TickResult;
-  jobKind: "packRun" | "iteration";
+  jobKind: "packRun" | "iteration" | "evolution";
 }): Promise<boolean> {
   const { pack, state, now, repoRoot, store, result } = input;
   let changed = false;
@@ -359,6 +374,19 @@ async function processDueTriggers(input: {
         `${pack.dirName}/${trigger.triggerId}: iteration.yaml is missing`,
       );
       continue;
+    }
+    if (input.jobKind === "evolution") {
+      // Evolution stays opt-in even when the console enables the pack; the
+      // config flag is the authority (previous `processEvolution` contract).
+      if (!pack.config.evolution?.enabled) {
+        continue;
+      }
+      if (!pack.config.evolution.evidenceFile) {
+        result.errors.push(
+          `${pack.dirName}/${trigger.triggerId}: evolution enabled but evidenceFile is missing`,
+        );
+        continue;
+      }
     }
     const nextKey =
       input.jobKind === "iteration"
@@ -408,7 +436,9 @@ async function processDueTriggers(input: {
     const workflowLabel =
       route.jobKind === "iteration"
         ? `iteration:${trigger.triggerId}`
-        : (route.workflow ?? trigger.triggerId);
+        : route.jobKind === "evolution"
+          ? `evolution:${trigger.triggerId}`
+          : (route.workflow ?? trigger.triggerId);
 
     if (input.dryRun) {
       result.launched.push({
@@ -467,251 +497,6 @@ async function processDueTriggers(input: {
   return changed;
 }
 
-/**
- * Periodic approvals maintenance, folded into the autopilot tick instead of
- * spawning another daemon: backfill entities for pre-upgrade paused runs, then
- * flip rows past their expiry to `expired` (with activity audit).
- */
-async function maintainApprovals(
-  store: Awaited<ReturnType<typeof initStore>>,
-  now: Date,
-  result: TickResult,
-): Promise<void> {
-  try {
-    await backfillApprovals(store, { workspaceId: WORKSPACE_ID });
-  } catch (error) {
-    result.errors.push(
-      `approvals backfill: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  try {
-    const expired = await store.approvals.expireDue(now.toISOString());
-    if (expired.length > 0) {
-      result.expired = [
-        ...(result.expired ?? []),
-        ...expired.map((row) => row.approvalId),
-      ];
-    }
-  } catch (error) {
-    result.errors.push(
-      `approvals expiry: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
-
-async function processAutoApprovals(input: {
-  pack: PackContext;
-  state: AutopilotState;
-  now: Date;
-  store: Awaited<ReturnType<typeof initStore>>;
-  result: TickResult;
-  getTemporal: () => Promise<Awaited<ReturnType<typeof createTemporalClient>>>;
-}): Promise<boolean> {
-  const { pack, state, now, store, result } = input;
-  const policy = pack.config.approval?.autoApprove;
-  if (!policy?.enabled) {
-    return false;
-  }
-
-  let changed = false;
-  const scope = policy.scope ?? "scheduled";
-  const paused = await store.runs.list({ status: "paused", limit: 50 });
-  for (const run of paused) {
-    // Manual, web, cli and pre-upgrade (`unknown`) runs are never approved by
-    // policy unless the operator explicitly opts into `scope: all`.
-    if (!isAutoApproveOriginEligible(run.originKind, scope)) {
-      continue;
-    }
-    if (run.workflowId !== undefined) {
-      const workflow = pack.loaded.workflows.find(
-        (item) => item.id === run.workflowId,
-      );
-      if (!workflow) {
-        continue;
-      }
-    }
-
-    const approval = await findApprovalRequest(store, run.runId);
-    if (!approval) {
-      continue;
-    }
-
-    // Budget exceptions need an operator decision and a limit increase;
-    // auto-approving them would loop forever.
-    if (approval.requestType === "budget_exceeded") {
-      continue;
-    }
-
-    if (
-      approval.expiresAt &&
-      new Date(approval.expiresAt).getTime() < now.getTime()
-    ) {
-      if (policy.onTimeout === "abort") {
-        const existing = await findDecisionForRequest(
-          store,
-          run.runId,
-          approval.requestId,
-        );
-        if (!existing) {
-          await recordDecision(
-            store,
-            run.runId,
-            "abort",
-            "auto-aborted: approval request timed out",
-            { requestId: approval.requestId, actor: "policy:autopilot" },
-          );
-        }
-        await signalApproval(input, run.runId, "abort", approval.requestId);
-        result.aborted.push(run.runId);
-        changed = true;
-      }
-      continue;
-    }
-
-    if (RISK_RANK[approval.riskClass] > RISK_RANK[policy.maxRisk]) {
-      continue;
-    }
-    const cost = await runCost(store, run.runId);
-    if (policy.maxRunCostCny !== undefined && cost > policy.maxRunCostCny) {
-      continue;
-    }
-
-    const note = `auto-approved by autopilot (risk ${approval.riskClass}, cost ${cost.toFixed(4)} CNY)`;
-    const recorded = await decideApprovalRecord(store, {
-      runId: run.runId,
-      requestId: approval.requestId,
-      decision: "approve",
-      actor: "policy:autopilot",
-      note,
-    });
-    if (!recorded.ok) {
-      result.errors.push(`${run.runId}: ${recorded.error}`);
-      continue;
-    }
-    if (!recorded.duplicate) {
-      await recordDecision(store, run.runId, "approve", note, {
-        requestId: approval.requestId,
-        actor: "policy:autopilot",
-      });
-    }
-    await signalApproval(input, run.runId, "approve", approval.requestId);
-    result.autoApproved.push(run.runId);
-    changed = true;
-  }
-  return changed;
-}
-
-async function signalApproval(
-  input: {
-    getTemporal: () => Promise<
-      Awaited<ReturnType<typeof createTemporalClient>>
-    >;
-  },
-  runId: string,
-  decision: "approve" | "abort",
-  requestId: string,
-): Promise<void> {
-  const { client } = await input.getTemporal();
-  const handle = client.workflow.getHandle(`pack-${runId}`);
-  await handle.signal("approval", {
-    decision,
-    note: "autopilot policy",
-    requestId,
-  });
-}
-
-async function processEvolution(input: {
-  pack: PackContext;
-  state: AutopilotState;
-  now: Date;
-  dryRun: boolean;
-  store: Awaited<ReturnType<typeof initStore>>;
-  result: TickResult;
-}): Promise<boolean> {
-  const config = input.pack.config.evolution;
-  if (!config?.enabled) {
-    return false;
-  }
-  const key = "__evolution";
-  const nextValue = input.state.nextRuns[key];
-  if (!nextValue) {
-    input.state.nextRuns[key] = addCadence(input.now, config.cadence);
-    return true;
-  }
-  if (new Date(nextValue).getTime() > input.now.getTime()) {
-    return false;
-  }
-  input.state.nextRuns[key] = addCadence(input.now, config.cadence);
-
-  if (!config.evidenceFile) {
-    input.result.errors.push(
-      `${input.pack.dirName}: evolution enabled but evidenceFile is missing`,
-    );
-    return true;
-  }
-  if (input.dryRun) {
-    return true;
-  }
-
-  try {
-    const evidenceFile = path.isAbsolute(config.evidenceFile)
-      ? config.evidenceFile
-      : path.resolve(input.pack.dir, config.evidenceFile);
-    const variantsRoot = path.resolve(input.pack.dir, "..", "variants");
-    const archivePath = path.join(variantsRoot, "archive.jsonl");
-    const cyclesPath = path.join(variantsRoot, "cycles.jsonl");
-    const statePath = path.join(variantsRoot, "state.json");
-    const repo = new StoreEvolutionRepository(input.store, {
-      variantsRoot,
-      archivePath,
-      cyclesPath,
-      statePath,
-    });
-    const record = await runEvolutionCycle({
-      packDir: input.pack.dir,
-      agentId: config.agent,
-      inputFile: evidenceFile,
-      autoApply: config.autoApply,
-      budgetCny: config.budgetCny,
-      variantsRoot,
-      archivePath,
-      cyclesPath,
-      statePath,
-      repo,
-    });
-    console.log(
-      `[autopilot] evolution cycle ${record.cycleId} decision=${record.decision} budget=${record.budgetStatus} costCny=${record.costCny} candidatePass=${record.candidatePass}`,
-    );
-    if (record.budgetStatus === "budget_exceeded") {
-      // A budget gate must never look like a silent skip: the cycle record
-      // carries `budget_exceeded` and the rationale names the blocking phase.
-      console.warn(
-        `[autopilot] evolution cycle ${record.cycleId} stopped by budget: ${record.rationale}`,
-      );
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    input.state.lastError = message;
-    input.result.errors.push(
-      `${input.pack.dirName}: evolution failed: ${message}`,
-    );
-  }
-  return true;
-}
-
-async function runCost(
-  store: Awaited<ReturnType<typeof initStore>>,
-  runId: string,
-): Promise<number> {
-  const artifacts = await store.artifactStore.listByRun(runId);
-  let total = 0;
-  for (const artifact of artifacts) {
-    const manifest = await store.manifests.get(artifact.manifestId);
-    total += manifest?.cost.amount ?? 0;
-  }
-  return total;
-}
-
 async function packUsage(
   store: Awaited<ReturnType<typeof initStore>>,
   pack: PackContext,
@@ -731,9 +516,4 @@ async function packUsage(
     costCny += usage.costCny;
   }
   return { runs, costCny: Math.round(costCny * 10000) / 10000 };
-}
-
-function addCadence(now: Date, cadence: "daily" | "weekly"): string {
-  const days = cadence === "weekly" ? 7 : 1;
-  return new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 }

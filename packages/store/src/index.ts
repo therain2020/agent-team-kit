@@ -10,6 +10,7 @@ export * from "./config";
 export * from "./cost-ledger";
 export * from "./cost-service";
 export * from "./db";
+export * from "./decision-service";
 export * from "./event-spool";
 export * from "./information-service";
 export * from "./interest-profile-service";
