@@ -16,10 +16,8 @@ import path from "node:path";
 import {
   type AgentRole,
   type ComponentKind,
-  type PipelineSpec,
   type WorkflowDefinition,
   agentRoleSchema,
-  pipelineSpecSchema,
   workflowDefinitionSchema,
 } from "@kit/core";
 import { createModelGateway, loadModelConfig } from "@kit/model";
@@ -836,7 +834,7 @@ export async function validateDraft(
   } else if (draft.type === "workflow") {
     await validateWorkflowDraft(packDir, loaded, draft, issues);
   } else if (draft.type === "pipeline") {
-    validatePipelineDraft(packDir, draft, issues);
+    validatePipelineDraft(packDir, loaded, draft, issues);
   } else {
     validateComponentDraft(draft, issues);
   }
@@ -1014,6 +1012,7 @@ async function validateWorkflowDraft(
 
 function validatePipelineDraft(
   packDir: string,
+  loaded: LoadedPack,
   draft: ManufacturePipelineDraft,
   issues: ManufactureIssue[],
 ): void {
@@ -1024,48 +1023,65 @@ function validatePipelineDraft(
       message: "pipeline id must match ^[a-z][a-z0-9-]*$",
     });
   }
-  if (existsSync(path.join(packDir, "pipelines", `${draft.id}.yaml`))) {
+  const file = `workflows/${draft.id}.yaml`;
+  if (
+    loaded.workflows.some((workflow) => workflow.id === draft.id) ||
+    loaded.pack.workflows.includes(file) ||
+    existsSync(path.join(packDir, file))
+  ) {
     issues.push({
-      code: "pipeline_exists",
-      path: `pipelines/${draft.id}.yaml`,
-      message: `pipeline file already exists: pipelines/${draft.id}.yaml`,
+      code: "workflow_exists",
+      path: file,
+      message: `workflow file already exists: ${file}`,
     });
   }
-  const parsed = pipelineSpecSchema.safeParse(pipelineSpecOf(draft));
+  if (
+    draft.values.components.some(
+      (component) =>
+        component.ref.kind === "workflow" && component.ref.id === draft.id,
+    )
+  ) {
+    issues.push({
+      code: "duplicate_component",
+      path: file,
+      message: `workflow component ${draft.id} would clash with the manufactured workflow file`,
+    });
+  }
+  if (draft.values.stages.length === 0) {
+    issues.push({
+      code: "empty_pipeline",
+      path: "stages",
+      message: "the pipeline composer produced no stages",
+    });
+    return;
+  }
+  // Stages either bind a pack agent or an agent component that this proposal
+  // assembles into the pack before the workflow is written.
+  const componentAgents = draft.values.components
+    .filter((component) => component.ref.kind === "agent")
+    .map((component) => component.ref.id);
+  const graph = validateStageGraph(draft.values.stages, [
+    ...loaded.agents.keys(),
+    ...componentAgents,
+  ]);
+  for (const error of graph.errors) {
+    issues.push({ code: "invalid_graph", path: "stages", message: error });
+  }
+  const doc = workflowDocFromStages({
+    type: "workflow",
+    id: draft.id,
+    version: "1.0",
+    stages: draft.values.stages,
+  });
+  const parsed = workflowDefinitionSchema.safeParse(parse(stringify(doc)));
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       issues.push({
         code: "schema_invalid",
-        path: `pipelines/${draft.id}.yaml:${issue.path.join(".") || "<root>"}`,
+        path: `${file}:${issue.path.join(".") || "<root>"}`,
         message: issue.message,
       });
     }
-    return;
-  }
-  if (parsed.data.id !== draft.id) {
-    issues.push({
-      code: "id_mismatch",
-      path: "pipeline.yaml:id",
-      message: `pipeline id "${parsed.data.id}" does not match "${draft.id}"`,
-    });
-  }
-  const graph = parsed.data.graph;
-  if (graph.nodes.length === 0) {
-    issues.push({
-      code: "empty_pipeline",
-      path: "graph.nodes",
-      message: "a pipeline needs at least one node",
-    });
-    return;
-  }
-  const incoming = new Set(graph.edges.map((edge) => edge.to));
-  const entries = graph.nodes.filter((node) => !incoming.has(node.id));
-  if (entries.length !== 1) {
-    issues.push({
-      code: "multi_entry",
-      path: "graph.edges",
-      message: `a pipeline must have exactly one entry node (found ${entries.length})`,
-    });
   }
 }
 
@@ -1536,6 +1552,9 @@ async function applyDraftToPack(
   if (draft.type === "component") {
     return applyComponentDraft(packDir, draft, deps);
   }
+  if (draft.type === "pipeline") {
+    return applyPipelineDraft(packDir, draft, deps);
+  }
 
   const teamPath = path.join(packDir, "team.yaml");
   const teamRaw = existsSync(teamPath)
@@ -1553,7 +1572,7 @@ async function applyDraftToPack(
     if (teamRaw) {
       nextTeam = upsertAgentInTeam(teamRaw, draft, relative);
     }
-  } else if (draft.type === "workflow") {
+  } else {
     const relative = `workflows/${draft.id}.yaml`;
     writes.push({
       relative,
@@ -1562,11 +1581,6 @@ async function applyDraftToPack(
     if (teamRaw) {
       nextTeam = appendWorkflowToTeam(teamRaw, relative);
     }
-  } else {
-    writes.push({
-      relative: `pipelines/${draft.id}.yaml`,
-      content: stringify(pipelineSpecOf(draft)),
-    });
   }
 
   if (nextTeam !== null && nextTeam !== teamRaw) {
@@ -1605,6 +1619,103 @@ async function applyDraftToPack(
     })),
     primary,
   };
+}
+
+/**
+ * Materialize a C-6c pipeline draft as a loadable workflow: selected
+ * components are assembled first (so every stage binding resolves), then the
+ * stage graph and team.yaml are written. Any failure restores both the
+ * assembly and the workflow writes.
+ */
+async function applyPipelineDraft(
+  packDir: string,
+  draft: ManufacturePipelineDraft,
+  deps: ManufactureDeps,
+): Promise<AppliedDraft> {
+  const components = draft.values.components.map((component) => ({
+    kind: component.ref.kind,
+    id: component.ref.id,
+  }));
+  const workflowRelative = `workflows/${draft.id}.yaml`;
+  const planned = new Set<string>(["team.yaml", "components.lock.json"]);
+  planned.add(workflowRelative);
+  for (const component of components) {
+    for (const relative of await predictComponentPaths(component, deps)) {
+      planned.add(relative);
+    }
+  }
+
+  const snapshots = await Promise.all(
+    [...planned].map((relative) => snapshotFile(packDir, relative)),
+  );
+  try {
+    let assembled: string[] = [];
+    if (components.length > 0) {
+      if (!deps.library) {
+        throw new ManufactureError(
+          "component_library_unavailable",
+          "the component library adapter is required to assemble pipeline components",
+          409,
+        );
+      }
+      const result = await assembleComponents(
+        { packDir, components, allowCommand: false },
+        deps.library,
+      );
+      assembled = result.written;
+    }
+
+    const content = stringify(
+      workflowDocFromStages({
+        type: "workflow",
+        id: draft.id,
+        version: "1.0",
+        stages: draft.values.stages,
+      }),
+    );
+    const teamPath = path.join(packDir, "team.yaml");
+    const teamRaw = await readFile(teamPath, "utf8");
+    const nextTeam = appendWorkflowToTeam(teamRaw, workflowRelative);
+    await writeFileAtomic(path.join(packDir, workflowRelative), content);
+    if (nextTeam !== teamRaw) {
+      await writeFileAtomic(teamPath, nextTeam);
+    }
+
+    const loaded = await loadPack(packDir);
+    if (!loaded.ok) {
+      throw new ManufactureError(
+        "pack_invalid",
+        `pack failed validation: ${loaded.errors.join("; ")}`,
+      );
+    }
+
+    const preview = await Promise.all(
+      [...new Set([...planned, ...assembled])].map(async (relative) => {
+        const file = await readFile(path.join(packDir, relative), "utf8").catch(
+          () => "",
+        );
+        return {
+          path: relative,
+          bytes: Buffer.byteLength(file, "utf8"),
+          sha256: sha256(file),
+        };
+      }),
+    );
+    return {
+      files: [...new Set([...assembled, workflowRelative, "team.yaml"])],
+      preview,
+      primary: { relative: workflowRelative, content },
+    };
+  } catch (error) {
+    await restoreSnapshots(packDir, snapshots);
+    if (error instanceof ManufactureError) {
+      throw error;
+    }
+    throw new ManufactureError(
+      "assembly_failed",
+      `pipeline assembly failed and was rolled back: ${errorMessage(error)}`,
+    );
+  }
 }
 
 async function applyComponentDraft(
@@ -1919,7 +2030,19 @@ async function snapshotPack(
       relatives.push(...(await predictComponentPaths(component, deps)));
     }
   } else if (proposal.draft.type === "pipeline") {
-    relatives = [`pipelines/${proposal.draft.id}.yaml`];
+    relatives = [
+      "team.yaml",
+      "components.lock.json",
+      `workflows/${proposal.draft.id}.yaml`,
+    ];
+    for (const component of proposal.draft.values.components) {
+      relatives.push(
+        ...(await predictComponentPaths(
+          { kind: component.ref.kind, id: component.ref.id },
+          deps,
+        )),
+      );
+    }
   } else if (proposal.draft.type === "workflow") {
     relatives = ["team.yaml", `workflows/${proposal.draft.id}.yaml`];
   } else {
@@ -2463,46 +2586,6 @@ function evalFileExists(packDir: string, gate: string): boolean {
     existsSync(path.join(packDir, "evals", file)) ||
     existsSync(path.join(packDir, "evals", "visible", file))
   );
-}
-
-/**
- * Materialize the shared C-6c pipeline draft as the declarative `Pipeline`
- * asset that is written to `pipelines/<id>.yaml` and validated by
- * `pipelineSpecSchema`.
- */
-function pipelineSpecOf(draft: ManufacturePipelineDraft): PipelineSpec {
-  const nodes = draft.values.stages.map((stage) => ({
-    id: stage.id,
-    type:
-      stage.type === "workflow"
-        ? ("subflow" as const)
-        : stage.type === "coder"
-          ? ("coder" as const)
-          : ("agent" as const),
-    inputs: [...stage.inputs],
-    outputs: [...stage.outputs],
-    ...(stage.gate ? { gate: stage.gate } : {}),
-    ...(stage.approval ? { approval: stage.approval } : {}),
-    description: stage.goal ?? "",
-  }));
-  const edges = draft.values.stages.flatMap((stage) =>
-    stage.depends.map((from) => ({ from, to: stage.id })),
-  );
-  const bindings = draft.values.bindings.map((binding) => ({
-    node: binding.node,
-    component: binding.component,
-  }));
-  return {
-    apiVersion: "agentteam/v1",
-    kind: "Pipeline",
-    id: draft.id,
-    name: draft.values.name || draft.id,
-    version: "1.0",
-    description: draft.values.description,
-    graph: { nodes, edges },
-    bindings,
-    policies: [],
-  };
 }
 
 function slugId(value: string): string {

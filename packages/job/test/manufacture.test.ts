@@ -8,7 +8,6 @@ import {
   agentFrontmatterSchema,
   assemblyLockSchema,
   componentRefSchema,
-  pipelineSpecSchema,
 } from "@kit/core";
 import {
   type ComponentLibrary,
@@ -19,7 +18,6 @@ import {
   loadPack,
 } from "@kit/pack";
 import { afterEach, describe, expect, it } from "vitest";
-import { parse } from "yaml";
 import {
   MANUFACTURE_LOCK_FILE,
   ManufactureError,
@@ -224,11 +222,15 @@ describe("manufacture: pipeline", () => {
     expect(dryRun.dryRun?.ok).toBe(true);
 
     await acceptManufacture(packDir, { proposalId: proposal.id });
-    const file = path.join(packDir, "pipelines", "intake-pipeline.yaml");
+    const file = path.join(packDir, "workflows", "intake-pipeline.yaml");
     expect(existsSync(file)).toBe(true);
-    const spec = pipelineSpecSchema.parse(parse(await readFile(file, "utf8")));
-    expect(spec.id).toBe("intake-pipeline");
-    expect(spec.graph.nodes.length).toBeGreaterThan(0);
+    const loaded = await loadOk(packDir);
+    const workflow = loaded.workflows.find(
+      (item) => item.id === "intake-pipeline",
+    );
+    expect(workflow).toBeDefined();
+    const run = await buildPackRun(loaded, { workflow: "intake-pipeline" });
+    expect(run.workflow.id).toBe("intake-pipeline");
 
     const lock = await readManufactureLock(packDir);
     expect(lock.assets[0]).toMatchObject({
@@ -268,7 +270,7 @@ describe("manufacture: pipeline", () => {
         issues: [],
       },
     });
-    expect(issues.map((issue) => issue.code)).toContain("schema_invalid");
+    expect(issues.map((issue) => issue.code)).toContain("invalid_graph");
   });
 });
 
