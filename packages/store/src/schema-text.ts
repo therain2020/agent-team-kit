@@ -1055,6 +1055,7 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   eval_plan JSONB NOT NULL DEFAULT '{}'::jsonb,
   source_ref JSONB,
   revert_ref TEXT,
+  revert JSONB,
   budget_ref TEXT,
   approval_ref TEXT,
   outcome JSONB,
@@ -1063,6 +1064,8 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   updated_at TIMESTAMPTZ NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE change_proposals ADD COLUMN IF NOT EXISTS revert JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
   ON change_proposals(workspace_id, created_at DESC);
@@ -2128,6 +2131,7 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   eval_plan TEXT NOT NULL DEFAULT '{}',
   source_ref TEXT,
   revert_ref TEXT,
+  revert TEXT,
   budget_ref TEXT,
   approval_ref TEXT,
   outcome TEXT,
@@ -2136,6 +2140,8 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE change_proposals ADD COLUMN revert TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
   ON change_proposals(workspace_id, created_at DESC);

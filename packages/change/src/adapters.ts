@@ -1,5 +1,6 @@
 import {
   type ChangeProposal,
+  type ChangeRevertRef,
   type ChangeRisk,
   type ChangeTrigger,
   newChangeProposal,
@@ -41,6 +42,8 @@ export interface IterationChangeResult {
   verificationPass: boolean;
   applyStatus?: string;
   commit?: string;
+  baseSha?: string;
+  backupDir?: string;
   error?: string;
   changedFiles?: string[];
 }
@@ -54,6 +57,8 @@ export interface IterationChangeInput {
   checks?: string[];
   diffRef?: string | null;
   verificationRef?: string | null;
+  /** Overrides the revert record derived from `result`. */
+  revert?: ChangeRevertRef | null;
   at?: string;
   actor?: string;
 }
@@ -70,6 +75,17 @@ export function adaptIterationChange(input: IterationChangeInput): ChangePlan {
   const at = input.at ?? new Date().toISOString();
   const actor = input.actor ?? "shadow:iterate";
   const { task, result } = input;
+  const revert =
+    input.revert !== undefined
+      ? input.revert
+      : result.commit
+        ? {
+            kind: "code" as const,
+            commit: result.commit,
+            baseSha: result.baseSha ?? null,
+            backupDir: result.backupDir ?? null,
+          }
+        : null;
 
   const proposal = newChangeProposal({
     id: `chg_it_${safe(input.workspaceId)}_${safe(input.iterationId)}_${safe(task.id)}`,
@@ -86,6 +102,7 @@ export function adaptIterationChange(input: IterationChangeInput): ChangePlan {
       snapshotRef: null,
     },
     revertRef: result.commit ? `commit:${result.commit}` : null,
+    revert,
     contentRef: input.diffRef ?? null,
     sourceRef: {
       kind: "iteration",
@@ -166,11 +183,19 @@ export interface EvolutionCycleLike {
   evalSnapshotPath?: string;
   evaluatorHash?: string;
   error?: string;
+  /** Backup written by the promotion; enables instruction rollback. */
+  promote?: {
+    targetDir: string;
+    backupDir: string;
+    hash: string;
+  } | null;
 }
 
 export interface EvolutionChangeInput {
   workspaceId: string;
   cycle: EvolutionCycleLike;
+  /** Overrides the revert record derived from `cycle.promote`. */
+  revert?: ChangeRevertRef | null;
   actor?: string;
   at?: string;
 }
@@ -193,6 +218,17 @@ export function adaptEvolutionChange(
   }
   const at = input.at ?? cycle.createdAt;
   const actor = input.actor ?? "shadow:evolve";
+  const revert =
+    input.revert !== undefined
+      ? input.revert
+      : cycle.promote
+        ? {
+            kind: "instruction" as const,
+            targetDir: cycle.promote.targetDir,
+            backupDir: cycle.promote.backupDir,
+            hash: cycle.promote.hash,
+          }
+        : null;
 
   const proposal = newChangeProposal({
     id: `chg_cy_${safe(input.workspaceId)}_${safe(cycle.cycleId)}`,
@@ -214,6 +250,7 @@ export function adaptEvolutionChange(
       snapshotRef: cycle.evalSnapshotPath ?? null,
     },
     revertRef: cycle.baselineName ? `variant:${cycle.baselineName}` : null,
+    revert,
     contentRef: null,
     sourceRef: { kind: "evolution", id: cycle.cycleId, taskId: null },
     actor,

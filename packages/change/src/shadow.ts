@@ -62,6 +62,8 @@ export interface ShadowIterationInput {
     verificationPass: boolean;
     applyStatus?: string;
     commit?: string;
+    baseSha?: string;
+    backupDir?: string;
     error?: string;
   }>;
   checks?: string[];
