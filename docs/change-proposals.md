@@ -6,7 +6,7 @@ described in `85-autonomy-1.0.md` §3.5:
 - **iterate** — task-centric product improvements (`@kit/iteration`,
   `@kit/engine`), substrate `code`.
 - **evolve** — prompt/workflow evolution (`@kit/evolution`), substrate
-  `prompt`/`workflow`.
+  `prompt`/`skill`/`workflow`.
 
 Before this contract each loop had its own records (`IterationTaskResult` +
 `MergeTicket` vs `EvolutionCycleRecord` + `Variant`) and no shared audit or
@@ -75,6 +75,24 @@ $env:KIT_CHANGE_PIPELINE = "shadow"   # or "on"; unset = off
 - `on`: reserved for future enforcement (promotion bridge); currently identical
   to `shadow`.
 
+## Evolution auto-promotion (`cycle.promote`)
+
+An evolution cycle that auto-applies a candidate writes its promotion into the
+cycle record (`promote`) and unconditionally records a `cycle.promote`
+`ChangeProposal`, independently of `KIT_CHANGE_PIPELINE` (85 §3.5.6). The
+proposal carries:
+
+- `producer: evolve` and a deterministic id `chg_cy_<workspace>_<cycleId>`;
+- `substrate` mapped from the variant surface (`context` → `prompt`,
+  `tool` → `skill`, `architecture` → `workflow`);
+- `approvalRef` when the promotion gate required an approval;
+- `revert` as an `instruction` record (`targetDir`, `backupDir`, `hash`) built
+  from the backup written by `promoteVariant`;
+- the full state history ending in `promoted`, so `kitd` can roll it back.
+
+If the backup cannot be read, the promotion still stands but a governance alert
+is written; no false revert reference is claimed.
+
 ## Rollback by change id
 
 Every proposal carries two related fields:
@@ -101,10 +119,12 @@ powershell -File scripts\kitd.ps1 list
 
 `kitd.ps1` stays thin and calls `scripts/change-rollback.ts`, which:
 
-- refuses when the worktree is dirty and records the refusal;
+- for `code`, refuses when the worktree is dirty and records the refusal;
 - for `code`, runs `git revert <commit>` for exactly the recorded commit,
   which must be an ancestor of `HEAD` (another change's commit is refused);
-- for `instruction`, re-verifies the backup hash before restoring files;
+- for `instruction`, re-verifies the backup hash before restoring files and
+  tolerates dirt inside the target pack (evolution promotions are uncommitted),
+  refusing only unrelated dirty paths outside it;
 - acquires the same cross-process apply lock as the 86 single-writer queue;
 - transitions the proposal to `rolled_back`; and
 - appends one entry per attempt (dry-run, refusal, success, failure) to the

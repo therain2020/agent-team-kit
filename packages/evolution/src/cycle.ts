@@ -1,6 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { recordEvolutionCycleProposal } from "@kit/change";
+import { hashVariantBackup } from "@kit/change/rollback";
 import {
   type EvolutionBudgetLedger,
   type EvolutionBudgetPhase,
@@ -12,6 +14,7 @@ import {
 } from "@kit/core";
 import { calculateCostCny, createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
+import type { ChangeProposalService } from "@kit/store";
 import {
   DEFAULT_STATE,
   evaluateCanary,
@@ -42,6 +45,7 @@ import {
 } from "./drift";
 import {
   type EvolutionRecord,
+  type PromoteVariantResult,
   compareVariants,
   initVariant,
   proposeVariant,
@@ -118,6 +122,21 @@ export interface EvolutionBudgetReconciliation {
   chargeIds: string[];
 }
 
+/**
+ * Provenance of an auto-promoted cycle (85 §3.5.6). `changeId` is the unified
+ * `ChangeProposal` id; `backupDir`/`hash` are the structured instruction revert
+ * that `kitd rollback -Change <changeId>` restores.
+ */
+export interface EvolutionPromotionRecord {
+  targetDir: string;
+  backupDir: string;
+  hash: string;
+  /** Files copied by the promotion (relative to `targetDir`). */
+  files: string[];
+  /** Promotion approval reference when the gate required one. */
+  approvalRef: string | null;
+}
+
 export interface EvolutionCycleRecord {
   cycleId: string;
   packDir: string;
@@ -165,6 +184,12 @@ export interface EvolutionCycleRecord {
   divergence?: DivergenceSummary;
   /** Drift findings observed at the start of the cycle (70 §3.5). */
   drift?: DriftSummary;
+  /** Evolution surface of the promoted variant. */
+  variantKind?: "context" | "tool" | "architecture";
+  /** Unified `ChangeProposal` id written for an auto-promotion. */
+  changeId?: string;
+  /** Structured promotion record; the rollback source for `changeId`. */
+  promote?: EvolutionPromotionRecord;
 }
 
 export interface CycleOptions {
@@ -220,6 +245,13 @@ export interface CycleOptions {
   governancePath?: string;
   /** Provider pin for model-drift detection (default KIT_MODEL_PROVIDER_PIN). */
   modelPin?: string;
+  /**
+   * Unified change service for the `cycle.promote` proposal. Defaults to
+   * `repo.changeProposals`; file repositories without a store leave it unset.
+   */
+  changes?: ChangeProposalService;
+  /** Promotion approval reference recorded on the `cycle.promote` proposal. */
+  promotionApprovalRef?: string;
 }
 
 export async function runEvolutionCycle(
@@ -338,6 +370,40 @@ export async function runEvolutionCycle(
     } catch {
       // Events are explanatory; the cycle record and freeze state remain the
       // durable copy, so a failed append must not change the cycle outcome.
+    }
+  };
+  const changeService = options.changes ?? repo?.changeProposals;
+  /**
+   * Persists the `cycle.promote` ChangeProposal (85 §3.5.6) so the applied
+   * instruction change is rollbackable by changeId. Best-effort like the rest
+   * of the cycle's governance writes: a store failure is recorded and never
+   * rewrites a promotion that already happened.
+   */
+  const recordCyclePromotion = async (
+    record: EvolutionCycleRecord,
+  ): Promise<string | null> => {
+    if (!changeService) {
+      return null;
+    }
+    try {
+      const proposal = await recordEvolutionCycleProposal(changeService, {
+        workspaceId,
+        cycle: record,
+        actor: "evolution:cycle",
+        ...(options.promotionApprovalRef
+          ? { approvalRef: options.promotionApprovalRef }
+          : {}),
+      });
+      return proposal?.id ?? null;
+    } catch (error) {
+      await recordGovernance({
+        kind: "attribution",
+        action: "alert",
+        reason: `cycle ${record.cycleId} was promoted but its change proposal could not be recorded: ${toMessage(error)}`,
+        cycleIds: [record.cycleId],
+        details: { phase: "promote" },
+      });
+      return null;
     }
   };
   const persistCycle = async (record: EvolutionCycleRecord) => {
@@ -1022,16 +1088,35 @@ export async function runEvolutionCycle(
 
     if (options.autoApply && !options.stub) {
       const { promoteVariant } = await import("./evolve");
-      await promoteVariant(candidate.dir, loaded.dir, true, repo);
+      const promoted = await promoteVariant(
+        candidate.dir,
+        loaded.dir,
+        true,
+        repo,
+      );
+      const promote = await promotionRecord(
+        promoted,
+        loaded.dir,
+        options.promotionApprovalRef ?? null,
+        cycleId,
+        recordGovernance,
+      );
       await markCanaryPromoted(`auto-promoted by evolution cycle ${cycleId}`, {
         statePath,
         ...(repo ? { repo } : {}),
       });
-      return await persistCycle({
+      const promotedRecord: EvolutionCycleRecord = {
         ...updated,
         decision: "promoted",
         autoApplied: true,
         rationale: "candidate passed the canary and was promoted with a backup",
+        variantKind: candidate.meta.kind ?? "context",
+        ...(promote ? { promote } : {}),
+      };
+      const changeId = await recordCyclePromotion(promotedRecord);
+      return await persistCycle({
+        ...promotedRecord,
+        ...(changeId ? { changeId } : {}),
       });
     }
 
@@ -1329,6 +1414,59 @@ function averageScore(record: EvolutionRecord): number {
 
 function round(value: number): number {
   return Math.round(value * 10000) / 10000;
+}
+
+function toMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Builds the structured promotion record from an applied `promoteVariant`.
+ * A missing/unreadable backup means the change cannot be rolled back through
+ * the unified changeId path; that is recorded as a governance alert rather
+ * than silently claiming a revert exists.
+ */
+async function promotionRecord(
+  promoted: PromoteVariantResult,
+  targetDir: string,
+  approvalRef: string | null,
+  cycleId: string,
+  recordGovernance: (
+    input: Omit<
+      EvolutionGovernanceEvent,
+      "eventId" | "createdAt" | "workspaceId"
+    >,
+  ) => Promise<void>,
+): Promise<EvolutionPromotionRecord | undefined> {
+  if (!promoted.backupDir) {
+    await recordGovernance({
+      kind: "attribution",
+      action: "alert",
+      reason: `cycle ${cycleId} promoted without a backup; the change has no reversible record`,
+      cycleIds: [cycleId],
+      details: { phase: "promote" },
+    });
+    return undefined;
+  }
+  try {
+    const hash = await hashVariantBackup(promoted.backupDir);
+    return {
+      targetDir,
+      backupDir: promoted.backupDir,
+      hash,
+      files: [...promoted.files],
+      approvalRef,
+    };
+  } catch (error) {
+    await recordGovernance({
+      kind: "attribution",
+      action: "alert",
+      reason: `cycle ${cycleId} promotion backup ${promoted.backupDir} is unreadable: ${toMessage(error)}`,
+      cycleIds: [cycleId],
+      details: { phase: "promote" },
+    });
+    return undefined;
+  }
 }
 
 function stripFrontmatter(text: string): string {

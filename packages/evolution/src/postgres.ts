@@ -104,6 +104,8 @@ interface CycleRow {
   outcome_ref: string | null;
   divergence: NonNullable<EvolutionCycleRecord["divergence"]> | string | null;
   drift: NonNullable<EvolutionCycleRecord["drift"]> | string | null;
+  change_id: string | null;
+  promote: EvolutionCycleRecord["promote"] | string | null;
   created_at: Date | string;
 }
 
@@ -155,6 +157,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
   readonly workspaceId: string;
   readonly budget: EvolutionBudgetLedger;
   readonly costSink: CostLedgerSink;
+  readonly changeProposals: Store["changeProposals"];
   private readonly variantsRoot: string;
   private readonly archivePath: string;
   private readonly cyclesPath: string;
@@ -169,6 +172,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
     this.workspaceId = options.workspaceId ?? "default";
     this.budget = store.budgetService;
     this.costSink = store.costLedger;
+    this.changeProposals = store.changeProposals;
     this.variantsRoot = path.resolve(options.variantsRoot ?? "variants");
     this.archivePath = path.resolve(
       options.archivePath ?? path.join(this.variantsRoot, "archive.jsonl"),
@@ -681,7 +685,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         budget_status, budget_refs, budget_reconciliation,
         eval_snapshot_path, eval_snapshot_hash, evaluator_hash,
         evaluator_approval_ref, outcome_score, outcome_pass, outcome_source,
-        outcome_ref, divergence, drift, created_at
+        outcome_ref, divergence, drift, change_id, promote, created_at
       ) VALUES (
         ${record.cycleId}, ${this.workspaceId}, ${record.packDir}, ${record.agentId},
         ${record.hypothesis}, ${this.store.sql.json(record.signals)},
@@ -705,6 +709,8 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         ${record.outcomeSource ?? null}, ${record.outcomeRef ?? null},
         ${record.divergence ? this.store.sql.json(record.divergence) : null},
         ${record.drift ? this.store.sql.json(record.drift) : null},
+        ${record.changeId ?? null},
+        ${record.promote ? this.store.sql.json(record.promote) : null},
         ${record.createdAt}
       )
       ON CONFLICT (cycle_id) DO NOTHING
@@ -964,6 +970,9 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
     row.outcome_source === "human_review"
       ? row.outcome_source
       : undefined;
+  const promote = parseOptionalJson<
+    NonNullable<EvolutionCycleRecord["promote"]>
+  >(row.promote ?? null);
   return {
     cycleId: row.cycle_id,
     packDir: row.pack_dir,
@@ -1018,6 +1027,8 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
     ...(row.outcome_ref ? { outcomeRef: row.outcome_ref } : {}),
     ...(divergence ? { divergence } : {}),
     ...(drift ? { drift } : {}),
+    ...(promote ? { promote } : {}),
+    ...(row.change_id ? { changeId: row.change_id } : {}),
   };
 }
 

@@ -216,6 +216,7 @@
       "name": "@kit/evolution",
       "version": "0.9.0",
       "dependencies": {
+        "@kit/change": "workspace:*",
         "@kit/core": "workspace:*",
         "@kit/model": "workspace:*",
         "@kit/pack": "workspace:*",

@@ -183,6 +183,49 @@ describe("evolve → ChangeProposal adapter", () => {
   it("does not emit a proposal for a skipped cycle", () => {
     expect(adaptEvolutionChange(evolution("skipped"))).toBeNull();
   });
+
+  it("maps an auto-promoted cycle's backup onto a structured instruction revert", () => {
+    const plan = adaptEvolutionChange(
+      evolution("promoted", {
+        variantKind: "context",
+        promote: {
+          targetDir: "/packs/demo",
+          backupDir: "/packs/demo/.backup/evolution/one",
+          hash: "abc123",
+          approvalRef: null,
+        },
+      }),
+    );
+    if (!plan) {
+      throw new Error("expected a plan");
+    }
+    expect(plan.proposal.revert).toEqual({
+      kind: "instruction",
+      targetDir: "/packs/demo",
+      backupDir: "/packs/demo/.backup/evolution/one",
+      hash: "abc123",
+    });
+    expect(plan.proposal.approvalRef).toBeNull();
+  });
+
+  it("maps evolution surfaces to the unified substrate", () => {
+    const skill = adaptEvolutionChange(
+      evolution("canary", { variantKind: "tool" }),
+    );
+    const workflow = adaptEvolutionChange(
+      evolution("canary", { variantKind: "architecture" }),
+    );
+    expect(skill?.proposal.substrate).toBe("skill");
+    expect(workflow?.proposal.substrate).toBe("workflow");
+  });
+
+  it("records the promotion approval reference when supplied", () => {
+    const plan = adaptEvolutionChange({
+      ...evolution("promoted"),
+      approvalRef: "apr_1",
+    });
+    expect(plan?.proposal.approvalRef).toBe("apr_1");
+  });
 });
 
 describe("both loops share one contract and state machine", () => {
