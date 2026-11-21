@@ -28,12 +28,15 @@ import {
 } from "@/lib/approvals-view";
 import {
   type FactoryItem,
+  type FactorySnapshot,
   batchTargetsFor,
+  missingPausedRunIds,
   needsConfirmation,
   orderGateItems,
 } from "@/lib/factory";
 import type { ApprovalTowerSnapshot } from "@/lib/inbox-shared";
 import { groupApprovals } from "@/lib/inbox-shared";
+import { officeAgentHref, officeRoomHref } from "@/lib/office-deeplink";
 import {
   type DecisionKind,
   type DecisionTarget,
@@ -62,6 +65,9 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+
+/** A new paused run waits this long before the line refetches its snapshot. */
+const FACTORY_RESYNC_DEBOUNCE_MS = 1_200;
 
 type DialogState =
   | { kind: "single"; decision: DecisionKind; target: DecisionTarget }
@@ -136,7 +142,11 @@ export function ApprovalsSurface({
   const shouldFocus = useRef(false);
   const deepLinkHandled = useRef(false);
   const [scopedRunId, setScopedRunId] = useState<string | null>(initialRunId);
+  const [requestMissing, setRequestMissing] = useState<string | null>(null);
   const runHandled = useRef<string | null>(null);
+  /** Runs already checked against `/api/factory`; a paused run without an
+   * approval must not make the line refetch forever. */
+  const factoryResynced = useRef(new Set<string>());
 
   // The world stream is the source of truth for the line: a delta that shows
   // the run left "paused" removes the workpiece without waiting for a poll.
@@ -146,6 +156,53 @@ export function ApprovalsSurface({
     }
     setItems((current) => reconcileFactoryItems(current, world.world));
   }, [world.world]);
+
+  // `approval.requested` reaches us through the same stream before the SSR
+  // snapshot knows about the new workpiece. Refetch the factory snapshot once
+  // per new paused run so the gate gains the item within ~2s.
+  const missingPaused = useMemo(
+    () => missingPausedRunIds(items, world.world),
+    [items, world.world],
+  );
+  const missingKey = missingPaused.join(",");
+  useEffect(() => {
+    // The key changes only when the missing set changes; the array identity
+    // changes on every world delta and would abort an in-flight fetch.
+    const runIds = missingKey ? missingKey.split(",") : [];
+    if (
+      runIds.length === 0 ||
+      !runIds.some((runId) => !factoryResynced.current.has(runId))
+    ) {
+      return;
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      for (const runId of runIds) {
+        factoryResynced.current.add(runId);
+      }
+      void (async () => {
+        try {
+          const response = await fetch("/api/factory", {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            return;
+          }
+          const payload = (await response.json()) as FactorySnapshot;
+          if (Array.isArray(payload.items)) {
+            setItems(payload.items);
+          }
+        } catch {
+          // The stream stays authoritative; the next delta retries.
+        }
+      })();
+    }, FACTORY_RESYNC_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [missingKey]);
 
   const towerCards = useMemo(
     () =>
@@ -205,6 +262,11 @@ export function ApprovalsSurface({
     router.replace(approvalsHref("factory"));
   }, [router]);
 
+  const clearRequest = useCallback(() => {
+    setRequestMissing(null);
+    router.replace(approvalsHref("factory"));
+  }, [router]);
+
   /** Switching views leaves the run scope; the URL must follow. */
   const selectView = useCallback(
     (next: ApprovalsView) => {
@@ -231,6 +293,11 @@ export function ApprovalsSurface({
     : null;
   const activeAsItem =
     activeItem ?? (activeCard ? towerCardToItem(activeCard) : null);
+  // Factory → office (97 §3.5): land on the producer's station when the
+  // workpiece knows one, otherwise on the office floor.
+  const officeHref = activeAsItem?.producerAgentId
+    ? officeAgentHref(activeAsItem.producerAgentId)
+    : officeRoomHref();
 
   /**
    * Batch targets for whatever is selected, no matter which view selected it:
@@ -291,6 +358,9 @@ export function ApprovalsSurface({
       gate.find((entry) => entry.requestId === initialRequestId) ??
       (card ? towerCardToItem(card) : undefined);
     if (!item) {
+      // Unknown or already-decided request: show an explicit empty state
+      // instead of silently falling back to the top card (97 §3.5).
+      setRequestMissing(initialRequestId);
       return;
     }
     setActiveId(initialRequestId);
@@ -515,6 +585,12 @@ export function ApprovalsSurface({
         toggleSelect(activeId);
         return;
       }
+      if (key === "o" && !queueMode) {
+        // Room switch (97 §3.5): O walks back through the office door.
+        event.preventDefault();
+        router.push(officeHref);
+        return;
+      }
       if (event.key === "Escape") {
         if (drawerItem) {
           event.preventDefault();
@@ -542,9 +618,11 @@ export function ApprovalsSurface({
     dialog,
     drawerItem,
     moveActive,
+    officeHref,
     openDrawer,
     queueMode,
     requestDecision,
+    router,
     selected.size,
     toggleSelect,
   ]);
@@ -722,6 +800,23 @@ export function ApprovalsSurface({
             {t("showAll")}
           </Button>
         </section>
+      ) : requestMissing && !scopedRunId ? (
+        <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-8 text-center">
+          <p className="text-sm font-medium text-amber-200">
+            {t("requestEmptyTitle")}
+          </p>
+          <p className="mt-1 text-[11px] text-zinc-400">
+            {t("requestEmptyHint", { requestId: requestMissing })}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-3"
+            onClick={clearRequest}
+          >
+            {t("showAll")}
+          </Button>
+        </section>
       ) : queueMode ? (
         <>
           <QueueView
@@ -814,6 +909,7 @@ export function ApprovalsSurface({
           pending={decisions.pending}
           refreshing={refreshing}
           shift={shift}
+          officeHref={officeHref}
           onActivate={setActiveId}
           onOpen={openDrawer}
           onApprove={(item) => requestDecision(item, "approve")}

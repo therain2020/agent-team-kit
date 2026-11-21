@@ -447,6 +447,8 @@ function renderApprovals(data: {
     runId: string;
     stageName: string | null;
     stageId: string | null;
+    substrate: string | null;
+    changeId: string | null;
     version: number;
     slaDueAt: string | null;
     expiresAt: string | null;
@@ -457,12 +459,17 @@ function renderApprovals(data: {
     console.log("no approvals");
   } else {
     for (const item of data.approvals) {
+      // Change proposals share the queue; show the substrate so operators can
+      // tell a code patch from an instruction promotion at a glance.
+      const target = item.changeId
+        ? `${item.changeId} [${item.substrate ?? "change"}]`
+        : (item.stageName ?? item.stageId ?? "-");
       console.log(
         [
           item.approvalId,
           item.status.padEnd(8),
           item.runId,
-          item.stageName ?? item.stageId ?? "-",
+          target,
           `v${item.version}`,
           `due=${item.slaDueAt ?? item.expiresAt ?? "-"}`,
         ].join("  "),

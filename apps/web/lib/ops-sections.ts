@@ -21,7 +21,6 @@ export const LEGACY_OPS_REDIRECTS = {
   "/degradation": "degradation",
   "/budgets": "budget",
   "/kill-switch": "control",
-  "/autopilot": "control",
 } as const satisfies Record<string, OpsSection>;
 
 export type LegacyOpsPath = keyof typeof LEGACY_OPS_REDIRECTS;

@@ -3,10 +3,167 @@ import { lookup } from "node:dns/promises";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { argString, resolveInside, truncate } from "./paths";
+import { argNumber, argString, resolveInside, truncate } from "./paths";
 import type { Tool, ToolContext } from "./types";
 
 const execFileAsync = promisify(execFile);
+
+/** One result from {@link webSearchTool}; data only, never instructions. */
+export interface WebSearchHit {
+  title: string;
+  url: string;
+  publishedAt?: string;
+  summary?: string;
+  score?: number;
+  provider: "hackernews" | "github";
+}
+
+interface HnSearchHit {
+  objectID?: string;
+  title?: string;
+  url?: string;
+  created_at?: string;
+  points?: number;
+  story_text?: string;
+}
+
+interface GhSearchRepo {
+  full_name?: string;
+  html_url?: string;
+  description?: string | null;
+  stargazers_count?: number;
+  created_at?: string;
+}
+
+export const webSearchTool: Tool = {
+  definition: {
+    name: "web_search",
+    description:
+      "Search public developer sources (Hacker News stories and GitHub repositories) for a keyword query. Returns titles, links and dates as data.",
+    risk: "network",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search keywords" },
+        maxResults: {
+          type: "number",
+          description: "Results per provider (default 5, max 10)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  async execute(args, context) {
+    const query = argString(args, "query");
+    const max = Math.max(1, Math.min(argNumber(args, "maxResults") ?? 5, 10));
+    const errors: string[] = [];
+    const hits: WebSearchHit[] = [];
+
+    const hnUrl = `https://hn.algolia.com/api/v1/search?tags=story&hitsPerPage=${max}&query=${encodeURIComponent(query)}`;
+    try {
+      const payload = await searchJson<{ hits?: HnSearchHit[] }>(
+        hnUrl,
+        context,
+      );
+      for (const hit of payload.hits ?? []) {
+        const id = hit.objectID ?? "";
+        const url = hit.url || `https://news.ycombinator.com/item?id=${id}`;
+        if (!hit.title || !url) {
+          continue;
+        }
+        hits.push({
+          title: hit.title,
+          url,
+          ...(hit.created_at ? { publishedAt: hit.created_at } : {}),
+          ...(hit.story_text
+            ? { summary: stripHtml(hit.story_text).slice(0, 300) }
+            : {}),
+          ...(typeof hit.points === "number" ? { score: hit.points } : {}),
+          provider: "hackernews",
+        });
+      }
+    } catch (error) {
+      errors.push(`hackernews: ${errorMessage(error)}`);
+    }
+
+    const ghUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&order=desc&per_page=${max}`;
+    try {
+      const payload = await searchJson<{ items?: GhSearchRepo[] }>(
+        ghUrl,
+        context,
+        {
+          accept: "application/vnd.github+json",
+          ...(process.env.GITHUB_TOKEN
+            ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+            : {}),
+        },
+      );
+      for (const repo of payload.items ?? []) {
+        if (!repo.full_name || !repo.html_url) {
+          continue;
+        }
+        hits.push({
+          title: repo.full_name,
+          url: repo.html_url,
+          ...(repo.created_at ? { publishedAt: repo.created_at } : {}),
+          ...(repo.description
+            ? { summary: repo.description.slice(0, 300) }
+            : {}),
+          ...(typeof repo.stargazers_count === "number"
+            ? { score: repo.stargazers_count }
+            : {}),
+          provider: "github",
+        });
+      }
+    } catch (error) {
+      errors.push(`github: ${errorMessage(error)}`);
+    }
+
+    if (hits.length === 0 && errors.length > 0) {
+      throw new Error(`web search failed (${errors.join("; ")})`);
+    }
+
+    return {
+      content: truncate(
+        hits
+          .map(
+            (hit) =>
+              `${hit.title} — ${hit.url}${hit.publishedAt ? ` (${hit.publishedAt.slice(0, 10)})` : ""}`,
+          )
+          .join("\n") || "(no results)",
+        20_000,
+      ),
+      metadata: { results: hits, errors, query },
+    };
+  },
+};
+
+async function searchJson<T>(
+  url: string,
+  context: Pick<ToolContext, "allowNetwork" | "allowLocalhost">,
+  headers: Record<string, string> = {},
+): Promise<T> {
+  await assertUrlAllowed(url, context);
+  const response = await fetch(url, {
+    headers: { "user-agent": "agent-team-kit/1.0", ...headers },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return (await response.json()) as T;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function stripHtml(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export const httpFetchTool: Tool = {
   definition: {

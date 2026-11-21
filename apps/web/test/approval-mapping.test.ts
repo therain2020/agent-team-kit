@@ -46,6 +46,8 @@ describe("approval API item mapping", () => {
       version: 1,
       slaDueAt: "2026-11-16T00:00:00.000Z",
       runStatus: "paused",
+      substrate: null,
+      changeId: null,
     });
     expect(Object.keys(item)).toEqual(
       expect.arrayContaining([

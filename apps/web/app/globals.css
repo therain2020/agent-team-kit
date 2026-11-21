@@ -496,6 +496,24 @@
   animation: factory-belt 1.6s linear infinite;
 }
 
+/*
+ * Room switch wipe (97 §3.5): one stepped reveal while navigating between the
+ * office and the factory. The component only mounts it when motion is enabled,
+ * and the reduced-motion guard below removes it as a second line of defence.
+ */
+@keyframes room-wipe {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.room-wipe {
+  animation: room-wipe 160ms steps(4, end) both;
+}
+
 @keyframes atlas-dash {
   to {
     stroke-dashoffset: -27;
@@ -539,6 +557,7 @@
 @media (prefers-reduced-motion: reduce) {
   .office-screen,
   .factory-belt-run,
+  .room-wipe,
   .atlas-flow,
   .atlas-node-pulse,
   .atlas-bar {

@@ -25,6 +25,12 @@ export interface ApprovalBudgetImpact {
 export interface ApprovalTowerCard {
   requestId: string;
   runId: string;
+  /** Set when the request guards a ChangeProposal instead of a run. */
+  changeId: string | null;
+  /** ChangeProposal substrate (code/prompt/workflow/skill) for the label. */
+  substrate: string | null;
+  /** Rollback reference the proposal carries, shown as evidence. */
+  revertRef: string | null;
   workflowId: string;
   stageId: string;
   stageName: string;
