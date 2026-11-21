@@ -9,12 +9,14 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadPack } from "@kit/pack";
+import { assembleComponents, createPack, loadPack } from "@kit/pack";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   importInstalledPack,
   installWorkshop,
+  listComponents,
   resolveInstallTarget,
+  workshopComponentLibrary,
 } from "../src";
 
 const SHA = "a".repeat(40);
@@ -35,18 +37,6 @@ files:
 permissions:
   code: false
   filesystem: readonly
-`;
-
-const WORKFLOW_MANIFEST = `apiVersion: agentteam/v1
-kind: workflow
-id: demo-flow
-name: Demo Flow
-version: 1.0.0
-entry: workflows/demo.yaml
-files:
-  - workflows/demo.yaml
-permissions:
-  code: false
 `;
 
 const TEAM = `apiVersion: agentteam/v1
@@ -89,7 +79,7 @@ permissions:
 Repeat the task input.
 `;
 
-const WORKFLOW = `id: demo
+const WORKFLOW = `id: demo-flow
 version: 1.0
 trigger:
   event: demo.event.received
@@ -114,6 +104,154 @@ const PACK_FILES: Record<string, string> = {
   "policies/autonomy.yaml": POLICY,
 };
 
+const AGENT_MANIFEST = `apiVersion: agentteam/v1
+kind: agent
+id: echo
+name: Echo
+version: 1.0.0
+entry: agent.md
+files:
+  - agent.md
+permissions:
+  code: false
+`;
+
+const WORKFLOW_MANIFEST = `apiVersion: agentteam/v1
+kind: workflow
+id: demo-flow
+name: Demo Flow
+version: 1.0.0
+entry: workflow.yaml
+files:
+  - workflow.yaml
+permissions:
+  code: false
+`;
+
+const TOOLPACK_MANIFEST = `apiVersion: agentteam/v1
+kind: toolpack
+id: weather
+name: Weather
+version: 1.0.0
+entry: toolpack.yaml
+files:
+  - toolpack.yaml
+permissions:
+  network: true
+  code: false
+`;
+
+const TOOLPACK = `apiVersion: agentteam/v1
+kind: ToolPack
+name: weather
+version: 1.0.0
+tools:
+  - name: weather_lookup
+    description: Look up the weather
+    risk: network
+    adapter: http
+    endpoint: https://api.example.com/weather
+    permissions:
+      network: true
+`;
+
+const SOURCE_MANIFEST = `apiVersion: agentteam/v1
+kind: source
+id: demo-source
+name: Demo Source
+version: 1.0.0
+entry: source.yaml
+files:
+  - source.yaml
+permissions:
+  network: true
+  code: false
+`;
+
+const SOURCE = `apiVersion: agentteam/source/v1
+kind: Source
+metadata:
+  name: demo-source
+  version: 1.0.0
+spec:
+  type: rss
+  request:
+    url: https://example.com/feed.xml
+`;
+
+const TEMPLATE_MANIFEST = `apiVersion: agentteam/v1
+kind: template
+id: demo-template
+name: Demo Template
+version: 1.0.0
+entry: template.yaml
+files:
+  - template.yaml
+permissions:
+  code: false
+`;
+
+const TEMPLATE = `apiVersion: agentteam/v1
+kind: TeamTemplate
+id: demo-template
+name: Demo Template
+workflow:
+  id: starter
+  version: 1.0
+  trigger:
+    event: task.received
+  stages:
+    - id: worker
+      type: agent
+      agent: worker
+      inputs: [task]
+      outputs: [worker_output]
+policy:
+  version: 1
+  actions:
+    - {match: "tool.web_search", class: "A"}
+autopilot:
+  version: 1
+  enabled: false
+  timezone: Asia/Shanghai
+  schedules: []
+  iterations: []
+  approval:
+    autoApprove:
+      enabled: false
+      maxRisk: low
+      onTimeout: wait
+  evolution:
+    enabled: false
+    cadence: weekly
+    autoApply: false
+`;
+
+const PIPELINE_MANIFEST = `apiVersion: agentteam/v1
+kind: pipeline
+id: demo-pipeline
+name: Demo Pipeline
+version: 1.0.0
+entry: pipeline.yaml
+files:
+  - pipeline.yaml
+permissions:
+  code: false
+`;
+
+const PIPELINE = `apiVersion: agentteam/v1
+kind: Pipeline
+id: demo-pipeline
+version: 1.0.0
+graph:
+  nodes:
+    - id: worker
+      type: agent
+      inputs: [task]
+      outputs: [worker_output]
+  edges: []
+`;
+
 afterEach(async () => {
   vi.unstubAllGlobals();
   await Promise.all(
@@ -121,12 +259,25 @@ afterEach(async () => {
   );
 });
 
-async function makeRoots(): Promise<{ workshop: string; packs: string }> {
+interface Roots {
+  base: string;
+  workshop: string;
+  packs: string;
+  sources: string;
+  templates: string;
+  components: string;
+}
+
+async function makeRoots(): Promise<Roots> {
   const base = await mkdtemp(path.join(tmpdir(), "kit-install-"));
   roots.push(base);
   return {
+    base,
     workshop: path.join(base, "workshop"),
     packs: path.join(base, "packs"),
+    sources: path.join(base, "sources"),
+    templates: path.join(base, "templates"),
+    components: path.join(base, "components"),
   };
 }
 
@@ -164,13 +315,15 @@ function text(value: string) {
 }
 
 function install(
-  roots: { workshop: string; packs: string },
-  overrides: { overwrite?: boolean } = {},
+  roots: Roots,
+  overrides: { overwrite?: boolean; hostPack?: string } = {},
 ) {
   return installWorkshop({
     repo: "acme/demo",
-    root: roots.workshop,
     packsRoot: roots.packs,
+    sourcesRoot: roots.sources,
+    templatesRoot: roots.templates,
+    componentsRoot: roots.components,
     acceptThirdParty: true,
     acceptUnsigned: true,
     acceptHighRisk: true,
@@ -178,27 +331,65 @@ function install(
   });
 }
 
-describe("workshop install destination", () => {
-  it("selects packs/ for pack manifests, workshop/ otherwise", () => {
-    const base = path.join(tmpdir(), "kit-install-target");
+describe("workshop install destination by manifest kind", () => {
+  it("routes every kind to its own local library", () => {
     const options = {
-      root: path.join(base, "workshop"),
-      packsRoot: path.join(base, "packs"),
+      packsRoot: path.resolve("kit-root", "packs"),
+      sourcesRoot: path.resolve("kit-root", "sources"),
+      templatesRoot: path.resolve("kit-root", "templates"),
+      componentsRoot: path.resolve("kit-root", "components"),
+      hostPack: path.resolve("kit-root", "packs", "host"),
     };
 
-    const packTarget = resolveInstallTarget(
+    const pack = resolveInstallTarget(
       { id: "demo-team", kind: "pack" },
       options,
     );
-    expect(packTarget.scope).toBe("packs");
-    expect(packTarget.dir).toBe(path.join(base, "packs", "demo-team"));
+    expect(pack.scope).toBe("packs");
+    expect(pack.dir).toBe(path.join(options.packsRoot, "demo-team"));
 
-    const workflowTarget = resolveInstallTarget(
-      { id: "demo-flow", kind: "workflow" },
+    const source = resolveInstallTarget(
+      { id: "demo-source", kind: "source" },
       options,
     );
-    expect(workflowTarget.scope).toBe("workshop");
-    expect(workflowTarget.dir).toBe(path.join(base, "workshop", "demo-flow"));
+    expect(source.scope).toBe("sources");
+    expect(source.format).toBe("file");
+    expect(source.dir).toBe(path.join(options.sourcesRoot, "demo-source.yaml"));
+
+    const template = resolveInstallTarget(
+      { id: "demo-template", kind: "template" },
+      options,
+    );
+    expect(template.scope).toBe("templates");
+    expect(template.dir).toBe(
+      path.join(options.templatesRoot, "demo-template"),
+    );
+
+    const pipeline = resolveInstallTarget(
+      { id: "demo-pipeline", kind: "pipeline" },
+      options,
+    );
+    expect(pipeline.scope).toBe("pack-workflows");
+    expect(pipeline.dir).toBe(
+      path.join(options.hostPack, "workflows", "demo-pipeline.yaml"),
+    );
+
+    for (const [kind, id] of [
+      ["agent", "echo"],
+      ["workflow", "demo-flow"],
+      ["toolpack", "weather"],
+      ["skillpack", "writer"],
+    ] as const) {
+      const target = resolveInstallTarget({ id, kind }, options);
+      expect(target.scope).toBe("components");
+      expect(target.dir).toBe(path.join(options.componentsRoot, kind, id));
+    }
+  });
+
+  it("refuses pipeline installs without a host pack", () => {
+    expect(() =>
+      resolveInstallTarget({ id: "p", kind: "pipeline" }, {}),
+    ).toThrow(/host pack/);
   });
 
   it("installs pack items into the packs root with provenance", async () => {
@@ -225,15 +416,119 @@ describe("workshop install destination", () => {
     expect(await readdir(dirs.packs)).toEqual(["demo-team"]);
   });
 
-  it("keeps non-pack kinds in the workshop directory", async () => {
-    stubFetch(WORKFLOW_MANIFEST, { "workflows/demo.yaml": WORKFLOW });
+  it("installs source items as sources/<name>.yaml plus metadata", async () => {
+    stubFetch(SOURCE_MANIFEST, { "source.yaml": SOURCE });
     const dirs = await makeRoots();
 
     const installed = await install(dirs);
 
-    expect(installed.scope).toBe("workshop");
-    expect(installed.dir).toBe(path.join(dirs.workshop, "demo-flow"));
-    expect(existsSync(dirs.packs)).toBe(false);
+    expect(installed.scope).toBe("sources");
+    expect(installed.dir).toBe(path.join(dirs.sources, "demo-source.yaml"));
+    expect(existsSync(installed.dir)).toBe(true);
+
+    const meta = JSON.parse(
+      await readFile(path.join(dirs.sources, "demo-source.meta.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(meta).toMatchObject({
+      kind: "source",
+      id: "demo-source",
+      repo: "acme/demo",
+      commit: SHA,
+      trust: "community",
+      secretScan: "passed",
+    });
+  });
+
+  it("installs template items into templates/<id>", async () => {
+    stubFetch(TEMPLATE_MANIFEST, { "template.yaml": TEMPLATE });
+    const dirs = await makeRoots();
+
+    const installed = await install(dirs);
+
+    expect(installed.scope).toBe("templates");
+    expect(installed.dir).toBe(path.join(dirs.templates, "demo-template"));
+    expect(existsSync(path.join(installed.dir, "template.yaml"))).toBe(true);
+    expect(existsSync(path.join(installed.dir, ".workshop.json"))).toBe(true);
+  });
+
+  it("installs component kinds into components/<kind>/<id>", async () => {
+    const dirs = await makeRoots();
+
+    stubFetch(AGENT_MANIFEST, { "agent.md": AGENT });
+    const agent = await install(dirs);
+    expect(agent.dir).toBe(path.join(dirs.components, "agent", "echo"));
+
+    stubFetch(WORKFLOW_MANIFEST, { "workflow.yaml": WORKFLOW });
+    const workflow = await install(dirs);
+    expect(workflow.dir).toBe(
+      path.join(dirs.components, "workflow", "demo-flow"),
+    );
+
+    stubFetch(TOOLPACK_MANIFEST, { "toolpack.yaml": TOOLPACK });
+    const toolpack = await install(dirs);
+    expect(toolpack.dir).toBe(
+      path.join(dirs.components, "toolpack", "weather"),
+    );
+
+    const list = await listComponents(dirs.components);
+    expect(list.map((entry) => `${entry.kind}/${entry.id}`)).toEqual([
+      "agent/echo",
+      "toolpack/weather",
+      "workflow/demo-flow",
+    ]);
+    expect(list.every((entry) => entry.valid)).toBe(true);
+    const weather = list.find((entry) => entry.id === "weather");
+    expect(weather?.provenance?.repo).toBe("acme/demo");
+    expect(weather?.provenance?.commit).toBe(SHA);
+    expect(weather?.version).toBe("1.0.0");
+  });
+
+  it("assembles an installed library component into a host pack", async () => {
+    stubFetch(AGENT_MANIFEST, { "agent.md": AGENT });
+    const dirs = await makeRoots();
+    await install(dirs);
+    await createPack({
+      root: dirs.packs,
+      dirName: "host-team",
+      name: "Host Team",
+      template: "minimal",
+    });
+    const host = path.join(dirs.packs, "host-team");
+
+    const result = await assembleComponents(
+      { packDir: host, components: [{ kind: "agent", id: "echo" }] },
+      workshopComponentLibrary(dirs.components),
+    );
+
+    expect(result.bindings).toHaveLength(1);
+    const loaded = await loadPack(host);
+    if (!loaded.ok) {
+      throw new Error(loaded.errors.join("; "));
+    }
+    expect(loaded.agents.has("echo")).toBe(true);
+  });
+
+  it("installs pipeline items into a host pack's workflows and registers them", async () => {
+    stubFetch(PIPELINE_MANIFEST, { "pipeline.yaml": PIPELINE });
+    const dirs = await makeRoots();
+    await createPack({
+      root: dirs.packs,
+      dirName: "host-team",
+      name: "Host Team",
+      template: "minimal",
+    });
+    const host = path.join(dirs.packs, "host-team");
+
+    const installed = await install(dirs, { hostPack: host });
+
+    expect(installed.scope).toBe("pack-workflows");
+    expect(installed.dir).toBe(
+      path.join(host, "workflows", "demo-pipeline.yaml"),
+    );
+    const team = await readFile(path.join(host, "team.yaml"), "utf8");
+    expect(team).toContain("workflows/demo-pipeline.yaml");
+    const loaded = await loadPack(host);
+    expect(loaded.ok).toBe(true);
   });
 });
 
@@ -257,7 +552,7 @@ describe("workshop install conflicts", () => {
 });
 
 describe("workshop install rollback", () => {
-  it("leaves nothing behind when validation fails", async () => {
+  it("leaves nothing behind when pack validation fails", async () => {
     stubFetch(PACK_MANIFEST, {
       ...PACK_FILES,
       // team.yaml points at an agent file that is never downloaded
@@ -272,6 +567,44 @@ describe("workshop install rollback", () => {
     await expect(attempt).rejects.toThrow(/installed pack is invalid/);
     expect(existsSync(path.join(dirs.packs, "demo-team"))).toBe(false);
     expect(await readdir(dirs.packs)).toEqual([]);
+  });
+
+  it("leaves nothing behind when a component is invalid", async () => {
+    stubFetch(TOOLPACK_MANIFEST, {
+      "toolpack.yaml": "apiVersion: agentteam/v1\nkind: ToolPack\n",
+    });
+    const dirs = await makeRoots();
+
+    await expect(install(dirs)).rejects.toThrow(
+      /installed toolpack is invalid/,
+    );
+    expect(existsSync(path.join(dirs.components, "toolpack", "weather"))).toBe(
+      false,
+    );
+  });
+
+  it("rolls a pipeline back when the host pack cannot load it", async () => {
+    stubFetch(PIPELINE_MANIFEST, {
+      "pipeline.yaml": PIPELINE.replace("id: worker", "id: ghost"),
+    });
+    const dirs = await makeRoots();
+    await createPack({
+      root: dirs.packs,
+      dirName: "host-team",
+      name: "Host Team",
+      template: "minimal",
+    });
+    const host = path.join(dirs.packs, "host-team");
+    const before = await readFile(path.join(host, "team.yaml"), "utf8");
+
+    await expect(install(dirs, { hostPack: host })).rejects.toThrow(
+      /unknown agent|register/i,
+    );
+
+    expect(existsSync(path.join(host, "workflows", "demo-pipeline.yaml"))).toBe(
+      false,
+    );
+    expect(await readFile(path.join(host, "team.yaml"), "utf8")).toBe(before);
   });
 
   it("keeps the previous install when an overwrite fails", async () => {

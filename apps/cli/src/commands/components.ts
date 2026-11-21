@@ -8,8 +8,10 @@ import {
   type AssemblyLock,
   type ComponentKind,
   componentsRoot,
+  installWorkshop,
   listComponents,
   loadComponent,
+  previewWorkshop,
   readAssemblyLock,
   workshopComponentLibrary,
 } from "@kit/workshop";
@@ -182,6 +184,111 @@ export function registerComponents(program: Command): void {
             `✓ ${list.length} component(s) valid under ${report.root}`,
           );
         });
+      },
+    );
+
+  components
+    .command("install <repo>")
+    .description(
+      "Acquire an agent/workflow/toolpack/skillpack from the workshop into the component library",
+    )
+    .option("--root <dir>", "components root (default: ./components)")
+    .option("--ref <ref>", "commit or branch")
+    .option("--overwrite", "replace an existing component", false)
+    .option("--yes", "accept third-party content", false)
+    .option(
+      "--accept-unsigned",
+      "install items without a verified signature",
+      false,
+    )
+    .option("--allow-code", "allow items with executable code", false)
+    .option(
+      "--accept-risk",
+      "accept high-risk permissions (network/code)",
+      false,
+    )
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        repo: string,
+        options: {
+          root?: string;
+          ref?: string;
+          overwrite?: boolean;
+          yes: boolean;
+          acceptUnsigned: boolean;
+          allowCode: boolean;
+          acceptRisk: boolean;
+          json?: boolean;
+        },
+      ) => {
+        const json = wantsJson(options);
+        if (!options.yes) {
+          emitError(
+            json,
+            new CliError(
+              "needs_confirmation",
+              "pass --yes to accept third-party workshop content",
+            ),
+          );
+          return;
+        }
+        try {
+          const preview = await previewWorkshop({
+            repo,
+            ref: options.ref,
+            token: process.env.GITHUB_TOKEN,
+          });
+          const kind = preview.manifest.kind;
+          if (!isComponentKind(kind)) {
+            emitError(
+              json,
+              new CliError(
+                "usage",
+                `${repo} is a ${kind} item, not a component`,
+                {
+                  hint: "use `kit workshop install` for pack, pipeline, source and template items",
+                },
+              ),
+            );
+            return;
+          }
+
+          const installed = await installWorkshop({
+            repo,
+            ref: preview.commit,
+            componentsRoot: options.root,
+            overwrite: options.overwrite === true,
+            acceptThirdParty: true,
+            acceptUnsigned: options.acceptUnsigned,
+            allowCode: options.allowCode,
+            acceptHighRisk: options.acceptRisk,
+            token: process.env.GITHUB_TOKEN,
+          });
+          const loaded = await loadComponent(
+            kind,
+            installed.manifest.id,
+            options.root,
+          );
+          if (!loaded.ok) {
+            emitError(
+              json,
+              new CliError(
+                "usage",
+                `${kind}/${preview.manifest.id} is invalid`,
+                { details: loaded.issues },
+              ),
+            );
+            return;
+          }
+          emit(json, { ...installed, component: loaded.component }, () => {
+            console.log(
+              `✓ ${kind}/${loaded.component.id} (${loaded.component.version ?? "unversioned"}) → ${installed.dir}`,
+            );
+          });
+        } catch (error) {
+          emitError(json, error);
+        }
       },
     );
 

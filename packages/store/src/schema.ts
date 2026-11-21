@@ -166,6 +166,13 @@ export const runRequests = pgTable("run_requests", {
   workspaceId: text("workspace_id").notNull(),
   workflowId: text("workflow_id").notNull(),
   kind: text("kind").notNull().default("pack_run"),
+  /**
+   * Admission priority class (P0–P3). Nullable so rows queued before 60.6 keep
+   * reading their class from the payload; new writes always set it.
+   */
+  priority: text("priority"),
+  /** Why the admission gate dropped or merged this request (60 §3.4). */
+  admissionReason: text("admission_reason"),
   payload: text("payload").notNull(),
   status: text("status").notNull(),
   claimedBy: text("claimed_by"),
