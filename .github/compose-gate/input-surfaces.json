@@ -69,6 +69,18 @@
       "review": "intent-draft-edit-approve"
     },
     {
+      "id": "C-10",
+      "label": "Studio new member / new workflow",
+      "files": [
+        "apps/web/components/studio/new-member-dialog.tsx",
+        "apps/web/components/studio/new-workflow-dialog.tsx"
+      ],
+      "status": "compose",
+      "composeKinds": ["studio.member", "studio.workflow"],
+      "fallback": "heuristic",
+      "review": "intent-draft-edit-approve"
+    },
+    {
       "id": "C-8",
       "label": "Welcome bootstrap",
       "files": ["apps/web/components/welcome/bootstrap-form.tsx"],
