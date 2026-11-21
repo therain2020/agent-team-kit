@@ -13,9 +13,13 @@ import { newId } from "@kit/core";
  * on the cycle record (`divergence`/`drift`) and in the freeze state; the
  * event log never becomes the source of truth (D-52).
  */
-export type EvolutionGovernanceKind = "divergence" | "drift";
+export type EvolutionGovernanceKind = "divergence" | "drift" | "attribution";
 
-export type EvolutionGovernanceAction = "paused" | "alert" | "reevaluate";
+export type EvolutionGovernanceAction =
+  | "paused"
+  | "alert"
+  | "reevaluate"
+  | "rollback";
 
 export interface EvolutionGovernanceEvent {
   eventId: string;
@@ -102,10 +106,13 @@ export function isGovernanceEvent(
   return (
     typeof record.eventId === "string" &&
     typeof record.workspaceId === "string" &&
-    (record.kind === "divergence" || record.kind === "drift") &&
+    (record.kind === "divergence" ||
+      record.kind === "drift" ||
+      record.kind === "attribution") &&
     (record.action === "paused" ||
       record.action === "alert" ||
-      record.action === "reevaluate") &&
+      record.action === "reevaluate" ||
+      record.action === "rollback") &&
     typeof record.reason === "string" &&
     Array.isArray(record.cycleIds) &&
     record.cycleIds.every((id) => typeof id === "string") &&

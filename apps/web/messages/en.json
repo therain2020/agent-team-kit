@@ -972,12 +972,38 @@
     "governanceNone": "No divergence or drift events recorded.",
     "governanceKind": {
       "divergence": "divergence",
-      "drift": "drift"
+      "drift": "drift",
+      "attribution": "live attribution"
     },
     "governanceAction": {
       "paused": "paused",
       "alert": "alert",
-      "reevaluate": "re-evaluate"
+      "reevaluate": "re-evaluate",
+      "rollback": "rolled back"
+    },
+    "attributionTitle": "Live attribution (offline vs. real results)",
+    "attributionBody": "Compares the live pass, apply, cost, risk and incident windows produced by a change with the champion window (kit evolve attribute). A change whose offline score rose while live results fell pauses evolution and is reverted through the unified change revertRef.",
+    "attributionCount": "{count} records",
+    "attributionEmpty": "No attribution records yet. Record one with kit evolve attribute <changeId> --offline-delta <n>.",
+    "attributionWindow": "champion {baselineTasks} tasks · pass {baselinePass}% → change {changedTasks} tasks · pass {changedPass}% · cost {cost}",
+    "attributionAudit": "audit {auditId}",
+    "attributionNote": "Records are written by kit evolve attribute; the rollback itself is the change proposal's audited rollback transition.",
+    "attributionStage": {
+      "canary": "canary",
+      "promoted": "promoted"
+    },
+    "attributionVerdict": {
+      "divergent": "divergent",
+      "regressed": "regressed",
+      "improved": "improved",
+      "flat": "flat",
+      "insufficient_data": "insufficient data"
+    },
+    "attributionRollback": {
+      "rolled_back": "reverted",
+      "already_rolled_back": "already reverted",
+      "skipped": "revert skipped",
+      "failed": "revert failed"
     },
     "decision": {
       "promoted": "promoted",

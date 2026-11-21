@@ -1503,6 +1503,22 @@ export async function reportIteration(
     entry.passRate = entry.total > 0 ? entry.verified / entry.total : 0;
   }
 
+  // The effective change is stamped on the run at start (canary routing);
+  // reading it here keeps the fitness artifact and signal lines attributable
+  // without threading it through every workflow input (85 §3.5).
+  const changeRows = await store.sql<
+    Array<{ change_id: string | null; change_stage: string | null }>
+  >`
+    SELECT change_id, change_stage FROM iteration_runs
+    WHERE iteration_id = ${input.iterationId} LIMIT 1
+  `;
+  const changeId = changeRows[0]?.change_id ?? null;
+  const rawChangeStage = changeRows[0]?.change_stage;
+  const changeStage =
+    rawChangeStage === "canary" || rawChangeStage === "promoted"
+      ? rawChangeStage
+      : null;
+
   const fitness: {
     iterationId: string;
     goal: string;
@@ -1514,6 +1530,8 @@ export async function reportIteration(
     applyRate: number;
     tokens: number;
     domains: typeof domains;
+    changeId?: string;
+    changeStage?: string;
     createdAt: string;
     signalError?: string;
   } = {
@@ -1527,6 +1545,8 @@ export async function reportIteration(
     applyRate: passed > 0 ? applied / passed : 0,
     tokens: totalTokens,
     domains,
+    ...(changeId ? { changeId } : {}),
+    ...(changeStage ? { changeStage } : {}),
     createdAt: new Date().toISOString(),
   };
 
@@ -1548,6 +1568,8 @@ export async function reportIteration(
         risk: task.risk,
         tokens: task.tokens ?? 0,
         ...(task.error ? { error: task.error } : {}),
+        ...(changeId ? { changeId } : {}),
+        ...(changeStage ? { changeStage } : {}),
       }),
     );
     await appendFile(

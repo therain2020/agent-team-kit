@@ -703,6 +703,10 @@ function buildStartJobInput(
       ...(route.applyMode && route.runMode === "LIVE"
         ? { applyMode: route.applyMode }
         : {}),
+      // The route's packDir is the variant directory when a variant is
+      // selected; carrying the id stamps the effective change on the run so
+      // live fitness can be attributed to it (85 §3.5).
+      ...(input.variant ? { variant: input.variant } : {}),
       runMode: route.runMode,
       stub: false,
       dedupeKey: input.dedupeKey,

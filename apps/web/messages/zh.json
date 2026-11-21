@@ -972,12 +972,38 @@
     "governanceNone": "暂无背离或漂移事件。",
     "governanceKind": {
       "divergence": "背离",
-      "drift": "漂移"
+      "drift": "漂移",
+      "attribution": "真实结果归因"
     },
     "governanceAction": {
       "paused": "已暂停",
       "alert": "告警",
-      "reevaluate": "待复评"
+      "reevaluate": "待复评",
+      "rollback": "已回滚"
+    },
+    "attributionTitle": "真实结果归因（离线分 vs. 真实结果）",
+    "attributionBody": "对比变更产生的真实验证/落地/成本/风险/事故窗口与 champion 窗口（kit evolve attribute）。离线分上升但真实结果下降的变更会暂停演化，并走统一的变更 revertRef 回滚。",
+    "attributionCount": "{count} 条记录",
+    "attributionEmpty": "暂无归因记录。用 kit evolve attribute <changeId> --offline-delta <n> 记录一条。",
+    "attributionWindow": "champion {baselineTasks} 任务 · 通过 {baselinePass}% → 变更 {changedTasks} 任务 · 通过 {changedPass}% · 成本 {cost}",
+    "attributionAudit": "审计 {auditId}",
+    "attributionNote": "记录由 kit evolve attribute 写入；回滚本身是变更提案的审计回滚迁移。",
+    "attributionStage": {
+      "canary": "灰度",
+      "promoted": "已晋升"
+    },
+    "attributionVerdict": {
+      "divergent": "背离",
+      "regressed": "退步",
+      "improved": "改善",
+      "flat": "持平",
+      "insufficient_data": "样本不足"
+    },
+    "attributionRollback": {
+      "rolled_back": "已回滚",
+      "already_rolled_back": "此前已回滚",
+      "skipped": "已跳过回滚",
+      "failed": "回滚失败"
     },
     "decision": {
       "promoted": "已晋升",
