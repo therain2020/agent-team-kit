@@ -40,6 +40,8 @@ describe("agent avatar persistence", () => {
   it("writes a valid avatar and reloads it, staying under the 2KB budget", async () => {
     const dir = await makePack();
     const file = path.join(dir, "agents", "worker.md");
+    // Isolate the avatar delta from the template's original instructions.
+    await updateAgent(dir, "worker", baseUpdate());
     const before = await readFile(file, "utf8");
 
     await updateAgent(dir, "worker", {
