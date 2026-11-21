@@ -31,11 +31,10 @@ export async function fetchSource(
       `source retired: ${source} (${installed.meta.retirement?.reason ?? "no reason"})`,
     );
   }
-  // Observer item budget applies when the caller did not request a smaller
-  // batch; cost budgets are recorded in meta and enforced by the cost ledger.
-  const limit =
-    options.limit === undefined && installed.meta.budget?.maxItemsPerRun
-      ? Math.min(installed.meta.budget.maxItemsPerRun, 100)
-      : requested;
+  // The observer item budget is a hard per-run cap; cost budgets are recorded
+  // in meta and enforced by the cost ledger.
+  const limit = installed.meta.budget
+    ? Math.min(requested, installed.meta.budget.maxItemsPerRun)
+    : requested;
   return fetchFromDefinition(installed.definition, Math.max(1, limit));
 }
