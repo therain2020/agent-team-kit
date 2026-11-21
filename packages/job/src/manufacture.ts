@@ -2356,8 +2356,8 @@ function assetIdOf(draft: ManufactureDraft): string {
   if (draft.type === "component") {
     return (
       draft.components
-        .map((component) => `${component.kind}/${component.id}`)
-        .join("+") || "components"
+        .map((component) => `${component.kind}-${component.id}`)
+        .join("-") || "components"
     );
   }
   return draft.id;
