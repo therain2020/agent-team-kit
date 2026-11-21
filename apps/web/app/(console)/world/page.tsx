@@ -1,5 +1,6 @@
 import { ActivityDrawer } from "@/components/world/activity-drawer";
 import { AtlasOverlay } from "@/components/world/atlas-overlay";
+import { InformationDrawer } from "@/components/world/information-drawer";
 import { WorldConsole } from "@/components/world/world-console";
 import {
   WorldDrawer,
@@ -84,6 +85,9 @@ export default async function WorldPage({
         {consolePanel}
         {tabParam === "activity" ? (
           <ActivityDrawer closeHref={closeHref} />
+        ) : null}
+        {tabParam === "information" ? (
+          <InformationDrawer closeHref={closeHref} />
         ) : null}
       </>
     );

@@ -5,7 +5,8 @@ import { getComponentsRoot, getPacksRoot, getRepoRoot } from "@/lib/paths";
 import { loadPipelineInventory } from "@/lib/pipeline-inventory";
 import { toSourceCandidateInputs } from "@/lib/source-draft";
 import { searchSourceMarketForIntent } from "@/lib/sources";
-import type { ComponentRef } from "@kit/core";
+import { ensureStoreSchema, getStore } from "@/lib/store";
+import { type ComponentRef, newId } from "@kit/core";
 import {
   type AgentDraftValues,
   type ComposeKind,
@@ -36,6 +37,8 @@ export async function POST(request: Request) {
     current?: unknown;
     templateId?: unknown;
     currentStages?: unknown;
+    /** Draft/job id the client already owns; a fresh one is minted otherwise. */
+    jobId?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -66,6 +69,10 @@ export async function POST(request: Request) {
 
   const current = parseAgentCurrent(body.current);
   const currentStages = parseWorkflowDraftStages(body.currentStages);
+  const jobId =
+    typeof body.jobId === "string" && body.jobId.trim()
+      ? body.jobId.trim()
+      : newId("draft");
   const pipelineDir = kind === "pipeline" ? absolutePackDir(packDir) : null;
   if (kind === "pipeline" && !pipelineDir) {
     return NextResponse.json(
@@ -79,6 +86,8 @@ export async function POST(request: Request) {
     const pipeline = pipelineDir
       ? await loadPipelineInventory(pipelineDir)
       : undefined;
+    await ensureStoreSchema();
+    const store = getStore();
     const result = await composeJob({
       kind,
       intent,
@@ -91,6 +100,11 @@ export async function POST(request: Request) {
       ...(current ? { current } : {}),
       ...(currentStages ? { currentStages } : {}),
       ...(sourceCandidates ? { sourceCandidates } : {}),
+      cost: {
+        workspaceId: "default",
+        jobId,
+        sink: store.costLedger,
+      },
       ...(pipeline ? { pipeline } : {}),
     });
     // The pipeline draft is validated through the real assembler in dry-run

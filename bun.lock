@@ -282,6 +282,7 @@
       "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
+        "@kit/model": "workspace:*",
         "@kit/tools": "workspace:*",
         "@kit/workflow": "workspace:*",
         "yaml": "^2.6.1",
