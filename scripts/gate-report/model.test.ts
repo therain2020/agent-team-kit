@@ -256,6 +256,10 @@ function change(input: {
     startedAt: day(input.dayIndex),
     resultArtifactId: input.resultArtifactId ?? null,
     source: "store",
+    approvalRef: null,
+    approvalStatus: null,
+    approvalRisk: null,
+    approvalBy: null,
   };
 }
 
@@ -430,6 +434,46 @@ describe("buildGateReport", () => {
     const report = buildGateReport(bundle);
     expect(report.gaps).toContain("G4.forbidden-zero");
     expect(report.gaps).toContain("G4.high-risk-approved");
+  });
+
+  it("counts an applied high-risk change only with an approved high-risk link", () => {
+    const approved = fullBundle();
+    approved.codeChanges = [
+      ...approved.codeChanges,
+      {
+        ...change({
+          dayIndex: 4,
+          iterationId: "iter-high-ok",
+          taskId: "task-high-ok",
+        }),
+        risk: "high",
+        approvalRef: "apr_chg_iter-high-ok",
+        approvalStatus: "approved",
+        approvalRisk: "high",
+        approvalBy: "operator:console",
+      },
+    ];
+    const report = buildGateReport(approved);
+    expect(report.gaps).not.toContain("G4.high-risk-approved");
+    expect(gate(report, "G4").metrics.highRiskApproved).toBe(1);
+
+    const queued = fullBundle();
+    queued.codeChanges = [
+      ...queued.codeChanges,
+      {
+        ...change({
+          dayIndex: 4,
+          iterationId: "iter-high-queued",
+          taskId: "task-high-queued",
+        }),
+        risk: "high",
+        approvalRef: "apr_chg_iter-high-queued",
+        approvalStatus: "queued",
+        approvalRisk: "high",
+        approvalBy: null,
+      },
+    ];
+    expect(buildGateReport(queued).gaps).toContain("G4.high-risk-approved");
   });
 
   it("gaps observer boundary on unaudited interventions", () => {

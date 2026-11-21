@@ -2,7 +2,13 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { appendActivity } from "@kit/activity";
-import { appendOp, initStore, loadStoreConfig } from "@kit/store";
+import { applyChangeTransition, newChangeProposal } from "@kit/core";
+import {
+  appendOp,
+  changeApprovalIdFor,
+  initStore,
+  loadStoreConfig,
+} from "@kit/store";
 import { afterEach, describe, expect, it } from "vitest";
 import { collectEvidence } from "./collect";
 import { buildGateReport } from "./model";
@@ -306,6 +312,96 @@ describe("collectEvidence production sources", () => {
       { id: "approval:apr_legacy", risk: null },
     ]);
     expect(buildGateReport(bundle).gaps).toContain("G5.approval-risk-recorded");
+  });
+
+  it("links an applied high-risk change to its real approval chain", async () => {
+    const home = await tempDir("kit-collect-g4-home-");
+    const repoRoot = await tempDir("kit-collect-g4-repo-");
+    const dbPath = path.join(home, "data", "kit.db");
+    await mkdir(path.dirname(dbPath), { recursive: true });
+    const store = await initStore(
+      loadStoreConfig({
+        KIT_RUNTIME_MODE: "local",
+        KIT_HOME: home,
+        KIT_BLOB_ROOT: path.join(home, "blobs"),
+      }),
+    );
+    const at = "2026-11-19T09:00:00.000Z";
+    const iterationId = "it_g4";
+    await store.sql`
+      INSERT INTO iteration_runs (
+        iteration_id, workspace_id, goal, run_mode, apply_mode, status, phase,
+        started_at, updated_at
+      ) VALUES (
+        ${iterationId}, ${"default"}, ${"g4"}, ${"LIVE"}, ${"low"}, ${"succeeded"},
+        ${"done"}, ${at}, ${at}
+      )
+    `;
+    await store.sql`
+      INSERT INTO iteration_tasks (
+        iteration_id, task_id, domain, goal, acceptance, status, phase, risk,
+        apply_status, commit_sha, started_at, updated_at
+      ) VALUES (
+        ${iterationId}, ${"task-1"}, ${"docs"}, ${"g4"}, ${"pass"},
+        ${"succeeded"}, ${"done"}, ${"high"}, ${"applied"}, ${"a".repeat(40)},
+        ${at}, ${at}
+      )
+    `;
+
+    const proposalId = "chg_g4";
+    let proposal = newChangeProposal({
+      id: proposalId,
+      workspaceId: "default",
+      substrate: "code",
+      producer: "iterate",
+      hypothesis: "g4",
+      acceptance: ["g4"],
+      risk: "high",
+      revertRef: "commit:abc",
+      sourceRef: { kind: "iteration", id: iterationId, taskId: "task-1" },
+      actor: "iterate:g4",
+      now: at,
+    });
+    proposal = applyChangeTransition(proposal, {
+      trigger: "evaluate",
+      actor: "iterate:g4",
+      at,
+    });
+    proposal = applyChangeTransition(proposal, {
+      trigger: "evaluation_passed",
+      actor: "iterate:g4",
+      at,
+    });
+    await store.changeProposals.create(proposal);
+    await store.changeApprovals.request(proposalId, { now: at });
+    const decided = await store.changeApprovals.decide({
+      approvalId: changeApprovalIdFor(proposalId),
+      status: "approved",
+      decisionBy: "operator",
+      reason: "reviewed the high-risk change",
+      at: "2026-11-19T09:05:00.000Z",
+    });
+    expect(decided.ok).toBe(true);
+    await store.close();
+
+    const bundle = await collectEvidence({
+      home,
+      repoRoot,
+      now: NOW,
+      days: 7,
+      dbPath,
+    });
+    const change = bundle.codeChanges.find(
+      (item) => item.iterationId === iterationId && item.taskId === "task-1",
+    );
+    expect(change).toMatchObject({
+      risk: "high",
+      approvalRef: changeApprovalIdFor(proposalId),
+      approvalStatus: "approved",
+      approvalRisk: "high",
+      approvalBy: "operator",
+    });
+    expect(buildGateReport(bundle).gaps).not.toContain("G4.high-risk-approved");
   });
 
   it("leaves empty sources as GAPs instead of synthetic values", async () => {

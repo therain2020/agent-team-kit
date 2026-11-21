@@ -6,8 +6,13 @@ import {
   reactionPriorityForSignals,
   renderReactionMission,
 } from "@kit/core";
-import type { InformationEventRecord } from "@kit/store";
-import { appendOp } from "@kit/store";
+import type {
+  InformationEventRecord,
+  ReactionChainArtifact,
+  ReactionChainDecision,
+  ReactionChainRollback,
+} from "@kit/store";
+import { appendOp, emptyReactionChain, readReactionChains } from "@kit/store";
 import {
   type FireTriggerDeps,
   fireTrigger,
@@ -107,15 +112,27 @@ export interface ReactionEventView {
   text: string;
 }
 
-/** Event → rule → job trace entry (acceptance: every reaction is answerable). */
+/**
+ * One reaction answerable end to end (98 §5.2 G7): event → rule → job →
+ * artifact → decision → rollback. The downstream segments come from the
+ * existing refs joined by `@kit/store`'s read-only chain resolver; a missing
+ * segment stays empty instead of being inferred, so the trace reports how far
+ * the chain can actually be answered.
+ */
 export interface ReactionTraceEntry {
   ruleId: string | null;
   triggerId: string;
   triggerRunId: string;
   jobId: string | null;
+  jobKind: string;
   status: string;
   dedupeKey: string;
   launchedAt: string;
+  artifacts: ReactionChainArtifact[];
+  decisions: ReactionChainDecision[];
+  rollbacks: ReactionChainRollback[];
+  /** True when artifact, decision and rollback are all backed by real refs. */
+  chainComplete: boolean;
 }
 
 const DEFAULT_MISSION = "React to {title} ({eventId}) from {sourceId}";
@@ -409,7 +426,12 @@ export async function reactToInformationEvent(
   };
 }
 
-/** event → rule → job trace, read from TriggerRun (no duplicated ledger). */
+/**
+ * event → rule → job → artifact → decision → rollback trace. The reaction
+ * side is read from TriggerRun (no duplicated ledger); the downstream segments
+ * are joined from the refs the job, artifact, approval and change planes
+ * already wrote.
+ */
 export async function traceReactions(
   deps: Pick<FireTriggerDeps, "store">,
   workspaceId: string,
@@ -419,15 +441,30 @@ export async function traceReactions(
     payloadRef: informationPayloadRef(eventId),
     limit: 100,
   });
-  return rows.map((row) => ({
-    ruleId: row.reactionRuleId ?? null,
-    triggerId: row.triggerId,
-    triggerRunId: row.triggerRunId,
-    jobId: row.jobId,
-    status: row.status,
-    dedupeKey: row.dedupeKey,
-    launchedAt: row.launchedAt,
-  }));
+  const chains = await readReactionChains(
+    deps.store,
+    workspaceId,
+    rows.map((row) => ({ jobId: row.jobId, jobKind: row.jobKind })),
+  );
+  return rows.map((row) => {
+    const chain =
+      (row.jobId ? chains.get(row.jobId) : null) ??
+      emptyReactionChain(row.jobId, row.jobKind);
+    return {
+      ruleId: row.reactionRuleId ?? null,
+      triggerId: row.triggerId,
+      triggerRunId: row.triggerRunId,
+      jobId: row.jobId,
+      jobKind: row.jobKind,
+      status: row.status,
+      dedupeKey: row.dedupeKey,
+      launchedAt: row.launchedAt,
+      artifacts: chain.artifacts,
+      decisions: chain.decisions,
+      rollbacks: chain.rollbacks,
+      chainComplete: chain.complete,
+    };
+  });
 }
 
 function buildReactionTrigger(rule: ReactionRule): Trigger {

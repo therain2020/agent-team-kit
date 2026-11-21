@@ -1,10 +1,15 @@
 import {
   type InformationEventRecord,
   type OpOrigin,
+  type ReactionChainArtifact,
+  type ReactionChainDecision,
+  type ReactionChainRollback,
   type TriggerRunRecord,
   appendOp,
+  emptyReactionChain,
   type initStore,
   listOps,
+  readReactionChains,
 } from "@kit/store";
 
 /**
@@ -83,6 +88,12 @@ export interface ObserverTimelineReaction {
   jobId: string | null;
   jobKind: string;
   lastError: string | null;
+  /** Artifact → decision → rollback segments joined from existing refs. */
+  artifacts: ReactionChainArtifact[];
+  decisions: ReactionChainDecision[];
+  rollbacks: ReactionChainRollback[];
+  /** True when all three downstream segments resolve to real records. */
+  chainComplete: boolean;
 }
 
 export interface ObserverTimelineEvent {
@@ -257,10 +268,12 @@ export async function listObserverActions(
 }
 
 /**
- * Information → reaction → job timeline. The reaction side reads TriggerRuns of
- * kind `information`; a run links back to its event through `payloadRef` (the
- * I-3 contract) and, defensively, through a dedupe key that carries the event
- * id. Artifact links stay id-only and are rendered by the caller.
+ * Information → reaction → job → artifact → decision → rollback timeline. The
+ * reaction side reads TriggerRuns of kind `information`; a run links back to
+ * its event through `payloadRef` (the I-3 contract) and, defensively, through a
+ * dedupe key that carries the event id. Downstream segments are the real refs
+ * the job, artifact, approval and change planes wrote, so the console renders
+ * the same chain `traceReactions` returns.
  */
 export async function buildObserverTimeline(
   store: Store,
@@ -273,12 +286,18 @@ export async function buildObserverTimeline(
     store.triggerRuns.list(workspaceId, { limit: Math.min(limit * 4, 500) }),
   ]);
 
+  const reactionRuns = runs.filter((run) => run.kind === "information");
+  const chains = await readReactionChains(
+    store,
+    workspaceId,
+    reactionRuns.map((run) => ({ jobId: run.jobId, jobKind: run.jobKind })),
+  );
   const reactionByEvent = new Map<string, ObserverTimelineReaction>();
-  for (const run of runs) {
-    if (run.kind !== "information") {
-      continue;
-    }
-    const reaction = toTimelineReaction(run);
+  for (const run of reactionRuns) {
+    const chain =
+      (run.jobId ? chains.get(run.jobId) : null) ??
+      emptyReactionChain(run.jobId, run.jobKind);
+    const reaction = toTimelineReaction(run, chain);
     if (run.payloadRef) {
       reactionByEvent.set(run.payloadRef, reaction);
     }
@@ -436,7 +455,15 @@ function toTimelineEvent(event: InformationEventRecord): ObserverTimelineEvent {
   };
 }
 
-function toTimelineReaction(run: TriggerRunRecord): ObserverTimelineReaction {
+function toTimelineReaction(
+  run: TriggerRunRecord,
+  chain: {
+    artifacts: ReactionChainArtifact[];
+    decisions: ReactionChainDecision[];
+    rollbacks: ReactionChainRollback[];
+    complete: boolean;
+  },
+): ObserverTimelineReaction {
   return {
     triggerRunId: run.triggerRunId,
     triggerId: run.triggerId,
@@ -447,6 +474,10 @@ function toTimelineReaction(run: TriggerRunRecord): ObserverTimelineReaction {
     jobId: run.jobId,
     jobKind: run.jobKind,
     lastError: run.lastError,
+    artifacts: chain.artifacts,
+    decisions: chain.decisions,
+    rollbacks: chain.rollbacks,
+    chainComplete: chain.complete,
   };
 }
 

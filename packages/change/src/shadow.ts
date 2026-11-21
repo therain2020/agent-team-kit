@@ -20,7 +20,13 @@ type Store = Awaited<ReturnType<typeof initStore>>;
  * changes the loop's result.
  *
  * Default is `off` so existing deployments, tests and command output stay
- * byte-for-byte identical.
+ * byte-for-byte identical — with one deliberate exception: a **high-risk**
+ * iteration task is always recorded (and its approval requested) even when the
+ * switch is off. High-risk changes must be approved (85 hard contract 3,
+ * 98 §5.2 G4); without the proposal the approval would have nowhere to point,
+ * so G4 could never be judged from real data. The proposal id is deterministic
+ * and creation is idempotent, so enabling the shadow switch later does not
+ * duplicate rows.
  */
 
 export type ChangePipelineMode = "off" | "shadow" | "on";
@@ -79,9 +85,7 @@ export async function recordShadowIterationProposals(
   store: Store,
   input: ShadowIterationInput,
 ): Promise<string[]> {
-  if (!isChangePipelineEnabled(input.env ?? process.env)) {
-    return [];
-  }
+  const enabled = isChangePipelineEnabled(input.env ?? process.env);
   const pipeline = new ChangePipeline(store.changeProposals);
   const tasks = new Map(input.plan.tasks.map((task) => [task.id, task]));
   const ids: string[] = [];
@@ -100,6 +104,11 @@ export async function recordShadowIterationProposals(
       ...(input.at ? { at: input.at } : {}),
     };
     const plan = adaptIterationChange(changeInput);
+    // High-risk changes are recorded even with the shadow switch off so the
+    // approval has a real subject (see the module comment).
+    if (!enabled && plan.proposal.risk !== "high") {
+      continue;
+    }
     try {
       const proposal = await pipeline.record(plan);
       ids.push(proposal.id);
