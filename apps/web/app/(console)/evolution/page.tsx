@@ -10,8 +10,10 @@ import { listPacks } from "@/lib/packs";
 import { formatCny, timeAgo } from "@/lib/utils";
 import { DEFAULT_CANARY_THRESHOLDS } from "@kit/evolution";
 import {
+  Activity,
   ClipboardCheck,
   FlaskConical,
+  Gauge,
   GitCompare,
   GitPullRequestArrow,
   History,
@@ -29,8 +31,28 @@ export default async function EvolutionPage() {
   const t = await getTranslations("evolution");
   const common = await getTranslations("common");
   const locale = await getLocale();
-  const [{ state, freeze, variants, cycles, decisions }, packs] =
-    await Promise.all([loadEvolutionData(), listPacks()]);
+  const [
+    {
+      state,
+      freeze,
+      variants,
+      cycles,
+      decisions,
+      outcomes,
+      outcomeSummary,
+      agreement,
+      divergence,
+      drift,
+      governanceEvents,
+    },
+    packs,
+  ] = await Promise.all([loadEvolutionData(), listPacks()]);
+  const outcomeByCycle = new Map<string, (typeof outcomes)[number]>();
+  for (const outcome of outcomes) {
+    if (outcome.cycleId) {
+      outcomeByCycle.set(outcome.cycleId, outcome);
+    }
+  }
 
   const canary = state?.canary;
   const canaryActive =
@@ -109,6 +131,136 @@ export default async function EvolutionPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="size-4 text-violet-400" />
+            {t("goodhartTitle")}
+          </CardTitle>
+          <Badge variant={divergence.divergent ? "danger" : "success"}>
+            {divergence.divergent
+              ? t("divergenceAlert")
+              : t("divergenceSteady")}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3 text-[11px] text-zinc-400">
+          <p className="max-w-3xl leading-relaxed">{t("goodhartBody")}</p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-lg border border-border bg-zinc-950/40 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wider text-zinc-500">
+                {t("outcomesLabel")}
+              </p>
+              <p className="font-mono text-zinc-200">{outcomeSummary.total}</p>
+            </div>
+            <div className="rounded-lg border border-border bg-zinc-950/40 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wider text-zinc-500">
+                {t("outcomePassRate")}
+              </p>
+              <p className="font-mono text-zinc-200">
+                {(outcomeSummary.passRate * 100).toFixed(0)}%
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-zinc-950/40 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wider text-zinc-500">
+                {t("outcomeAvgScore")}
+              </p>
+              <p className="font-mono text-zinc-200">
+                {outcomeSummary.avgScore.toFixed(2)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-zinc-950/40 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wider text-zinc-500">
+                {t("agreementLabel")}
+              </p>
+              <p className="font-mono text-zinc-200">
+                {agreement.rate === null
+                  ? "—"
+                  : `${(agreement.rate * 100).toFixed(0)}% (${agreement.sample})`}
+              </p>
+            </div>
+          </div>
+          <p>
+            {t("divergenceStreak", {
+              streak: divergence.streak,
+              window: divergence.window,
+            })}
+          </p>
+          {divergence.reasons.length > 0 ? (
+            <ul className="space-y-1">
+              {divergence.reasons.map((reason) => (
+                <li
+                  key={reason}
+                  className="rounded border border-border bg-zinc-950/50 px-2 py-1 text-[10px] text-amber-300/80"
+                >
+                  {reason}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[10px] text-zinc-600">{t("divergenceNone")}</p>
+          )}
+          <div className="space-y-1 rounded-lg border border-border bg-zinc-950/40 px-3 py-2">
+            <p className="flex items-center gap-1.5 text-zinc-300">
+              <Gauge className="size-3.5 text-sky-300" />
+              {t("driftTitle")}
+              {drift?.reevaluateChampion ? (
+                <Badge variant="warning">{t("driftReevaluate")}</Badge>
+              ) : null}
+            </p>
+            {drift && drift.findings.length > 0 ? (
+              <ul className="space-y-1">
+                {drift.findings.map((finding) => (
+                  <li
+                    key={`${finding.kind}:${finding.detail}`}
+                    className="flex flex-wrap items-center gap-1.5 text-[10px] text-zinc-400"
+                  >
+                    <Badge variant="outline">
+                      {t(`driftKind.${finding.kind}`)}
+                    </Badge>
+                    <span>{finding.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[10px] text-zinc-600">{t("driftNone")}</p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <p className="text-zinc-300">{t("governanceTitle")}</p>
+            {governanceEvents.length === 0 ? (
+              <p className="text-[10px] text-zinc-600">{t("governanceNone")}</p>
+            ) : (
+              <ul className="space-y-1">
+                {governanceEvents.map((event) => (
+                  <li
+                    key={event.eventId}
+                    className="flex flex-wrap items-center gap-1.5 rounded border border-border px-2 py-1 text-[10px]"
+                  >
+                    <Badge
+                      variant={
+                        event.kind === "divergence" ? "danger" : "warning"
+                      }
+                    >
+                      {t(`governanceKind.${event.kind}`)}
+                    </Badge>
+                    <Badge variant="outline">
+                      {t(`governanceAction.${event.action}`)}
+                    </Badge>
+                    <span className="min-w-0 flex-1 truncate text-zinc-400">
+                      {event.reason}
+                    </span>
+                    <span className="font-mono text-zinc-600">
+                      {timeAgo(event.createdAt, locale)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <p className="text-[10px] text-zinc-600">{t("goodhartNote")}</p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -379,54 +531,71 @@ export default async function EvolutionPage() {
             <p className="text-[11px] text-zinc-500">{t("noCycles")}</p>
           ) : (
             <ul className="space-y-2">
-              {cycles.slice(0, 12).map((cycle) => (
-                <li
-                  key={cycle.cycleId}
-                  className="rounded-lg border border-border px-3 py-2"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[10px] text-zinc-500">
-                      {cycle.cycleId}
-                    </span>
-                    <Badge
-                      variant={
-                        cycle.decision === "promoted"
-                          ? "success"
-                          : cycle.decision === "canary"
-                            ? "violet"
-                            : cycle.decision === "rejected"
-                              ? "warning"
-                              : cycle.decision === "failed"
-                                ? "danger"
-                                : "outline"
-                      }
-                    >
-                      {t(`decision.${cycle.decision}`)}
-                    </Badge>
-                    <span className="font-mono text-[10px] text-zinc-500">
-                      {cycle.agentId || "—"} ·{" "}
-                      {cycle.baselineScore?.toFixed(2) ?? "—"} →{" "}
-                      {cycle.candidateScore?.toFixed(2) ?? "—"}
-                    </span>
-                    <span className="ml-auto font-mono text-[10px] text-zinc-600">
-                      {formatCny(cycle.costCny)}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-[11px] text-zinc-300">
-                    {cycle.hypothesis || cycle.rationale}
-                  </p>
-                  {cycle.signals.length > 0 ? (
-                    <p className="mt-1 line-clamp-2 text-[10px] text-zinc-500">
-                      {t("signals")}: {cycle.signals.join(" · ")}
+              {cycles.slice(0, 12).map((cycle) => {
+                const outcome = outcomeByCycle.get(cycle.cycleId);
+                return (
+                  <li
+                    key={cycle.cycleId}
+                    className="rounded-lg border border-border px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[10px] text-zinc-500">
+                        {cycle.cycleId}
+                      </span>
+                      <Badge
+                        variant={
+                          cycle.decision === "promoted"
+                            ? "success"
+                            : cycle.decision === "canary"
+                              ? "violet"
+                              : cycle.decision === "rejected"
+                                ? "warning"
+                                : cycle.decision === "failed"
+                                  ? "danger"
+                                  : "outline"
+                        }
+                      >
+                        {t(`decision.${cycle.decision}`)}
+                      </Badge>
+                      <span className="font-mono text-[10px] text-zinc-500">
+                        {cycle.agentId || "—"} ·{" "}
+                        {cycle.baselineScore?.toFixed(2) ?? "—"} →{" "}
+                        {cycle.candidateScore?.toFixed(2) ?? "—"}
+                      </span>
+                      {outcome ? (
+                        <Badge variant={outcome.pass ? "success" : "danger"}>
+                          {t("outcomeBadge", {
+                            score: outcome.score.toFixed(2),
+                          })}
+                        </Badge>
+                      ) : null}
+                      {cycle.drift?.drifted ? (
+                        <Badge variant="warning">
+                          {cycle.drift.reevaluateChampion
+                            ? t("driftReevaluate")
+                            : t("driftBadge")}
+                        </Badge>
+                      ) : null}
+                      <span className="ml-auto font-mono text-[10px] text-zinc-600">
+                        {formatCny(cycle.costCny)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-zinc-300">
+                      {cycle.hypothesis || cycle.rationale}
                     </p>
-                  ) : null}
-                  {cycle.error ? (
-                    <p className="mt-1 text-[10px] text-red-300">
-                      {cycle.error}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
+                    {cycle.signals.length > 0 ? (
+                      <p className="mt-1 line-clamp-2 text-[10px] text-zinc-500">
+                        {t("signals")}: {cycle.signals.join(" · ")}
+                      </p>
+                    ) : null}
+                    {cycle.error ? (
+                      <p className="mt-1 text-[10px] text-red-300">
+                        {cycle.error}
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </CardContent>

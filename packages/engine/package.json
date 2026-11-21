@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@kit/activity": "workspace:*",
+    "@kit/change": "workspace:*",
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",
     "@kit/delivery": "workspace:*",

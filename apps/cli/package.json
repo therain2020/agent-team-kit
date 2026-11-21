@@ -12,6 +12,7 @@
   "dependencies": {
     "@kit/activity": "workspace:*",
     "@kit/bootstrap": "workspace:*",
+    "@kit/change": "workspace:*",
     "@kit/coder": "workspace:*",
     "@kit/core": "workspace:*",
     "@kit/engine": "workspace:*",

@@ -83,8 +83,8 @@ export function AssemblyColumn({ pack }: { pack: WorkshopPackView | null }) {
             </Link>
           </Button>
           <Button asChild size="sm" variant="ghost">
-            <Link href={`/workshop?pack=${encoded}`}>
-              {t("openDetail")}
+            <Link href={`/sources?pack=${encoded}`}>
+              {t("usedSourcesTitle")}
               <ArrowUpRight className="size-3.5" />
             </Link>
           </Button>

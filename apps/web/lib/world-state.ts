@@ -25,7 +25,16 @@ export type {
 };
 
 /** Connection state shown next to the floor (97 §3.2). */
-export type WorldConnectionStatus = "live" | "reconnecting" | "offline";
+export type WorldConnectionStatus =
+  | "live"
+  | "reconnecting"
+  | "polling"
+  | "offline";
+
+/** Client batch window for stream deltas (97 §3.2). */
+export const WORLD_BATCH_MS = 250;
+/** Event queue cap before the oldest delta is dropped and `degraded` is set. */
+export const WORLD_EVENT_QUEUE_LIMIT = 500;
 
 export interface WorldClientState {
   /** `null` until the first snapshot resolves. */
@@ -36,6 +45,8 @@ export interface WorldClientState {
   /** Epoch ms of the last applied snapshot/delta, for "last updated X ago". */
   lastUpdatedAt: number | null;
   error: string | null;
+  /** `true` when an event burst exceeded the queue cap and frames were lost. */
+  degraded: boolean;
 }
 
 export const initialWorldState: WorldClientState = {
@@ -46,6 +57,7 @@ export const initialWorldState: WorldClientState = {
   status: "reconnecting",
   lastUpdatedAt: null,
   error: null,
+  degraded: false,
 };
 
 /** Office-facing presence derived from the projection (97 §3.2). */
@@ -78,9 +90,14 @@ export function applyWorldSnapshot(
     // The snapshot cursor is authoritative: the stream resumes there and
     // replays anything newer, so rows are never skipped.
     seq: result.seq,
-    status: state.status === "live" ? "live" : "reconnecting",
+    status:
+      state.status === "live" || state.status === "polling"
+        ? state.status
+        : "reconnecting",
     lastUpdatedAt: now,
     error: null,
+    // A full snapshot repairs any dropped frame, so degradation clears.
+    degraded: false,
   };
 }
 
@@ -95,6 +112,11 @@ export function applyWorldDelta(
   delta: WorldDelta,
   now: number = Date.now(),
 ): WorldClientState {
+  // Events at or behind the applied cursor were already folded (snapshot or an
+  // earlier batch); drop them instead of replaying stale state (§3.2).
+  if (delta.seq <= state.seq) {
+    return state;
+  }
   if (!state.world) {
     // A delta before the snapshot should not happen (the client connects with
     // `after=<seq>` only once the snapshot resolved); keep it as the world so
@@ -109,6 +131,7 @@ export function applyWorldDelta(
       status: state.status,
       lastUpdatedAt: now,
       error: null,
+      degraded: state.degraded,
     };
   }
 
@@ -122,7 +145,51 @@ export function applyWorldDelta(
     status: state.status,
     lastUpdatedAt: now,
     error: null,
+    degraded: state.degraded,
   };
+}
+
+/**
+ * Coalesces the deltas queued inside one batch window into a single delta, so
+ * a burst of frames costs one store update instead of one per frame.
+ */
+export function mergeDeltas(deltas: readonly WorldDelta[]): WorldDelta {
+  let seq = 0;
+  let eventCount = 0;
+  let runs: RunProjection[] = [];
+  let agents: AgentState[] = [];
+  for (const delta of deltas) {
+    seq = Math.max(seq, delta.seq);
+    eventCount += Math.max(0, delta.eventCount);
+    runs = mergeRuns(runs, delta.runs);
+    agents = mergeAgents(agents, delta.agents);
+  }
+  return { seq, runs, agents, eventCount };
+}
+
+/**
+ * Appends a delta to the batch queue. When the accumulated event count passes
+ * the cap the oldest deltas are dropped and the number of dropped events is
+ * returned, so the caller can raise the explicit degraded marker.
+ */
+export function pushWorldDelta(
+  queue: readonly WorldDelta[],
+  delta: WorldDelta,
+  limit: number = WORLD_EVENT_QUEUE_LIMIT,
+): { queue: WorldDelta[]; dropped: number } {
+  const next = [...queue, delta];
+  let total = next.reduce(
+    (sum, entry) => sum + Math.max(0, entry.eventCount),
+    0,
+  );
+  let dropped = 0;
+  while (next.length > 1 && total > limit) {
+    const oldest = next.shift();
+    const count = Math.max(0, oldest?.eventCount ?? 0);
+    total -= count;
+    dropped += count;
+  }
+  return { queue: next, dropped };
 }
 
 export function mergeRuns(

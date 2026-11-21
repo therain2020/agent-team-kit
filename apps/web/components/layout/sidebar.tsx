@@ -1,6 +1,6 @@
 "use client";
 
-import { NAV_ITEMS } from "@/lib/nav";
+import { NAV_ITEMS, isNavItemActive } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import { Boxes } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -29,8 +29,7 @@ export function Sidebar({ pausedCount = 0 }: { pausedCount?: number }) {
 
       <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2">
         {NAV_ITEMS.map((item) => {
-          const active =
-            pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const active = isNavItemActive(item, pathname);
           const Icon = item.icon;
           return (
             <Link
