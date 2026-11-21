@@ -204,7 +204,8 @@ function resolveNextRun(
       ? `__iteration:${trigger.triggerId}`
       : trigger.triggerId;
   const stored = nextRuns[key];
-  if (stored) {
+  // A stale slot (daemon offline, clock moved) is not a "next" fire; recompute.
+  if (stored && new Date(stored).getTime() > now.getTime()) {
     return stored;
   }
   try {
