@@ -90,7 +90,7 @@ export async function WorldDrawer({
             {t("drawer.missingHint")}
           </p>
           <Button asChild size="sm" variant="outline" className="mt-4">
-            <Link href="/workshop?tab=packs">
+            <Link href="/packs">
               <Play className="size-3.5" />
               {common("startRun")}
             </Link>

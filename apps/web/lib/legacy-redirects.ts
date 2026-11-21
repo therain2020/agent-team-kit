@@ -61,26 +61,17 @@ export const LEGACY_REDIRECTS: LegacyRedirect[] = [
     destination: "/office?panel=manager",
     permanent: TEMPORARY,
   },
-  // Packs + Sources + Workshop collapsed into the /workshop surface.
-  {
-    source: "/packs",
-    destination: "/workshop?tab=packs",
-    permanent: TEMPORARY,
-  },
-  // New-pack creation opens the Workshop wizard dialog.
+  // `/packs` and `/sources` are live local libraries again (88 §3.4, D-69):
+  // installs land there and the workshop is the discovery center. Only the
+  // old pack drill-downs keep redirecting inside the library.
   {
     source: "/packs/new",
-    destination: "/workshop?new=1",
+    destination: "/packs?new=1",
     permanent: TEMPORARY,
   },
   {
     source: "/packs/:dirName",
-    destination: "/workshop?pack=:dirName",
-    permanent: TEMPORARY,
-  },
-  {
-    source: "/sources",
-    destination: "/workshop?tab=sources",
+    destination: "/packs?pack=:dirName",
     permanent: TEMPORARY,
   },
   // Ops + Degradation + Budgets + Kill switch + Autopilot are /ops sections.

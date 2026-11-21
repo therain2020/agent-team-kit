@@ -470,7 +470,7 @@ function OfficeSceneBody({
         <CardContent className="p-8 text-center text-xs text-zinc-500">
           {t("noPack")}{" "}
           <Link
-            href="/workshop?new=1"
+            href="/packs?new=1"
             className="text-emerald-300 hover:underline"
           >
             {t("createPack")}

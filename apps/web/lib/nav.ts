@@ -16,6 +16,12 @@ export interface NavItem {
   badge?: boolean;
   /** `g`-prefixed quick-jump key: press `g` then this letter (issue #160). */
   shortcut: string;
+  /**
+   * Extra route prefixes that belong to this surface. Workshop owns the two
+   * local libraries (`/packs`, `/sources`) so they stay reachable from the
+   * single discovery entry (88 §3.4 / D-69, issue #116).
+   */
+  aliases?: string[];
 }
 
 /**
@@ -33,7 +39,13 @@ export const NAV_ITEMS: NavItem[] = [
     badge: true,
     shortcut: "a",
   },
-  { href: "/workshop", labelKey: "workshop", icon: Package, shortcut: "s" },
+  {
+    href: "/workshop",
+    labelKey: "workshop",
+    icon: Package,
+    shortcut: "s",
+    aliases: ["/packs", "/sources"],
+  },
   {
     href: "/evolution",
     labelKey: "evolution",
@@ -58,8 +70,13 @@ export function quickJumpHref(key: string): string | null {
   return QUICK_JUMP.get(key.toLowerCase()) ?? null;
 }
 
-export function matchNavItem(pathname: string): NavItem | undefined {
-  return NAV_ITEMS.find(
-    (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
+/** True when `pathname` is the item's route, an alias or a nested child. */
+export function isNavItemActive(item: NavItem, pathname: string): boolean {
+  return [item.href, ...(item.aliases ?? [])].some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
+}
+
+export function matchNavItem(pathname: string): NavItem | undefined {
+  return NAV_ITEMS.find((item) => isNavItemActive(item, pathname));
 }

@@ -5,7 +5,6 @@ import {
   type WorkshopSourceView,
   linkedSourceView,
   matchSourceNames,
-  parseWorkshopTab,
   pickSelectedPack,
 } from "../lib/workshop-link";
 
@@ -95,23 +94,18 @@ describe("workshop surface linking", () => {
     expect(pickSelectedPack(packs, undefined)?.dirName).toBe("radar");
     expect(pickSelectedPack([], "radar")).toBeNull();
   });
-
-  it("parses legacy tab parameters", () => {
-    expect(parseWorkshopTab("sources")).toBe("sources");
-    expect(parseWorkshopTab("assembly")).toBe("assembly");
-    expect(parseWorkshopTab("packs")).toBe("packs");
-    expect(parseWorkshopTab(undefined)).toBe("packs");
-    expect(parseWorkshopTab("nope")).toBe("packs");
-  });
 });
 
 describe("legacy console routes", () => {
-  it("redirects the old first-class pages into the consolidated surfaces", () => {
+  it("keeps packs and sources as live libraries, not redirects", () => {
     const bySource = new Map(
       LEGACY_REDIRECTS.map((entry) => [entry.source, entry.destination]),
     );
-    expect(bySource.get("/packs")).toBe("/workshop?tab=packs");
-    expect(bySource.get("/sources")).toBe("/workshop?tab=sources");
+    // 88 §3.4 M2 / D-69: both local libraries are first-class routes again.
+    expect(bySource.has("/packs")).toBe(false);
+    expect(bySource.has("/sources")).toBe(false);
+    expect(bySource.get("/packs/new")).toBe("/packs?new=1");
+    expect(bySource.get("/packs/:dirName")).toBe("/packs?pack=:dirName");
     expect(bySource.get("/manager")).toBe("/office?panel=manager");
   });
 });
