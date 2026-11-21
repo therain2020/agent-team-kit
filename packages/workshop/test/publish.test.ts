@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parse } from "yaml";
-import {
-  installWorkshop,
-  listInstalledWorkshop,
-  publishWorkshop,
-} from "../src";
+import { installWorkshop, publishWorkshop } from "../src";
 
 const SHA = "a".repeat(40);
 const roots: string[] = [];
@@ -486,7 +482,17 @@ permissions:
 
 describe("workshop install records", () => {
   it("lists installed records with pinned commit and manifest hash", async () => {
-    const workflow = "id: demo-flow\nversion: 1.0\n";
+    const workflow = `id: demo-flow
+version: 1.0
+trigger:
+  event: demo.requested
+stages:
+  - id: worker
+    type: agent
+    agent: worker
+    inputs: [task]
+    outputs: [result]
+`;
     vi.stubGlobal("fetch", async (input: string | URL) => {
       const url = String(input);
       if (url.endsWith("/repos/acme/demo")) {
@@ -508,22 +514,23 @@ describe("workshop install records", () => {
     roots.push(root);
     const installed = await installWorkshop({
       repo: "acme/demo",
-      root,
+      componentsRoot: root,
       acceptThirdParty: true,
       acceptUnsigned: true,
     });
 
     expect(installed.manifestSha256).toMatch(/^[a-f0-9]{64}$/);
-    const records = await listInstalledWorkshop(root);
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({
+    expect(installed.scope).toBe("components");
+    const record = JSON.parse(
+      await readFile(path.join(installed.dir, ".workshop.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(record).toMatchObject({
       kind: "workflow",
       name: "Demo Flow",
-      version: "1.0.0",
       repo: "acme/demo",
       commit: SHA,
       manifestSha256: installed.manifestSha256,
-      fileCount: 1,
     });
+    expect(Object.keys(record.files as Record<string, string>)).toHaveLength(1);
   });
 });

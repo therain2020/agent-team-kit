@@ -244,6 +244,35 @@ export async function loadComponent(
       ],
     };
   }
+  return loadComponentFromDir(kind, id, dir);
+}
+
+/**
+ * Validate a component that already sits in its final layout
+ * (`<kind dir>/<id>/`). Installs validate a staging directory with the same
+ * rules the library applies after a swap, so a component can never install
+ * into a state `listComponents` would reject.
+ */
+export async function loadComponentFromDir(
+  kind: ComponentKind,
+  id: string,
+  dir: string,
+): Promise<LoadComponentResult> {
+  if (!existsSync(dir)) {
+    return {
+      ok: false,
+      kind,
+      id,
+      dir,
+      issues: [
+        {
+          code: "component_not_found",
+          path: ".",
+          message: `component not found: ${kind}/${id}`,
+        },
+      ],
+    };
+  }
 
   const issues: LibraryIssue[] = [];
   const descriptor = await readDescriptor(dir, kind, id, issues);

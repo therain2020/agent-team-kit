@@ -36,6 +36,8 @@ export const COMPOSE_KINDS = [
   "workflow",
   "pipeline",
   "source",
+  "studio.member",
+  "studio.workflow",
 ] as const;
 
 export type ComposeKind = (typeof COMPOSE_KINDS)[number];
