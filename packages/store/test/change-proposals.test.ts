@@ -50,6 +50,12 @@ function proposal(id = "chg_test_1") {
       snapshotRef: null,
     },
     revertRef: "commit:abc123",
+    revert: {
+      kind: "code",
+      commit: "abc123",
+      baseSha: "abc000",
+      backupDir: ".backup/iterations/it_1/task-a",
+    },
     contentRef: null,
     sourceRef: { kind: "iteration", id: "it_1", taskId: "task-a" },
     actor: "shadow:iterate",
@@ -75,6 +81,58 @@ describe("change proposal store (sqlite)", () => {
     expect(fetched?.history).toHaveLength(1);
     expect(fetched?.history[0]?.trigger).toBe("submit");
     expect(fetched?.version).toBe(0);
+    expect(fetched?.revert).toEqual({
+      kind: "code",
+      commit: "abc123",
+      baseSha: "abc000",
+      backupDir: ".backup/iterations/it_1/task-a",
+    });
+  });
+
+  it("attaches a structured revert record with compare-and-set", async () => {
+    const store = await localStore();
+    const created = newChangeProposal({
+      id: "chg_revert_set",
+      workspaceId: "ws",
+      substrate: "prompt",
+      producer: "evolve",
+      hypothesis: "sharpen the instruction contract",
+      acceptance: ["candidate beats baseline"],
+      risk: "low",
+      now: AT,
+    });
+    await store.changeProposals.create(created);
+    expect((await store.changeProposals.get(created.id))?.revert).toBeNull();
+
+    const revert = {
+      kind: "instruction" as const,
+      targetDir: "packs/team",
+      backupDir: ".backup/evolution/2026",
+      hash: "f".repeat(64),
+    };
+    const set = await store.changeProposals.setRevert({
+      proposalId: created.id,
+      revert,
+      revertRef: "variant:baseline",
+      expectedVersion: 0,
+    });
+    expect(set.ok).toBe(true);
+    if (!set.ok) {
+      throw new Error("setRevert failed");
+    }
+    expect(set.proposal.revert).toEqual(revert);
+    expect(set.proposal.revertRef).toBe("variant:baseline");
+    expect(set.proposal.version).toBe(1);
+
+    const stale = await store.changeProposals.setRevert({
+      proposalId: created.id,
+      revert,
+      expectedVersion: 0,
+    });
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) {
+      expect(stale.code).toBe("version_conflict");
+    }
   });
 
   it("persists transitions and appends immutable audit rows", async () => {

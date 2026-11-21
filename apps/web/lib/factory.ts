@@ -25,6 +25,10 @@ export interface FactoryItem {
   stageName?: string;
   requestType?: FactoryRequestType;
   stationId?: FactoryStationId;
+  /** Set when the approval guards a ChangeProposal rather than a run stage. */
+  changeId?: string | null;
+  /** ChangeProposal substrate label source (code/prompt/workflow/skill). */
+  substrate?: string | null;
   riskClass: FactoryRisk;
   summary: string;
   costCny: number;

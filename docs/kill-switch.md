@@ -118,6 +118,25 @@ Mutations require a same-origin request and `confirm: true`.
 6. Repeat for `global`, `agent-source`, and `stage`, verifying that only the
    intended scope is blocked.
 
+## Single-change rollback
+
+Besides rolling the whole stack back to LKG, the recovery kernel can revert one
+self-change by id. This works for both code changes (the recorded commit) and
+instruction changes (the backed-up variant files):
+
+```powershell
+powershell -File scripts\kitd.ps1 rollback -Change <changeId>            # dry-run
+powershell -File scripts\kitd.ps1 rollback -Change <changeId> -Execute   # apply
+powershell -File scripts\kitd.ps1 list                                   # changes + audit
+```
+
+Dry-run is the default. The rollback refuses a dirty worktree and any commit
+that is not the change's own recorded, reachable commit; it holds the same
+single-writer apply lock as `kit-apply`. Every attempt is appended to
+`~/.agent-team-kit/audit/change-rollback.jsonl` (outside the repository) with
+the change id, actor, and before/after state. See
+[docs/change-proposals.md](./change-proposals.md#rollback-by-change-id).
+
 ## Recovery
 
 - Find the switch: `kit kill-switch list`.

@@ -54,6 +54,11 @@ export const ApprovalCard = forwardRef<
   const ownedByMe = card.assignee === operator;
   const ownedByOther = card.assignee !== null && !ownedByMe;
   const kindLabel = t(`kind_${card.kind}`);
+  const substrateLabel =
+    card.substrate &&
+    ["code", "prompt", "workflow", "skill"].includes(card.substrate)
+      ? t(`substrate_${card.substrate}`)
+      : null;
   const gate = card.gate;
   const topScore = gate?.scores[0];
 
@@ -93,6 +98,11 @@ export const ApprovalCard = forwardRef<
         >
           {kindLabel}
         </Badge>
+        {substrateLabel ? (
+          <Badge variant="info" className="text-[10px]">
+            {substrateLabel}
+          </Badge>
+        ) : null}
         <Badge variant="outline" className="text-[10px]">
           {t("risk", { level: riskT(card.riskClass) })}
         </Badge>
@@ -136,10 +146,14 @@ export const ApprovalCard = forwardRef<
       </div>
 
       <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-zinc-500">
-        <span className="truncate font-mono text-zinc-300">{card.runId}</span>
+        <span className="truncate font-mono text-zinc-300">
+          {card.changeId ?? card.runId}
+        </span>
         <span aria-hidden>·</span>
         <span className="truncate">
-          {card.stageName || card.stageId.split(":").slice(-1)[0]}
+          {card.changeId
+            ? card.revertRef || t("changeRevert", { ref: card.changeId })
+            : card.stageName || card.stageId.split(":").slice(-1)[0]}
         </span>
       </div>
 
