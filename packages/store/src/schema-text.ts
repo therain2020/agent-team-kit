@@ -280,6 +280,8 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   outcome_ref TEXT,
   divergence JSONB,
   drift JSONB,
+  change_id TEXT,
+  promote JSONB,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -376,6 +378,10 @@ ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS divergence JSONB;
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS drift JSONB;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS change_id TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS promote JSONB;
 ALTER TABLE evolution_state
   ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
@@ -1438,6 +1444,8 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   outcome_ref TEXT,
   divergence TEXT,
   drift TEXT,
+  change_id TEXT,
+  promote TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -1874,6 +1882,8 @@ ALTER TABLE evolution_cycles ADD COLUMN outcome_source TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN outcome_ref TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN divergence TEXT;
 ALTER TABLE evolution_cycles ADD COLUMN drift TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN change_id TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN promote TEXT;
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS budgets (

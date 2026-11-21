@@ -183,11 +183,16 @@ export interface EvolutionCycleLike {
   evalSnapshotPath?: string;
   evaluatorHash?: string;
   error?: string;
+  /** Evolution surface (`context` | `tool` | `architecture`). */
+  variantKind?: "context" | "tool" | "architecture" | null;
+  /** Promotion approval when the gate required one. */
+  approvalRef?: string | null;
   /** Backup written by the promotion; enables instruction rollback. */
   promote?: {
     targetDir: string;
     backupDir: string;
     hash: string;
+    approvalRef?: string | null;
   } | null;
 }
 
@@ -196,8 +201,29 @@ export interface EvolutionChangeInput {
   cycle: EvolutionCycleLike;
   /** Overrides the revert record derived from `cycle.promote`. */
   revert?: ChangeRevertRef | null;
+  /** Overrides the evolution surface derived from `cycle.variantKind`. */
+  variantKind?: EvolutionCycleLike["variantKind"];
+  /** Overrides the approval reference recorded on the proposal. */
+  approvalRef?: string | null;
   actor?: string;
   at?: string;
+}
+
+/**
+ * Evolution surfaces map onto the unified substrate enum: agent context
+ * instructions are prompts, skills/tools are skills, and role/team structure
+ * (team.yaml, workflows, roles) is a workflow change.
+ */
+function evolutionSubstrate(
+  kind: EvolutionCycleLike["variantKind"],
+): "prompt" | "skill" | "workflow" {
+  if (kind === "architecture") {
+    return "workflow";
+  }
+  if (kind === "tool") {
+    return "skill";
+  }
+  return "prompt";
 }
 
 /**
@@ -233,7 +259,9 @@ export function adaptEvolutionChange(
   const proposal = newChangeProposal({
     id: `chg_cy_${safe(input.workspaceId)}_${safe(cycle.cycleId)}`,
     workspaceId: input.workspaceId,
-    substrate: "prompt",
+    substrate: evolutionSubstrate(
+      input.variantKind ?? cycle.variantKind ?? null,
+    ),
     producer: "evolve",
     signalRefs: cycle.signalRefs.map(
       (ref) => `evolve:${ref.source}:${ref.signalId}`,
@@ -251,6 +279,11 @@ export function adaptEvolutionChange(
     },
     revertRef: cycle.baselineName ? `variant:${cycle.baselineName}` : null,
     revert,
+    approvalRef:
+      input.approvalRef ??
+      cycle.approvalRef ??
+      cycle.promote?.approvalRef ??
+      null,
     contentRef: null,
     sourceRef: { kind: "evolution", id: cycle.cycleId, taskId: null },
     actor,

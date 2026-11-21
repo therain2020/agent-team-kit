@@ -1,5 +1,6 @@
 import type { EvolutionBudgetLedger } from "@kit/core";
 import type { CostLedgerSink } from "@kit/model";
+import type { ChangeProposalService } from "@kit/store";
 import type { CanaryState, EvolutionDecisionRecord } from "./canary";
 import type { EvolutionCycleRecord } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
@@ -36,6 +37,12 @@ export interface EvolutionRepository {
    * site passing a sink; file repositories leave it undefined.
    */
   readonly costSink?: CostLedgerSink;
+  /**
+   * Unified change pipeline. Store-backed repositories expose it so an
+   * auto-promoted cycle can persist its rollbackable `cycle.promote` proposal
+   * (85 §3.5.6); file repositories leave it undefined.
+   */
+  readonly changeProposals?: ChangeProposalService;
   ensureReady(): Promise<void>;
   saveVariant(input: {
     meta: VariantMeta;

@@ -521,12 +521,16 @@ async function planInstructionRestore(
     );
   }
 
-  const dirty = await repoDirty(revert.targetDir);
+  // An evolution promotion writes into the target pack without committing, so
+  // the target itself is normally dirty. Restoring it is the rollback's job —
+  // refuse only when unrelated paths outside the target are also dirty, since
+  // those would make the rollback unsafe/ambiguous.
+  const dirty = await repoDirtyOutside(revert.targetDir);
   if (dirty.dirty) {
     return refusalFrom(
       base,
       "dirty_worktree",
-      `target ${revert.targetDir} is inside a dirty worktree`,
+      `worktree has changes outside target ${revert.targetDir}: ${(dirty.paths ?? []).join(", ")}`,
     );
   }
   if (dirty.error) {
@@ -698,22 +702,58 @@ function refusalFrom(
   return { ...base, action: null, refusal: { code, message } };
 }
 
-async function repoDirty(
+/**
+ * Reports dirty paths that lie outside `dir`. Dirt inside `dir` is what the
+ * instruction restore is about to overwrite, so it does not block the plan.
+ */
+async function repoDirtyOutside(
   dir: string,
-): Promise<{ dirty: boolean; error?: string }> {
+): Promise<{ dirty: boolean; paths?: string[]; error?: string }> {
   const top = await runGit(dir, ["rev-parse", "--show-toplevel"]);
   if (top.exitCode !== 0) {
     // Not inside a git repository: nothing to keep clean.
     return { dirty: false };
   }
-  const status = await runGit(top.stdout.trim(), ["status", "--porcelain"]);
+  const root = top.stdout.trim();
+  const status = await runGit(root, [
+    "-c",
+    "core.quotePath=false",
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+  ]);
   if (status.exitCode !== 0) {
     return {
       dirty: false,
       error: `cannot read git status: ${status.stderr.slice(0, 500)}`,
     };
   }
-  return { dirty: status.stdout.trim().length > 0 };
+  const target = path.resolve(dir);
+  const outside: string[] = [];
+  for (const line of status.stdout.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    let relative = line.slice(3).trim();
+    // Renames/copies render as "old -> new"; the new path is the live one.
+    const arrow = relative.lastIndexOf(" -> ");
+    if (arrow >= 0) {
+      relative = relative.slice(arrow + 4);
+    }
+    if (relative.startsWith('"') && relative.endsWith('"')) {
+      relative = relative.slice(1, -1);
+    }
+    const absolute = path.resolve(root, relative);
+    const within = path.relative(target, absolute);
+    if (
+      within === "" ||
+      (!within.startsWith("..") && !path.isAbsolute(within))
+    ) {
+      continue;
+    }
+    outside.push(relative);
+  }
+  return { dirty: outside.length > 0, paths: outside };
 }
 
 async function listVariantFiles(

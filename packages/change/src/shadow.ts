@@ -1,5 +1,5 @@
-import type { ChangeRisk } from "@kit/core";
-import type { initStore } from "@kit/store";
+import type { ChangeProposal, ChangeRisk } from "@kit/core";
+import type { ChangeProposalService, initStore } from "@kit/store";
 import {
   type EvolutionChangeInput,
   type IterationChangeInput,
@@ -141,6 +141,26 @@ async function requestChangeApprovalSafely(
 }
 
 /**
+ * Records an evolution cycle on the unified change pipeline unconditionally.
+ *
+ * The evolution cycle calls this after an auto-promotion so every applied
+ * instruction change (the `cycle.promote` record) is rollbackable by
+ * `changeId` (85 §3.5.6). Returns null for a skipped cycle. Unlike the shadow
+ * recorder this is not gated by `KIT_CHANGE_PIPELINE`: an applied promotion
+ * must always have an audited proposal with a structured `revert`.
+ */
+export async function recordEvolutionCycleProposal(
+  service: ChangeProposalService,
+  input: EvolutionChangeInput,
+): Promise<ChangeProposal | null> {
+  const plan = adaptEvolutionChange(input);
+  if (!plan) {
+    return null;
+  }
+  return await new ChangePipeline(service).record(plan);
+}
+
+/**
  * Mirrors an evolution cycle onto a change proposal. Returns the proposal id,
  * or null when the cycle was skipped or the pipeline is off. Never throws.
  */
@@ -152,13 +172,13 @@ export async function recordShadowEvolutionCycle(
     return null;
   }
   try {
-    const plan = adaptEvolutionChange(input);
-    if (!plan) {
+    const proposal = await recordEvolutionCycleProposal(
+      store.changeProposals,
+      input,
+    );
+    if (!proposal) {
       return null;
     }
-    const proposal = await new ChangePipeline(store.changeProposals).record(
-      plan,
-    );
     if (proposal.risk === "high") {
       await requestChangeApprovalSafely(store, proposal.id);
     }
