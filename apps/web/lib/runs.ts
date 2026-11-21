@@ -1,6 +1,7 @@
 import type { ArtifactVersion, Blob, Manifest, Run, Stage } from "@kit/core";
 import { diffLines } from "diff";
 import { cache } from "react";
+import { producerAgentIdFromArtifacts } from "./factory";
 import { getStore } from "./store";
 
 type Store = Awaited<ReturnType<typeof getStore>>;
@@ -426,6 +427,8 @@ export const loadPausedRuns = cache(async function loadPausedRuns(
     run: Run;
     approval: ApprovalView | null;
     costCny: number;
+    /** Producer sprite for the office door and factory workpiece (97 §3.5). */
+    producerAgentId: string | null;
   }>
 > {
   const client = store ?? (await getStore());
@@ -437,6 +440,18 @@ export const loadPausedRuns = cache(async function loadPausedRuns(
         run,
         approval: detail?.approval ?? null,
         costCny: detail?.costCny ?? 0,
+        // The detail already loaded every artifact + manifest once, so the
+        // producer is resolved from that batch instead of a second query.
+        producerAgentId: detail
+          ? producerAgentIdFromArtifacts(
+              detail.artifacts.map((view) => ({
+                artifactId: view.artifact.artifactId,
+                createdAt: view.artifact.createdAt,
+                producerAgentId: view.manifest?.producer.agentId,
+              })),
+              detail.approval?.draftArtifactId,
+            )
+          : null,
       };
     }),
   );

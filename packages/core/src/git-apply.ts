@@ -53,7 +53,7 @@ export async function applyPatchToRepo(
   let lock: Awaited<ReturnType<typeof acquireFileLock>>;
   try {
     lock = await acquireFileLock(
-      options.lockPath ?? defaultLockPath(repoRoot),
+      options.lockPath ?? defaultApplyLockPath(repoRoot),
       {
         owner: `apply:${options.ticketId}`,
         timeoutMs: options.lockTimeoutMs ?? 45 * 60 * 1000,
@@ -237,7 +237,11 @@ export async function applyPatchToRepo(
   }
 }
 
-function defaultLockPath(repoRoot: string): string {
+/**
+ * The single-writer apply lock for a repository. Revert paths acquire the same
+ * lock so a rollback and an apply can never interleave.
+ */
+export function defaultApplyLockPath(repoRoot: string): string {
   const key = createHash("sha256")
     .update(path.resolve(repoRoot))
     .digest("hex")

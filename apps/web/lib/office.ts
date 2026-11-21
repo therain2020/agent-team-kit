@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentRole, AvatarSpec } from "@kit/core";
 import { loadPack } from "@kit/pack";
+import type { FactoryLink } from "./factory";
 import { ManifestBudget, selectOfficeRuns } from "./office-budget";
 import { type StudioAgent, loadStudioData } from "./pack-studio";
 import { getPacksRoot } from "./paths";
@@ -91,9 +92,40 @@ export interface OfficeData {
 /** Payload of `GET /api/office?pack=<dir>` (97 §3.2 fallback snapshot). */
 export interface OfficeSnapshotPayload {
   active: OfficeActivePack | null;
+  /** Door plate counts, projected from the factory snapshot (97 §3.5). */
+  factoryLink: FactoryLink;
   /** `MAX(activity_events.event_id)` at snapshot time. */
   cursor: number;
   generatedAt: string;
+}
+
+/**
+ * Pack that owns a deep-linked agent. The factory knows the producer but not
+ * the pack it came from, so the office resolves it here before validating the
+ * station (97 §3.5). Reads stop at the first match.
+ */
+export async function findPackForAgent(
+  agentId: string,
+): Promise<string | null> {
+  const root = getPacksRoot();
+  if (!existsSync(root)) {
+    return null;
+  }
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const dir = path.join(root, entry.name);
+    if (!existsSync(path.join(dir, "team.yaml"))) {
+      continue;
+    }
+    const loaded = await loadPack(dir);
+    if (loaded.ok && loaded.pack.agents.some((agent) => agent.id === agentId)) {
+      return entry.name;
+    }
+  }
+  return null;
 }
 
 type MissionAssignment = {

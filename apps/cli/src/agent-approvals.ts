@@ -57,6 +57,50 @@ export async function decideApprovalEntity(
 ): Promise<DecideApprovalResult> {
   const key = normalizeKey(input.idempotencyKey);
 
+  // Change-scoped approvals decide through the unified change bridge instead
+  // of a paused run; it reuses the same CAS, expiry and self-approval rules
+  // and resumes/terminates the proposal (85.3.5.5).
+  const scoped = await store.approvals.get(input.approvalId);
+  if (scoped?.changeId) {
+    const result = await store.changeApprovals.decide({
+      approvalId: input.approvalId,
+      status: input.status,
+      decisionBy: input.decisionBy,
+      reason: input.reason,
+      origin: "cli",
+      ...(input.expectedVersion !== undefined
+        ? { expectedVersion: input.expectedVersion }
+        : {}),
+      ...(key ? { idempotencyKey: key } : {}),
+      ...(input.at ? { at: input.at } : {}),
+    });
+    if (!result.ok) {
+      if (result.code === "not_found") {
+        throw new CliError(
+          "not_found",
+          `approval not found: ${input.approvalId}`,
+        );
+      }
+      throw new CliError("conflict", result.message, {
+        details: {
+          approvalId: input.approvalId,
+          changeId: result.current?.changeId ?? null,
+          currentStatus: result.current?.status ?? null,
+        },
+      });
+    }
+    return {
+      approvalId: result.record.approvalId,
+      runId: result.record.runId,
+      status: result.record.status === "approved" ? "approved" : "rejected",
+      version: result.record.version,
+      decisionBy: result.record.decisionBy ?? input.decisionBy,
+      decisionAt: result.record.decisionAt,
+      decisionReason: result.record.decisionReason,
+      duplicate: result.duplicate,
+    };
+  }
+
   const outcome = await store.sql.begin(async (tx) => {
     const approvals = new ApprovalService({ sql: tx, driver: store.driver });
     const current = await approvals.get(input.approvalId);

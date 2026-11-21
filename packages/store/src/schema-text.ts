@@ -779,6 +779,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_reason TEXT,
   assignee TEXT,
   assigned_at TIMESTAMPTZ,
+  substrate TEXT,
+  change_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL
 );
@@ -789,6 +791,10 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS substrate TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS change_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_approvals_change
+  ON approvals(change_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS cost_records (
   record_id TEXT PRIMARY KEY,
@@ -1096,6 +1102,7 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   eval_plan JSONB NOT NULL DEFAULT '{}'::jsonb,
   source_ref JSONB,
   revert_ref TEXT,
+  revert JSONB,
   budget_ref TEXT,
   approval_ref TEXT,
   outcome JSONB,
@@ -1104,6 +1111,8 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   updated_at TIMESTAMPTZ NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE change_proposals ADD COLUMN IF NOT EXISTS revert JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
   ON change_proposals(workspace_id, created_at DESC);
@@ -1893,6 +1902,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_reason TEXT,
   assignee TEXT,
   assigned_at TEXT,
+  substrate TEXT,
+  change_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
@@ -1903,6 +1914,10 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN assignee TEXT;
 ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
+ALTER TABLE approvals ADD COLUMN substrate TEXT;
+ALTER TABLE approvals ADD COLUMN change_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_approvals_change
+  ON approvals(change_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS cost_records (
   record_id TEXT PRIMARY KEY,
@@ -2210,6 +2225,7 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   eval_plan TEXT NOT NULL DEFAULT '{}',
   source_ref TEXT,
   revert_ref TEXT,
+  revert TEXT,
   budget_ref TEXT,
   approval_ref TEXT,
   outcome TEXT,
@@ -2218,6 +2234,8 @@ CREATE TABLE IF NOT EXISTS change_proposals (
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 0
 );
+
+ALTER TABLE change_proposals ADD COLUMN revert TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
   ON change_proposals(workspace_id, created_at DESC);
