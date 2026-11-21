@@ -26,6 +26,9 @@ function card(
   return {
     requestId,
     runId: `run_${requestId}`,
+    changeId: null,
+    substrate: null,
+    revertRef: null,
     workflowId: "demo",
     stageId: `run_${requestId}:review`,
     stageName: "review",

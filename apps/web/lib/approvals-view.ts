@@ -171,6 +171,8 @@ export function towerCardToItem(card: ApprovalTowerCard): FactoryItem {
     stageName: card.stageName,
     ...(requestType ? { requestType } : {}),
     stationId: stationForApproval(requestType),
+    ...(card.changeId ? { changeId: card.changeId } : {}),
+    ...(card.substrate ? { substrate: card.substrate } : {}),
     riskClass: card.riskClass,
     summary: card.summary,
     costCny: card.budget?.spentCny ?? 0,

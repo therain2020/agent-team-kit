@@ -294,6 +294,28 @@ export class ChangeProposalService {
     };
   }
 
+  /**
+   * Links the approval that cleared a high-risk proposal. Idempotent and
+   * deliberately does not bump `version`: linking an approval is evidence, not
+   * a state transition, so a retried decision cannot invalidate a concurrent
+   * transition's CAS.
+   */
+  async setApprovalRef(
+    proposalId: string,
+    approvalRef: string,
+    at?: string,
+  ): Promise<ChangeProposal | null> {
+    const now = at ?? new Date().toISOString();
+    await this.store.sql`
+      UPDATE change_proposals
+      SET approval_ref = ${approvalRef},
+          updated_at = ${now}
+      WHERE proposal_id = ${proposalId}
+        AND (approval_ref IS NULL OR approval_ref = ${approvalRef})
+    `;
+    return await this.get(proposalId);
+  }
+
   /** Reads a proposal payload previously stored via {@link create}. */
   async readContent(proposalId: string): Promise<Uint8Array | null> {
     const proposal = await this.get(proposalId);
