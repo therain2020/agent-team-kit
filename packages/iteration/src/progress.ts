@@ -47,8 +47,8 @@ export async function startIteration(
     INSERT INTO iteration_runs (
       iteration_id, workflow_id, workspace_id, repo_root, origin_kind,
       trigger_id, trigger_run_id, reaction_rule_id, goal, acceptance,
-      run_mode, apply_mode, status, phase, plan_artifact_id, started_at,
-      updated_at
+      run_mode, apply_mode, status, phase, plan_artifact_id,
+      change_id, change_stage, started_at, updated_at
     ) VALUES (
       ${input.iterationId},
       ${input.workflowId ?? `iteration-${input.iterationId}`},
@@ -58,7 +58,8 @@ export async function startIteration(
       ${input.origin?.reactionRuleId ?? null}, ${input.goal},
       ${input.acceptance ?? null},
       ${input.runMode}, ${input.applyMode}, 'running', 'planned',
-      ${planArtifactId}, ${now}, ${now}
+      ${planArtifactId}, ${input.changeId ?? null},
+      ${input.changeStage ?? null}, ${now}, ${now}
     )
     ON CONFLICT (iteration_id) DO UPDATE SET
       workflow_id = EXCLUDED.workflow_id,
@@ -69,6 +70,8 @@ export async function startIteration(
         EXCLUDED.trigger_run_id,
         iteration_runs.trigger_run_id
       ),
+      change_id = COALESCE(EXCLUDED.change_id, iteration_runs.change_id),
+      change_stage = COALESCE(EXCLUDED.change_stage, iteration_runs.change_stage),
       reaction_rule_id = COALESCE(
         EXCLUDED.reaction_rule_id,
         iteration_runs.reaction_rule_id
@@ -100,10 +103,11 @@ export async function startIteration(
     await store.sql`
       INSERT INTO iteration_tasks (
         iteration_id, task_id, domain, goal, acceptance, status, phase,
-        started_at, updated_at
+        change_id, change_stage, started_at, updated_at
       ) VALUES (
         ${input.iterationId}, ${task.id}, ${task.domain}, ${task.goal},
-        ${task.acceptance}, 'pending', 'planned', ${now}, ${now}
+        ${task.acceptance}, 'pending', 'planned',
+        ${input.changeId ?? null}, ${input.changeStage ?? null}, ${now}, ${now}
       )
       ON CONFLICT (iteration_id, task_id) DO NOTHING
     `;

@@ -15,6 +15,12 @@ export interface IterationSignal {
   risk: "low" | "medium" | "high";
   tokens: number;
   error?: string;
+  /**
+   * Effective change (canary variant) that produced this task. Absent means
+   * champion traffic; attribution compares the two windows (85 §3.5).
+   */
+  changeId?: string;
+  changeStage?: "canary" | "promoted";
 }
 
 export type SignalSourceKind = "iterations" | "archive" | "manual";
@@ -136,7 +142,11 @@ export function isIterationSignal(value: unknown): value is IterationSignal {
     RISK_LEVELS.has(record.risk) &&
     typeof record.tokens === "number" &&
     Number.isFinite(record.tokens) &&
-    (record.error === undefined || typeof record.error === "string")
+    (record.error === undefined || typeof record.error === "string") &&
+    (record.changeId === undefined || typeof record.changeId === "string") &&
+    (record.changeStage === undefined ||
+      record.changeStage === "canary" ||
+      record.changeStage === "promoted")
   );
 }
 

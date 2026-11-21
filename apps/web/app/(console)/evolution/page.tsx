@@ -18,6 +18,7 @@ import {
   GitPullRequestArrow,
   History,
   Microscope,
+  Scale,
   ShieldCheck,
   Snowflake,
   Sparkles,
@@ -44,6 +45,7 @@ export default async function EvolutionPage() {
       divergence,
       drift,
       governanceEvents,
+      attributions,
     },
     packs,
   ] = await Promise.all([loadEvolutionData(), listPacks()]);
@@ -259,6 +261,112 @@ export default async function EvolutionPage() {
             )}
           </div>
           <p className="text-[10px] text-zinc-600">{t("goodhartNote")}</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Scale className="size-4 text-emerald-400" />
+            {t("attributionTitle")}
+          </CardTitle>
+          <Badge variant="outline">
+            {t("attributionCount", { count: attributions.length })}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3 text-[11px] text-zinc-400">
+          <p className="max-w-3xl leading-relaxed">{t("attributionBody")}</p>
+          {attributions.length === 0 ? (
+            <p className="text-[10px] text-zinc-600">{t("attributionEmpty")}</p>
+          ) : (
+            <ul className="space-y-2">
+              {attributions.map((attribution) => {
+                const rollback = attribution.actions.rollback;
+                const costRatio = attribution.delta.avgTokensRatio;
+                return (
+                  <li
+                    key={attribution.attributionId}
+                    className="rounded-lg border border-border px-3 py-2"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[10px] text-zinc-500">
+                        {attribution.changeId}
+                        {attribution.stage
+                          ? ` · ${t(`attributionStage.${attribution.stage}`)}`
+                          : ""}
+                      </span>
+                      <Badge
+                        variant={
+                          attribution.divergent
+                            ? "danger"
+                            : attribution.verdict === "regressed"
+                              ? "warning"
+                              : attribution.verdict === "improved"
+                                ? "success"
+                                : "outline"
+                        }
+                      >
+                        {t(`attributionVerdict.${attribution.verdict}`)}
+                      </Badge>
+                      {rollback ? (
+                        <Badge
+                          variant={
+                            rollback.status === "failed"
+                              ? "danger"
+                              : rollback.status === "rolled_back"
+                                ? "warning"
+                                : "outline"
+                          }
+                        >
+                          {t(`attributionRollback.${rollback.status}`)}
+                        </Badge>
+                      ) : null}
+                      <span className="ml-auto font-mono text-[10px] text-zinc-600">
+                        {timeAgo(attribution.createdAt, locale)}
+                      </span>
+                    </div>
+                    <p className="mt-1 font-mono text-[10px] text-zinc-500">
+                      {t("attributionWindow", {
+                        baselineTasks: attribution.baseline.tasks,
+                        baselinePass: (
+                          attribution.baseline.passRate * 100
+                        ).toFixed(0),
+                        changedTasks: attribution.changed.tasks,
+                        changedPass: (
+                          attribution.changed.passRate * 100
+                        ).toFixed(0),
+                        cost:
+                          costRatio === null ? "—" : `${costRatio.toFixed(2)}x`,
+                      })}
+                    </p>
+                    {attribution.reasons.length > 0 ? (
+                      <ul className="mt-1 space-y-1">
+                        {attribution.reasons.map((reason) => (
+                          <li
+                            key={reason}
+                            className="rounded border border-border bg-zinc-950/50 px-2 py-1 text-[10px] text-amber-300/80"
+                          >
+                            {reason}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {rollback ? (
+                      <p className="mt-1 text-[10px] text-zinc-500">
+                        {rollback.reason}
+                        {rollback.auditId
+                          ? ` · ${t("attributionAudit", {
+                              auditId: rollback.auditId,
+                            })}`
+                          : ""}
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <p className="text-[10px] text-zinc-600">{t("attributionNote")}</p>
         </CardContent>
       </Card>
 

@@ -1,5 +1,6 @@
 import path from "node:path";
 import {
+  type AttributionRecord,
   type CanaryState,
   type DivergenceGuardResult,
   type DriftSummary,
@@ -14,9 +15,11 @@ import {
   StoreEvolutionRepository,
   type VariantMeta,
   buildDivergencePoints,
+  defaultAttributionPath,
   defaultGovernancePath,
   divergenceGuard,
   evaluatorAgreement,
+  loadAttributionRecords,
   loadGovernanceEvents,
   readOutcomeObservations,
   summarizeOutcomes,
@@ -49,11 +52,14 @@ export interface EvolutionData {
   /** Drift findings from the most recent cycle that computed them. */
   drift: DriftSummary | null;
   governanceEvents: EvolutionGovernanceEvent[];
+  /** Live before/after attribution records (85 §3.5). */
+  attributions: AttributionRecord[];
   archivePath: string;
   statePath: string;
   freezePath: string;
   cyclesPath: string;
   governancePath: string;
+  attributionPath: string;
   repoRoot: string;
 }
 
@@ -74,9 +80,11 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
       repo.listVariants(),
       repo.listDecisions(20),
     ]);
-  const [outcomeFile, governanceEvents] = await Promise.all([
+  const attributionFile = defaultAttributionPath(variantsRoot);
+  const [outcomeFile, governanceEvents, attributions] = await Promise.all([
     readOutcomeObservations(),
     loadGovernanceEvents(governanceFile, 10),
+    loadAttributionRecords(attributionFile, 10),
   ]);
   const divergence = divergenceGuard(
     buildDivergencePoints(cycles, outcomeFile.outcomes),
@@ -126,11 +134,13 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
     divergence,
     drift,
     governanceEvents,
+    attributions,
     archivePath: path.join(variantsRoot, "archive.jsonl"),
     statePath: path.join(variantsRoot, "state.json"),
     freezePath: path.join(variantsRoot, "freeze.json"),
     cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
     governancePath: governanceFile,
+    attributionPath: attributionFile,
     repoRoot,
   };
 }

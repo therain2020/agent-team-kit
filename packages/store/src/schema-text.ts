@@ -176,6 +176,10 @@ ALTER TABLE runs ADD COLUMN IF NOT EXISTS reaction_rule_id TEXT;
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS origin_kind TEXT;
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS trigger_id TEXT;
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS trigger_run_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS change_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS change_stage TEXT;
+ALTER TABLE iteration_tasks ADD COLUMN IF NOT EXISTS change_id TEXT;
+ALTER TABLE iteration_tasks ADD COLUMN IF NOT EXISTS change_stage TEXT;
 ALTER TABLE iteration_runs ADD COLUMN IF NOT EXISTS reaction_rule_id TEXT;
 ALTER TABLE trigger_runs ADD COLUMN IF NOT EXISTS reaction_rule_id TEXT;
 
@@ -402,6 +406,8 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   plan_artifact_id TEXT,
   report_artifact_id TEXT,
   error TEXT,
+  change_id TEXT,
+  change_stage TEXT,
   last_heartbeat_at TIMESTAMPTZ,
   last_event_id BIGINT,
   turn_count INTEGER NOT NULL DEFAULT 0,
@@ -428,6 +434,8 @@ CREATE TABLE IF NOT EXISTS iteration_tasks (
   apply_status TEXT,
   commit_sha TEXT,
   error TEXT,
+  change_id TEXT,
+  change_stage TEXT,
   diff_artifact_id TEXT,
   transcript_artifact_id TEXT,
   result_artifact_id TEXT,
@@ -1497,6 +1505,8 @@ CREATE TABLE IF NOT EXISTS iteration_runs (
   plan_artifact_id TEXT,
   report_artifact_id TEXT,
   error TEXT,
+  change_id TEXT,
+  change_stage TEXT,
   last_heartbeat_at TEXT,
   last_event_id INTEGER,
   turn_count INTEGER NOT NULL DEFAULT 0,
@@ -1523,6 +1533,8 @@ CREATE TABLE IF NOT EXISTS iteration_tasks (
   apply_status TEXT,
   commit_sha TEXT,
   error TEXT,
+  change_id TEXT,
+  change_stage TEXT,
   diff_artifact_id TEXT,
   transcript_artifact_id TEXT,
   result_artifact_id TEXT,
@@ -1806,6 +1818,10 @@ ALTER TABLE runs ADD COLUMN reaction_rule_id TEXT;
 ALTER TABLE iteration_runs ADD COLUMN origin_kind TEXT;
 ALTER TABLE iteration_runs ADD COLUMN trigger_id TEXT;
 ALTER TABLE iteration_runs ADD COLUMN trigger_run_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN change_id TEXT;
+ALTER TABLE iteration_runs ADD COLUMN change_stage TEXT;
+ALTER TABLE iteration_tasks ADD COLUMN change_id TEXT;
+ALTER TABLE iteration_tasks ADD COLUMN change_stage TEXT;
 ALTER TABLE iteration_runs ADD COLUMN reaction_rule_id TEXT;
 ALTER TABLE trigger_runs ADD COLUMN reaction_rule_id TEXT;
 
