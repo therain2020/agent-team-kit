@@ -37,7 +37,7 @@ export interface CostRecordInput {
   managerSessionId?: string | null;
   stageId?: string | null;
   agentId?: string | null;
-  /** `model`, `tool:<name>`, `coder`. */
+  /** `model`, `tool:<name>`, `coder`, `compose:*`, `evolution:*`, `manager`. */
   source: string;
   artifactId?: string | null;
   modelId: string;
