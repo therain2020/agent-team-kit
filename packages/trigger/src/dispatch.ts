@@ -257,6 +257,7 @@ export async function fireTrigger(
           launchedAt: timestamp,
           estimateCny,
           payloadRef: input.payloadRef ?? null,
+          reactionRuleId: input.reactionRuleId ?? null,
           lastError: message,
           createdAt: timestamp,
           updatedAt: failedAt,
@@ -309,6 +310,7 @@ export async function fireTrigger(
     launchedAt: timestamp,
     estimateCny,
     payloadRef: input.payloadRef ?? null,
+    reactionRuleId: input.reactionRuleId ?? null,
     lastError: null,
     createdAt: timestamp,
     updatedAt: writeBackAt,
@@ -685,6 +687,7 @@ function buildStartJobInput(
     kind: originKind,
     triggerId: trigger.triggerId,
     triggerRunId,
+    ...(input.reactionRuleId ? { reactionRuleId: input.reactionRuleId } : {}),
     actor: input.actor ?? trigger.actor,
   } as const;
 

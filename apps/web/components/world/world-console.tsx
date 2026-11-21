@@ -33,6 +33,7 @@ import {
   Newspaper,
   Play,
   Sun,
+  Zap,
 } from "lucide-react";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
@@ -170,6 +171,12 @@ export function WorldConsole({
               <Link href="/world?tab=information">
                 <Newspaper className="size-3.5" />
                 {t("openInformation")}
+              </Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/world?tab=reactions">
+                <Zap className="size-3.5" />
+                {t("openReactions")}
               </Link>
             </Button>
             <Button variant="outline" size="sm" asChild>

@@ -146,6 +146,7 @@ export const triggerRunSchema = z.object({
   launchedAt: z.string().datetime(),
   estimateCny: z.number().nonnegative().default(0),
   payloadRef: z.string().min(1).nullable().default(null),
+  reactionRuleId: z.string().min(1).nullable().default(null),
   lastError: z.string().nullable().default(null),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -196,6 +197,8 @@ export interface FireTriggerInput {
   triggerRunId?: string;
   runId?: string;
   eventId?: string;
+  /** Reaction rule that produced this firing (98 I-3). */
+  reactionRuleId?: string;
   evidenceText?: string;
   priority?: PriorityClass;
   variant?: TriggerRunVariant;
