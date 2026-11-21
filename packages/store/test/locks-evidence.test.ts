@@ -2,10 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { listOps } from "../src/op-log";
-import { withStoreLock } from "../src/locks";
-import { initStore } from "../src/store";
 import { loadStoreConfig } from "../src/config";
+import { withStoreLock } from "../src/locks";
+import { listOps } from "../src/op-log";
+import { initStore } from "../src/store";
 
 const dirs: string[] = [];
 const closers: Array<() => Promise<void>> = [];

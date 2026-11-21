@@ -45,9 +45,7 @@ export interface ColdStartTthwEnv {
   [key: string]: string | undefined;
 }
 
-export function coldStartTthwPath(
-  env: ColdStartTthwEnv = process.env,
-): string {
+export function coldStartTthwPath(env: ColdStartTthwEnv = process.env): string {
   return path.join(bootstrapHome(env), "cold-start-tthw.json");
 }
 
