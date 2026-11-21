@@ -76,6 +76,10 @@ export async function loadTriggerPlane(
     if (!existsSync(path.join(dir, "team.yaml"))) {
       continue;
     }
+    const configPath = path.join(dir, "autopilot.yaml");
+    if (!existsSync(configPath)) {
+      continue;
+    }
 
     const loaded = await loadPack(dir);
     if (!loaded.ok) {
@@ -96,10 +100,6 @@ export async function loadTriggerPlane(
       continue;
     }
 
-    const configPath = path.join(dir, "autopilot.yaml");
-    if (!existsSync(configPath)) {
-      continue;
-    }
     const parsed = await readAutopilotConfig(entry.name, configPath);
     if (!parsed.ok) {
       plane.errors.push(parsed.error);
