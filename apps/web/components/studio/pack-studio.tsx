@@ -143,6 +143,61 @@ interface WorkflowDraftResult {
   model: "live" | "heuristic";
 }
 
+interface PipelineComponentRef {
+  kind: "agent" | "workflow" | "toolpack" | "skillpack";
+  id: string;
+  version: string;
+  source: {
+    repo: string;
+    commit: string;
+    ref?: string;
+    sha256: string;
+  };
+}
+
+interface PipelineComponentDraft {
+  ref: PipelineComponentRef;
+  description: string;
+}
+
+interface PipelineBindingDraft {
+  node: string;
+  component: PipelineComponentRef;
+}
+
+interface PipelineIssue {
+  code: string;
+  path: string;
+  message: string;
+}
+
+interface PipelineAssemblyPreview {
+  ok: boolean;
+  preview?: boolean;
+  bindings?: Array<{ node: string; component: PipelineComponentRef }>;
+  written?: string[];
+  warnings?: string[];
+  noop?: boolean;
+  issues?: PipelineIssue[];
+  error?: string;
+}
+
+interface PipelineDraftResult {
+  values: {
+    id: string;
+    name: string;
+    description: string;
+    stages: WorkflowStageDraft[];
+    components: PipelineComponentDraft[];
+    bindings: PipelineBindingDraft[];
+    issues: PipelineIssue[];
+  };
+  rationale: string;
+  warnings: string[];
+  model: "live" | "heuristic";
+  assembly?: PipelineAssemblyPreview;
+}
+
 export function PackStudio({
   data,
   initialAgentId,
@@ -196,6 +251,11 @@ export function PackStudio({
   const [workflowDraft, setWorkflowDraft] =
     useState<WorkflowDraftResult | null>(null);
   const [workflowDraftBusy, setWorkflowDraftBusy] = useState(false);
+  const [pipelineIntent, setPipelineIntent] = useState("");
+  const [pipelineDraft, setPipelineDraft] =
+    useState<PipelineDraftResult | null>(null);
+  const [pipelineDraftBusy, setPipelineDraftBusy] = useState(false);
+  const [pipelineApproving, setPipelineApproving] = useState(false);
   const [managerModel, setManagerModel] = useState("deepseek-pro");
   const [managerDescription, setManagerDescription] = useState("");
   const [managerInstructions, setManagerInstructions] = useState("");
@@ -724,6 +784,135 @@ export function PackStudio({
       }),
     );
     toast.success(t("workflowDraftApplied"));
+  }
+
+  async function generatePipelineDraft() {
+    if (!pipelineIntent.trim()) {
+      toast.error(t("pipelineDraftIntentRequired"));
+      return;
+    }
+    if (!currentWorkflow) {
+      return;
+    }
+    setPipelineDraftBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/compose", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          kind: "pipeline",
+          intent: pipelineIntent.trim(),
+          packDir: data.dirName,
+          currentStages: currentStagesOf(currentWorkflow),
+        }),
+      });
+      const payload = (await response.json()) as {
+        values?: PipelineDraftResult["values"];
+        rationale?: string;
+        warnings?: string[];
+        model?: "live" | "heuristic";
+        assembly?: PipelineAssemblyPreview;
+        error?: string;
+      };
+      if (!response.ok || !payload.values?.stages) {
+        throw new Error(payload.error ?? "failed to draft pipeline");
+      }
+      setPipelineDraft({
+        values: {
+          id: payload.values.id ?? "",
+          name: payload.values.name ?? "",
+          description: payload.values.description ?? "",
+          stages: payload.values.stages,
+          components: payload.values.components ?? [],
+          bindings: payload.values.bindings ?? [],
+          issues: payload.values.issues ?? [],
+        },
+        rationale: payload.rationale ?? "",
+        warnings: payload.warnings ?? [],
+        model: payload.model === "live" ? "live" : "heuristic",
+        ...(payload.assembly ? { assembly: payload.assembly } : {}),
+      });
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setPipelineDraftBusy(false);
+    }
+  }
+
+  function applyPipelineStages() {
+    if (!pipelineDraft || !currentWorkflow) {
+      return;
+    }
+    const doc = workflowDocBase(currentWorkflow.raw, currentWorkflow.id);
+    setWorkflowRaw(
+      stringify({
+        ...doc,
+        stages: pipelineDraft.values.stages.map(draftStageToYaml),
+      }),
+    );
+    toast.success(t("pipelineDraftApplied"));
+  }
+
+  async function approvePipelineAssembly() {
+    if (!pipelineDraft || !currentWorkflow) {
+      return;
+    }
+    if (pipelineDraft.assembly && !pipelineDraft.assembly.ok) {
+      toast.error(t("pipelineDraftBlocked"));
+      return;
+    }
+    setPipelineApproving(true);
+    setError(null);
+    try {
+      const components = pipelineDraft.values.components.map((component) => ({
+        kind: component.ref.kind,
+        id: component.ref.id,
+      }));
+      if (components.length > 0) {
+        const response = await fetch(
+          `/api/packs/${encodeURIComponent(data.dirName)}/assemble`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ components }),
+          },
+        );
+        const payload = (await response.json()) as { error?: string };
+        if (!response.ok) {
+          throw new Error(payload.error ?? "assembly failed");
+        }
+      }
+      // The graph is written only after the assembly succeeded, so every
+      // stage binding resolves against the freshly bound components.
+      const content = stringify({
+        ...workflowDocBase(currentWorkflow.raw, currentWorkflow.id),
+        stages: pipelineDraft.values.stages.map(draftStageToYaml),
+      });
+      const save = await fetch(
+        `/api/packs/${encodeURIComponent(data.dirName)}/workflow`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ file: currentWorkflow.file, content }),
+        },
+      );
+      const savePayload = (await save.json()) as { error?: string };
+      if (!save.ok) {
+        throw new Error(savePayload.error ?? "save failed");
+      }
+      setWorkflowRaw(content);
+      toast.success(t("pipelineDraftApproved"));
+      router.refresh();
+    } catch (problem) {
+      const text = problem instanceof Error ? problem.message : String(problem);
+      setError(text);
+      toast.error(text);
+    } finally {
+      setPipelineApproving(false);
+    }
   }
 
   async function saveAutopilot() {
@@ -1438,6 +1627,8 @@ export function PackStudio({
                   setWorkflowRaw(workflow.raw);
                   setWorkflowIntent("");
                   setWorkflowDraft(null);
+                  setPipelineIntent("");
+                  setPipelineDraft(null);
                 }}
                 className={cn(
                   "w-full rounded-md px-2 py-1.5 text-left text-xs text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100",
@@ -1515,6 +1706,48 @@ export function PackStudio({
                   <WorkflowDraftPreview
                     draft={workflowDraft}
                     onApply={applyWorkflowDraft}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            {currentWorkflow ? (
+              <div className="space-y-2 rounded-md border border-border bg-zinc-950/40 p-3">
+                <div className="flex items-start gap-2">
+                  <Sparkles className="mt-0.5 size-4 text-emerald-300" />
+                  <div>
+                    <h3 className="text-xs font-medium text-zinc-200">
+                      {t("pipelineDraftTitle")}
+                    </h3>
+                    <p className="text-[10px] text-zinc-500">
+                      {t("pipelineDraftHint")}
+                    </p>
+                  </div>
+                </div>
+                <Textarea
+                  value={pipelineIntent}
+                  onChange={(event) => setPipelineIntent(event.target.value)}
+                  placeholder={t("pipelineDraftPlaceholder")}
+                  className="min-h-14 text-xs"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void generatePipelineDraft()}
+                    disabled={pipelineDraftBusy || saving}
+                  >
+                    <Sparkles className="size-3.5" />
+                    {pipelineDraftBusy
+                      ? t("pipelineDraftGenerating")
+                      : t("pipelineDraftGenerate")}
+                  </Button>
+                </div>
+                {pipelineDraft ? (
+                  <PipelineDraftPreview
+                    draft={pipelineDraft}
+                    approving={pipelineApproving}
+                    onApply={applyPipelineStages}
+                    onApprove={() => void approvePipelineAssembly()}
                   />
                 ) : null}
               </div>
@@ -2060,6 +2293,161 @@ function WorkflowDraftPreview({
         <CheckCircle2 className="size-3.5" />
         {t("workflowDraftApply")}
       </Button>
+    </div>
+  );
+}
+
+function PipelineDraftPreview({
+  draft,
+  approving,
+  onApply,
+  onApprove,
+}: {
+  draft: PipelineDraftResult;
+  approving: boolean;
+  onApply: () => void;
+  onApprove: () => void;
+}) {
+  const t = useTranslations("studio");
+  const assembly = draft.assembly;
+  const blocked = assembly ? !assembly.ok : false;
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-zinc-950/50 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={draft.model === "live" ? "success" : "outline"}>
+          {draft.model === "live"
+            ? t("agentDraftAi")
+            : t("agentDraftHeuristic")}
+        </Badge>
+        <span className="text-[10px] text-zinc-500">
+          {t("pipelineDraftStages", { count: draft.values.stages.length })}
+        </span>
+        <span className="text-[10px] text-zinc-500">
+          {t("pipelineDraftComponents", {
+            count: draft.values.components.length,
+          })}
+        </span>
+      </div>
+      {draft.rationale ? (
+        <p className="text-[11px] text-zinc-400">{draft.rationale}</p>
+      ) : null}
+      {draft.warnings.length > 0 ? (
+        <ul className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+          {draft.warnings.map((warning) => (
+            <li key={warning}>· {warning}</li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="space-y-1">
+        {draft.values.components.length === 0 ? (
+          <p className="text-[10px] text-zinc-600">
+            {t("pipelineDraftNoComponents")}
+          </p>
+        ) : (
+          draft.values.components.map((component) => (
+            <div
+              key={`${component.ref.kind}/${component.ref.id}`}
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border px-2.5 py-1.5 text-[10px]"
+            >
+              <span className="rounded border border-border px-1 uppercase text-zinc-500">
+                {component.ref.kind}
+              </span>
+              <span className="font-mono text-zinc-300">
+                {component.ref.id}
+              </span>
+              <span className="font-mono text-zinc-500">
+                v{component.ref.version}
+              </span>
+              <span className="ml-auto truncate font-mono text-zinc-600">
+                {t("pipelineDraftSource")}: {component.ref.source.repo}@
+                {component.ref.source.commit.slice(0, 7)}
+              </span>
+              {component.description ? (
+                <span className="w-full text-zinc-600">
+                  {component.description}
+                </span>
+              ) : null}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="space-y-1">
+        {draft.values.bindings.length === 0 ? (
+          <p className="text-[10px] text-zinc-600">
+            {t("pipelineDraftNoBindings")}
+          </p>
+        ) : (
+          draft.values.bindings.map((binding) => (
+            <div
+              key={`${binding.node}:${binding.component.kind}/${binding.component.id}`}
+              className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 px-2.5 py-1 text-[10px] text-zinc-500"
+            >
+              <span className="font-mono text-zinc-300">{binding.node}</span>
+              <span>→</span>
+              <span className="font-mono text-zinc-400">
+                {binding.component.kind}/{binding.component.id}@
+                {binding.component.version}
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+      {draft.values.issues.length > 0 ? (
+        <div className="space-y-1 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
+          <span className="font-medium">
+            {t("pipelineDraftIssues", { count: draft.values.issues.length })}
+          </span>
+          <ul className="space-y-1">
+            {draft.values.issues.map((issue) => (
+              <li key={`${issue.code}:${issue.path}`}>
+                · {issue.path}: {issue.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {assembly ? (
+        <div
+          className={cn(
+            "space-y-1 rounded-md border px-3 py-2 text-[11px]",
+            blocked
+              ? "border-red-500/30 bg-red-500/5 text-red-200"
+              : "border-emerald-500/30 bg-emerald-500/5 text-emerald-200",
+          )}
+        >
+          <span>
+            {blocked
+              ? t("pipelineDraftAssemblyBlocked")
+              : t("pipelineDraftAssemblyOk")}
+          </span>
+          {assembly.written && assembly.written.length > 0 ? (
+            <span className="block text-[10px] text-zinc-400">
+              {t("pipelineDraftWritten", { count: assembly.written.length })}
+            </span>
+          ) : null}
+          {assembly.error ? (
+            <span className="block text-[10px]">{assembly.error}</span>
+          ) : null}
+          {assembly.issues && assembly.issues.length > 0 ? (
+            <ul className="space-y-1 text-[10px]">
+              {assembly.issues.map((issue) => (
+                <li key={`${issue.code}:${issue.path}`}>
+                  · {issue.path}: {issue.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" onClick={onApply}>
+          {t("pipelineDraftApply")}
+        </Button>
+        <Button size="sm" onClick={onApprove} disabled={approving || blocked}>
+          <CheckCircle2 className="size-3.5" />
+          {approving ? t("pipelineDraftApproving") : t("pipelineDraftApprove")}
+        </Button>
+      </div>
     </div>
   );
 }

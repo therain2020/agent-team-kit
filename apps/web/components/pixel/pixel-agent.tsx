@@ -94,6 +94,22 @@ export function PixelAgent({
           <rect x="15" y="15" width="1" height="1" fill="#c9a06a" />
         </>
       ) : null}
+      {state === "idle" ? (
+        <>
+          {/* Idle coffee break: the same mug plus a static steam pixel. */}
+          <rect x="12" y="14" width="3" height="3" fill="#c9a06a" />
+          <rect x="12" y="14" width="3" height="1" fill="#e8c49a" />
+          <rect x="15" y="15" width="1" height="1" fill="#c9a06a" />
+          <rect
+            x="13"
+            y="12"
+            width="1"
+            height="1"
+            fill="#94a3b8"
+            opacity="0.6"
+          />
+        </>
+      ) : null}
       {workingFrame ? (
         <>
           <rect x="13" y="11" width="1" height="3" fill="#c9d3e0" />

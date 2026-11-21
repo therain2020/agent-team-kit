@@ -100,7 +100,15 @@ export function deriveLiveAgents(
 
   return base.map((agent) => {
     const presence = presenceFromAgentState(agentStateById.get(agent.id));
-    if (presence) {
+    // Only apply states from this Pack's runs: the world stream is
+    // workspace-wide, so a same-named agent in another Pack must not bleed in.
+    // An empty scope means "no missions yet" and keeps the stream usable.
+    if (
+      presence &&
+      (scopedRunIds.size === 0 ||
+        !presence.runId ||
+        scopedRunIds.has(presence.runId))
+    ) {
       return applyPresence(agent, presence, runById);
     }
 

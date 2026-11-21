@@ -6,6 +6,7 @@ import { LEGACY_REDIRECTS } from "../lib/legacy-redirects";
 import {
   NAV_ITEMS,
   QUICK_JUMP,
+  isNavItemActive,
   matchNavItem,
   quickJumpHref,
   shortcutLabel,
@@ -58,18 +59,34 @@ describe("console IA (#160)", () => {
   it("matches a primary route and its nested children", () => {
     expect(matchNavItem("/world")?.href).toBe("/world");
     expect(matchNavItem("/office/any/depth")?.href).toBe("/office");
-    expect(matchNavItem("/packs/demo/studio")).toBeUndefined();
+    expect(matchNavItem("/approvals/queue")?.href).toBe("/approvals");
   });
 
-  it("keeps app/(console) at eight page routes or fewer", () => {
+  it("folds the local libraries into the workshop surface (88 M2)", () => {
+    const workshop = NAV_ITEMS.find((item) => item.href === "/workshop");
+    expect(workshop?.aliases).toEqual(["/packs", "/sources"]);
+    if (!workshop) {
+      return;
+    }
+    expect(matchNavItem("/packs")).toBe(workshop);
+    expect(matchNavItem("/sources")).toBe(workshop);
+    expect(matchNavItem("/packs/demo/studio")).toBe(workshop);
+    expect(isNavItemActive(workshop, "/workshop")).toBe(true);
+    expect(isNavItemActive(workshop, "/sources/e2e")).toBe(true);
+    expect(isNavItemActive(workshop, "/world")).toBe(false);
+  });
+
+  it("keeps app/(console) at ten page routes or fewer", () => {
     const routes = pageRoutes(CONSOLE_DIR).sort();
-    expect(routes.length).toBeLessThanOrEqual(8);
+    expect(routes.length).toBeLessThanOrEqual(10);
     expect(routes).toEqual([
       "/approvals",
       "/evolution",
       "/office",
       "/ops",
+      "/packs",
       "/packs/[dirName]/studio",
+      "/sources",
       "/traces",
       "/workshop",
       "/world",
@@ -78,7 +95,11 @@ describe("console IA (#160)", () => {
 
   it("keeps no dead links: every legacy route redirects onto a live route", () => {
     const liveBases = new Set(
-      NAV_ITEMS.map((item) => item.href).concat("/traces"),
+      NAV_ITEMS.map((item) => item.href).concat([
+        "/packs",
+        "/sources",
+        "/traces",
+      ]),
     );
     const bySource = new Map(
       LEGACY_REDIRECTS.map((entry) => [entry.source, entry.destination]),
@@ -96,9 +117,7 @@ describe("console IA (#160)", () => {
       "/iterations",
       "/kill-switch",
       "/manager",
-      "/packs",
       "/runs",
-      "/sources",
     ]) {
       expect(bySource.has(legacy), legacy).toBe(true);
     }

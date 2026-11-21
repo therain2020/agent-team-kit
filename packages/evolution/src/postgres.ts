@@ -96,6 +96,12 @@ interface CycleRow {
   eval_snapshot_hash: string | null;
   evaluator_hash: string | null;
   evaluator_approval_ref: string | null;
+  outcome_score: number | null;
+  outcome_pass: boolean | number | null;
+  outcome_source: string | null;
+  outcome_ref: string | null;
+  divergence: NonNullable<EvolutionCycleRecord["divergence"]> | string | null;
+  drift: NonNullable<EvolutionCycleRecord["drift"]> | string | null;
   created_at: Date | string;
 }
 
@@ -665,7 +671,8 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         cost_cny, decision, rationale, auto_applied, error,
         budget_status, budget_refs, budget_reconciliation,
         eval_snapshot_path, eval_snapshot_hash, evaluator_hash,
-        evaluator_approval_ref, created_at
+        evaluator_approval_ref, outcome_score, outcome_pass, outcome_source,
+        outcome_ref, divergence, drift, created_at
       ) VALUES (
         ${record.cycleId}, ${this.workspaceId}, ${record.packDir}, ${record.agentId},
         ${record.hypothesis}, ${this.store.sql.json(record.signals)},
@@ -684,7 +691,12 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         },
         ${record.evalSnapshotPath ?? null},
         ${record.evalSnapshotHash ?? null}, ${record.evaluatorHash ?? null},
-        ${record.evaluatorApprovalRef ?? null}, ${record.createdAt}
+        ${record.evaluatorApprovalRef ?? null},
+        ${record.outcomeScore ?? null}, ${record.outcomePass ?? null},
+        ${record.outcomeSource ?? null}, ${record.outcomeRef ?? null},
+        ${record.divergence ? this.store.sql.json(record.divergence) : null},
+        ${record.drift ? this.store.sql.json(record.drift) : null},
+        ${record.createdAt}
       )
       ON CONFLICT (cycle_id) DO NOTHING
     `;
@@ -927,6 +939,17 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
   const budgetReconciliation = parseOptionalJson<EvolutionBudgetReconciliation>(
     row.budget_reconciliation ?? null,
   );
+  const divergence = parseOptionalJson<
+    NonNullable<EvolutionCycleRecord["divergence"]>
+  >(row.divergence ?? null);
+  const drift = parseOptionalJson<NonNullable<EvolutionCycleRecord["drift"]>>(
+    row.drift ?? null,
+  );
+  const outcomeSource =
+    row.outcome_source === "artifact_acceptance" ||
+    row.outcome_source === "human_review"
+      ? row.outcome_source
+      : undefined;
   return {
     cycleId: row.cycle_id,
     packDir: row.pack_dir,
@@ -971,6 +994,16 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
     ...(row.evaluator_approval_ref
       ? { evaluatorApprovalRef: row.evaluator_approval_ref }
       : {}),
+    ...(row.outcome_score !== null && row.outcome_score !== undefined
+      ? { outcomeScore: Number(row.outcome_score) }
+      : {}),
+    ...(row.outcome_pass !== null && row.outcome_pass !== undefined
+      ? { outcomePass: Boolean(row.outcome_pass) }
+      : {}),
+    ...(outcomeSource ? { outcomeSource } : {}),
+    ...(row.outcome_ref ? { outcomeRef: row.outcome_ref } : {}),
+    ...(divergence ? { divergence } : {}),
+    ...(drift ? { drift } : {}),
   };
 }
 

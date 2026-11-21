@@ -15,14 +15,15 @@ import type {
 import { matchSourceNames } from "./workshop-link";
 
 /**
- * Server read model for the /workshop surface (issue #164, plan 88 §1, 82 §3).
+ * Server read model for the local libraries (`/packs`, `/sources`) and the
+ * installed counts of the workshop discovery center (88 §3.4, D-69).
  *
- * Packs, sources and the assembly view are loaded once and shipped to the
- * client as plain data so selecting a pack can relink the three columns
- * without a full page navigation. The pack -> source link is derived from
- * source names referenced by the pack's own files until 88 M3b lockfiles
- * declare explicit component bindings; when a pack references no source the
- * surface falls back to every available source (83 §3.1 "builtin + installed").
+ * Packs and sources are loaded once and shipped to the client as plain data so
+ * the pack library can relink the assembly panel without a full page
+ * navigation. The pack -> source link is derived from source names referenced
+ * by the pack's own files until 88 M3b lockfiles declare explicit component
+ * bindings; when a pack references no source the library falls back to every
+ * available source (83 §3.1 "builtin + installed").
  */
 
 const MAX_TEXT_FILES = 120;

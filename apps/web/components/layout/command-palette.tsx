@@ -136,7 +136,7 @@ export function CommandPalette() {
       id: "startRun",
       label: t("startRun"),
       icon: Play,
-      perform: () => go("/workshop?tab=packs"),
+      perform: () => go("/packs"),
     },
     {
       id: "reviewApprovals",

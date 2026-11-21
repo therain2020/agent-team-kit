@@ -1,11 +1,12 @@
 import type { AgentRole } from "@kit/core";
 
 /**
- * Client-safe types and linking logic for the /workshop surface.
+ * Client-safe types and linking logic for the workshop local libraries.
  *
- * Kept free of Node and @kit/pack imports so the three-column surface can
- * relink packs, sources and assembly in the browser. Server data loading lives
- * in ./workshop-surface.ts.
+ * Kept free of Node and @kit/pack imports so the pack library (`/packs`), the
+ * source library (`/sources`) and the discovery center (`/workshop`) can share
+ * views without pulling server code into the browser. Server data loading
+ * lives in ./workshop-surface.ts and ./workshop-discovery.ts.
  */
 
 export interface WorkshopStageView {
@@ -78,7 +79,17 @@ export interface WorkshopSurfaceData {
   sources: WorkshopSourceView[];
 }
 
-export type WorkshopTab = "packs" | "sources" | "assembly";
+/** Installed third-party source as the discovery panel expects it. */
+export interface InstalledSourceView {
+  name: string;
+  version: string;
+  description: string;
+  homepage?: string;
+  license?: string;
+  repo: string;
+  commit: string;
+  trust: string;
+}
 
 /**
  * Case-insensitive, boundary-aware match of known source names in pack text.
@@ -124,10 +135,6 @@ export function linkedSourceView(
   return visible.length > 0
     ? { visible, scoped: true }
     : { visible: sources, scoped: false };
-}
-
-export function parseWorkshopTab(value: string | undefined): WorkshopTab {
-  return value === "sources" || value === "assembly" ? value : "packs";
 }
 
 export function pickSelectedPack(

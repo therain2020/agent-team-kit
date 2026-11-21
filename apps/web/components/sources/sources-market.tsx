@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import type { InstalledSourceView } from "@/lib/workshop-link";
 import type {
   SourceCandidateSummary,
   SourceDraftValues,
@@ -34,17 +35,6 @@ import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-
-export interface InstalledSourceView {
-  name: string;
-  version: string;
-  description: string;
-  homepage?: string;
-  license?: string;
-  repo: string;
-  commit: string;
-  trust: string;
-}
 
 interface SourceDraftResult {
   values: SourceDraftValues;
@@ -72,8 +62,11 @@ function riskLabelKeys(level: SourceRiskSummary["level"]): string {
 
 export function SourcesMarket({
   installed,
+  onInstalled,
 }: {
   installed: InstalledSourceView[];
+  /** Called after a successful install; the discovery center returns to /sources. */
+  onInstalled?: () => void;
 }) {
   const t = useTranslations("sources");
   const router = useRouter();
@@ -173,7 +166,11 @@ export function SourcesMarket({
         throw new Error(payload.error ?? t("installFailed"));
       }
       toast.success(t("installed", { name: payload.name ?? repo }));
-      router.refresh();
+      if (onInstalled) {
+        onInstalled();
+      } else {
+        router.refresh();
+      }
       return true;
     } catch (problem) {
       toast.error(
