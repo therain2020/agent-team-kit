@@ -1,4 +1,5 @@
-import { newId, priorityClassFor } from "@kit/core";
+import { GATE_EVIDENCE_KIND, recordGateEvidence } from "@kit/activity";
+import { type PriorityClass, newId, priorityClassFor } from "@kit/core";
 import { findDecisionForRequest } from "@kit/manager";
 import {
   type RunRequestRecord,
@@ -12,7 +13,15 @@ import type {
   PackRunInput,
   PackRunResult,
 } from "@kit/workflow";
+import {
+  type AdmissionAction,
+  type AdmissionPolicy,
+  decideAdmission,
+  loadAdmissionPolicy,
+} from "./admission";
 import { createDegradationGuard, guardedActivities } from "./degradation-guard";
+import { FairClaimScheduler } from "./fair-claim";
+import type { FairQueueOptions } from "./fair-queue";
 import * as iterationActivities from "./iteration-activities";
 import {
   IterationCancelledError,
@@ -103,15 +112,36 @@ async function waitForDecision(
   return "timeout";
 }
 
+/** Operator knobs for the enqueue admission gate (test seam + policy override). */
+export interface EnqueueRunOptions {
+  admissionPolicy?: AdmissionPolicy;
+}
+
+/** Observable result of an enqueue, including the admission verdict. */
+export interface EnqueueRunResult {
+  requestId: string;
+  priority: PriorityClass;
+  /** `admit`/`queue` for accepted work, `merge` for a duplicate, `drop` for P3. */
+  admission: AdmissionAction;
+  dropped: boolean;
+}
+
+interface EnqueueFields {
+  runId: string;
+  workspaceId: string;
+  workflowId: string;
+}
+
 async function enqueueLocalRequest(
-  record: {
-    runId: string;
-    workspaceId: string;
-    workflowId: string;
-  },
+  record: EnqueueFields,
   kind: "pack_run" | "iteration",
   payload: string,
   store: Store,
+  admission: {
+    priority: PriorityClass;
+    status: "queued" | "dropped";
+    admissionReason: string | null;
+  },
 ): Promise<{ requestId: string }> {
   const now = new Date().toISOString();
   const requestId = newId("rrq");
@@ -122,28 +152,73 @@ async function enqueueLocalRequest(
     workflowId: record.workflowId,
     kind,
     payload,
+    priority: admission.priority,
+    status: admission.status,
+    admissionReason: admission.admissionReason,
     createdAt: now,
     updatedAt: now,
   });
   return { requestId };
 }
 
+/**
+ * Admission gate shared by pack and iteration enqueues (60 §3.4).
+ *
+ * Duplicates fold into the existing request; P3 is dropped once the backlog
+ * reaches the configured cap, while P0/P1/P2 stay queued. Budget and kill
+ * switch are evaluated before this point (kill switch here, budget at run
+ * start), matching `decideAdmission`'s documented ordering.
+ */
+async function admit(
+  runId: string,
+  priority: PriorityClass,
+  store: Store,
+  options: EnqueueRunOptions | undefined,
+): Promise<{
+  existing: RunRequestRecord | null;
+  action: AdmissionAction;
+  reason: string;
+}> {
+  const existing = await store.runRequests.find(runId);
+  const policy = options?.admissionPolicy ?? loadAdmissionPolicy();
+  const decision = decideAdmission({
+    priority,
+    duplicate: existing !== null,
+    queueDepth: existing ? 0 : await store.runRequests.countQueued(),
+    maxQueueDepth: policy.maxQueueDepth,
+  });
+  return { existing, action: decision.action, reason: decision.reason };
+}
+
+function existingResult(existing: RunRequestRecord): EnqueueRunResult {
+  const dropped = existing.status === "dropped";
+  return {
+    requestId: existing.requestId,
+    priority: existing.priority,
+    admission: dropped ? "drop" : "merge",
+    dropped,
+  };
+}
+
 export async function enqueueLocalRun(
   input: PackRunInput,
   store: Store,
-): Promise<{ requestId: string }> {
+  options?: EnqueueRunOptions,
+): Promise<EnqueueRunResult> {
   await assertKillSwitchClear(store, { workspaceId: input.workspaceId }, "run");
-  // Admission merge: a duplicate run id folds into the queued request instead
-  // of stacking a second one (60 §3.4 "事件合并").
-  const existing = await store.runRequests.find(input.runId);
-  if (existing) {
-    return { requestId: existing.requestId };
-  }
   const priority = priorityClassFor({
     priority: input.priority,
     runMode: input.runMode,
   });
-  return enqueueLocalRequest(
+  const verdict = await admit(input.runId, priority, store, options);
+  if (verdict.existing) {
+    // Duplicate run id: fold into the queued request (60 §3.4 "事件合并").
+    // A previously dropped request stays dropped; report that instead of
+    // pretending it will run.
+    return existingResult(verdict.existing);
+  }
+  const dropped = verdict.action === "drop";
+  const queued = await enqueueLocalRequest(
     {
       runId: input.runId,
       workspaceId: input.workspaceId,
@@ -152,23 +227,36 @@ export async function enqueueLocalRun(
     "pack_run",
     JSON.stringify({ ...input, priority }),
     store,
+    {
+      priority,
+      status: dropped ? "dropped" : "queued",
+      admissionReason: dropped ? verdict.reason : null,
+    },
   );
+  return {
+    requestId: queued.requestId,
+    priority,
+    admission: verdict.action,
+    dropped,
+  };
 }
 
 export async function enqueueLocalIteration(
   input: IterationInput,
   store: Store,
-): Promise<{ requestId: string }> {
+  options?: EnqueueRunOptions,
+): Promise<EnqueueRunResult> {
   await assertKillSwitchClear(store, { workspaceId: input.workspaceId }, "run");
-  const existing = await store.runRequests.find(input.iterationId);
-  if (existing) {
-    return { requestId: existing.requestId };
-  }
   const priority = priorityClassFor({
     priority: input.priority,
     runMode: input.runMode,
   });
-  return enqueueLocalRequest(
+  const verdict = await admit(input.iterationId, priority, store, options);
+  if (verdict.existing) {
+    return existingResult(verdict.existing);
+  }
+  const dropped = verdict.action === "drop";
+  const queued = await enqueueLocalRequest(
     {
       runId: input.iterationId,
       workspaceId: input.workspaceId,
@@ -177,7 +265,18 @@ export async function enqueueLocalIteration(
     "iteration",
     JSON.stringify({ ...input, priority }),
     store,
+    {
+      priority,
+      status: dropped ? "dropped" : "queued",
+      admissionReason: dropped ? verdict.reason : null,
+    },
   );
+  return {
+    requestId: queued.requestId,
+    priority,
+    admission: verdict.action,
+    dropped,
+  };
 }
 
 export interface LocalRunnerLoopOptions {
@@ -190,6 +289,8 @@ export interface LocalRunnerLoopOptions {
   onError?: (error: unknown) => void;
   /** Test seam for the iteration pipeline's activity layer. */
   iterationActivities?: IterationPipelineActivities;
+  /** Per-workspace fairness weights for the claim scheduler (60.6). */
+  fairQueue?: FairQueueOptions;
 }
 
 export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
@@ -214,6 +315,9 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
   let lastReconcileAt = 0;
+  // Single claim selector: workspace-weighted WFQ + P0 preemption. The store
+  // still owns the atomic transition, so this only decides the order.
+  const claimScheduler = new FairClaimScheduler(options.fairQueue ?? {});
 
   const reconcile = async (): Promise<void> => {
     lastReconcileAt = Date.now();
@@ -239,12 +343,34 @@ export function startLocalRunner(options: LocalRunnerLoopOptions): () => void {
         if (Date.now() - lastReconcileAt >= reconcileEveryMs) {
           await reconcile();
         }
-        const request = await options.store.runRequests.claimNext(
+        const request = await claimScheduler.claimNext(
+          options.store,
           owner,
           new Date(),
           staleMs,
         );
         if (request) {
+          // Single-writer evidence (85 §5.2 S9): every claim increments the
+          // fencing token, so this row proves the run was serialized under a
+          // lease. Best-effort: a failed audit write must not drop the claim.
+          await recordGateEvidence(options.store, {
+            workspaceId: request.workspaceId,
+            runId: request.runId,
+            kind: GATE_EVIDENCE_KIND.runLeaseClaimed,
+            status: "claimed",
+            summary: `run request ${request.requestId} claimed by ${owner}`,
+            payload: {
+              requestId: request.requestId,
+              owner,
+              leaseVersion: request.leaseVersion,
+            },
+          }).catch((error: unknown) => {
+            console.error(
+              `[local-runner] failed to record lease claim: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          });
           await execute(request, {
             requestId: request.requestId,
             owner,

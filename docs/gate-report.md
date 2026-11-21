@@ -133,7 +133,16 @@ assert a 60-second query latency it cannot measure.
   never counted as human confirmations.
 - High-risk code changes have no recorded approval link yet, so any applied
   high-risk change is a GAP (`G4.high-risk-approved`).
-- Zero-config (S12) records the cold-start package check but not
-  time-to-first-success, so it stays a GAP until an install is measured.
+- Zero-config (S12) reads `<home>/cold-start-tthw.json`, written by the
+  bootstrap flow: the clock starts on the first `kit up` / `kit bootstrap` /
+  `kit demo` (or the welcome console) and stops at the furthest milestone
+  (model key accepted, or demo team produced). Model probe latency is
+  excluded. A missing or incomplete ledger leaves TTHW unmeasured, so S12
+  stays a GAP rather than passing on a fabricated duration.
+- Concurrency (S9) reads run lease claims from `activity_events` and store
+  lock acquisitions/contention from `op_log`. Factory (S11) reads batch
+  approval events, and workshop (S10) reads component assembly, market
+  install and DAG-save events. Each source is emitted by the production path
+  that performed the action; absent rows stay GAPs.
 - The collector opens the SQLite store with read queries only; it never writes
   store rows. Audit/JSONL files are read with `readFile` only.

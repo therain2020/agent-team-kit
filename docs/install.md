@@ -208,8 +208,9 @@ bun run kit manager brief <runId>
 | `KIT_CODER_SANDBOX_ROOT` | `%TEMP%/agent-team-kit` | external coder sandbox root (outside the repo) |
 | `KIT_SIGNALS_ROOT` | `%USERPROFILE%/.agent-team-kit/signals` | iteration fitness JSONL root |
 | `KIT_PROPOSALS_ROOT` | `%USERPROFILE%/.agent-team-kit/proposals` | improvement proposal output |
-| `KIT_TEMPLATES_ROOT` | `./templates` | built-in template registry |
-| `KIT_WORKSHOP_ROOT` | `./workshop` | workshop install root |
+| `KIT_TEMPLATES_ROOT` | `./templates` | template registry (built-ins + workshop `kind: template` installs) |
+| `KIT_COMPONENTS_ROOT` | `./components` | component library (`components/<kind>/<id>/`) |
+| `KIT_WORKSHOP_ROOT` | `./workshop` | legacy workshop directory (read-only migration source) |
 | `KIT_SUPERVISOR_WEB` | `0` | Set by `kit up --web` |
 | `KIT_WEB_MODE` | `production` | `production` serves the built console (`next start`); `dev` uses `next dev` |
 

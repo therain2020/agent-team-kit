@@ -153,6 +153,10 @@ describe("local pack runner", () => {
       expect(payload.workspaceId).toBe("alpha");
       // DRY_RUN is background work, so the derived class is P3.
       expect(payload.priority).toBe("P3");
+      // The claim column mirrors the payload so the fair scheduler and the
+      // admission gate can rank the row without parsing JSON.
+      expect(record?.priority).toBe("P3");
+      expect(second.admission).toBe("merge");
     } finally {
       await store.close();
     }
@@ -169,15 +173,26 @@ describe("local pack runner", () => {
         ttlMs: 30_000,
       };
 
-      const promise = runPackWorkflowLocal(
+      // Attach the rejection handler at creation: the pipeline can reject
+      // while the test is still polling for the approval request, and Node
+      // reports that window as an unhandled rejection that fails the run.
+      const outcome = runPackWorkflowLocal(
         input(runId, [stage("draft", approval)]),
         { store, pollMs: 10 },
+      ).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
       );
 
       const requestId = await waitForApprovalRequest(store, runId);
       await recordDecision(store, runId, "abort", "not now", { requestId });
 
-      await expect(promise).rejects.toThrow("approval aborted");
+      const settled = await outcome;
+      expect(settled.ok).toBe(false);
+      if (!settled.ok) {
+        expect(settled.error).toBeInstanceOf(Error);
+        expect((settled.error as Error).message).toContain("approval aborted");
+      }
       expect((await store.runs.get(runId))?.status).toBe("failed");
     } finally {
       await store.close();

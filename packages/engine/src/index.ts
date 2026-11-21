@@ -2,6 +2,7 @@ export * from "./admission";
 export * from "./circuit-breaker";
 export * from "./cost-attribution";
 export * from "./degradation-guard";
+export * from "./fair-claim";
 export * from "./fair-queue";
 export * from "./heartbeat";
 export * from "./iteration-activities";

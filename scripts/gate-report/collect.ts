@@ -43,7 +43,12 @@ export interface CollectOptions {
   sourcesRoot?: string;
   reactionsPath?: string;
   supervisorStatePath?: string;
+  /** Zero-config TTHW ledger (default: <home>/cold-start-tthw.json). */
+  tthwPath?: string;
 }
+
+/** Probe pattern shared by S9 activity kinds and op-log lock entries. */
+const CONCURRENCY_KIND = /(?:^|[.:_-])(lock|fence|lease|concurr|serializ)/i;
 
 interface StoreEvidence {
   informationEvents: EvidenceBundle["informationEvents"];
@@ -171,8 +176,14 @@ export async function collectEvidence(
   const supervisor = await collectSupervisor(supervisorStatePath);
   sources.push(supervisor.source);
 
+  const tthw = await collectTthw(
+    options.tthwPath ?? path.join(home, "cold-start-tthw.json"),
+  );
+  sources.push(tthw.source);
+
   const coldStart = collectColdStart(
     path.join(repoRoot, "templates", "cold-start"),
+    tthw.tthwMinutes,
   );
   sources.push(coldStart.source);
 
@@ -392,6 +403,16 @@ async function collectStore(
         ORDER BY created_at, event_id
       `,
     );
+    const opRows = await run<OpLogRow>(
+      "op_log",
+      () =>
+        db.sql<OpLogRow[]>`
+        SELECT op_id, entity_kind, entity_id, op, actor, origin, created_at
+        FROM op_log
+        WHERE created_at >= ${start} AND created_at <= ${end}
+        ORDER BY created_at, seq
+      `,
+    );
     const drillRows = await run<DrillRow>(
       "recovery_drills",
       () =>
@@ -593,11 +614,23 @@ async function collectStore(
           status: stringOrNull(row.status),
           detail: stringOr(row.summary, ""),
         })),
-      concurrencyEvidence: activityRows
-        .filter((row) =>
-          /(?:^|[.:_-])(lock|fence|lease|concurr|serializ)/i.test(row.kind),
-        )
-        .map(activityEvidence),
+      // S9 reads both the activity stream (run lease claims, emitted by the
+      // local runner) and the op log (store lock acquisitions/contention,
+      // emitted by withStoreLock). Neither source is synthesized: no rows
+      // means no concurrency evidence and the gate stays a GAP.
+      concurrencyEvidence: [
+        ...activityRows
+          .filter((row) => CONCURRENCY_KIND.test(row.kind))
+          .map(activityEvidence),
+        ...opRows
+          .filter((row) =>
+            CONCURRENCY_KIND.test(`${row.entity_kind} ${row.op}`),
+          )
+          .map(opEvidence),
+      ].sort(
+        (left, right) =>
+          left.at.localeCompare(right.at) || left.id.localeCompare(right.id),
+      ),
       factoryEvidence: activityRows
         .filter((row) => /factory/i.test(row.kind))
         .map(activityEvidence),
@@ -1082,7 +1115,10 @@ async function collectSupervisor(
   }
 }
 
-function collectColdStart(root: string): {
+function collectColdStart(
+  root: string,
+  tthwMinutes: number | null,
+): {
   evidence: ColdStartEvidence | null;
   source: EvidenceSourceStatus;
 } {
@@ -1092,7 +1128,7 @@ function collectColdStart(root: string): {
       evidence: {
         packageOk: report.ok,
         missing: report.missing,
-        tthwMinutes: null,
+        tthwMinutes,
       },
       source: {
         id: "cold-start-package",
@@ -1100,7 +1136,7 @@ function collectColdStart(root: string): {
         status: "ok",
         records: report.checks.length,
         detail: report.ok
-          ? "package checks pass; install time is not measured"
+          ? "package checks pass"
           : `${report.missing.length} package item(s) missing`,
       },
     };
@@ -1110,6 +1146,81 @@ function collectColdStart(root: string): {
       source: {
         id: "cold-start-package",
         path: root,
+        status: "unreadable",
+        records: 0,
+        detail: errorMessage(error),
+      },
+    };
+  }
+}
+
+/**
+ * Reads the zero-config TTHW ledger written by the bootstrap flow (plan 91 §5,
+ * 98 §5.2 S12). The collector never derives a duration: without a persisted
+ * start marker and ready timestamp it returns null and the gate stays a GAP.
+ *
+ * This is a one-time install measurement, so it is not clipped to the report
+ * window; the ready timestamp is surfaced in the source detail for audit.
+ */
+async function collectTthw(file: string): Promise<TthwCollection> {
+  if (!existsSync(file)) {
+    return {
+      tthwMinutes: null,
+      source: {
+        id: "zero-config-tthw",
+        path: file,
+        status: "missing",
+        records: 0,
+        detail: "no zero-config measurement recorded",
+      },
+    };
+  }
+  try {
+    const text = await readFile(file, "utf8");
+    const raw = JSON.parse(text) as Record<string, unknown>;
+    if (raw.apiVersion !== "agentteam/v1" || raw.kind !== "ZeroConfigTthw") {
+      return {
+        tthwMinutes: null,
+        source: {
+          id: "zero-config-tthw",
+          path: file,
+          status: "unreadable",
+          records: 0,
+          detail: "not a ZeroConfigTthw ledger",
+        },
+      };
+    }
+    const startedAt = isoOrNull(raw.startedAt);
+    const readyAt = isoOrNull(raw.readyAt);
+    const minutes = numberOrNull(raw.tthwMinutes);
+    const measure = stringOrNull(raw.measure);
+    let detail: string | null = null;
+    if (!startedAt) {
+      detail = "ledger has no start marker; TTHW not measured";
+    } else if (!readyAt) {
+      detail = "ledger has no first-value milestone";
+    } else if (minutes === null) {
+      detail = "ledger has no numeric TTHW";
+    } else {
+      detail = `measure=${measure ?? "unknown"} readyAt=${readyAt}`;
+    }
+    const measured = startedAt && readyAt && minutes !== null ? minutes : null;
+    return {
+      tthwMinutes: measured,
+      source: {
+        id: "zero-config-tthw",
+        path: file,
+        status: "ok",
+        records: measured === null ? 0 : 1,
+        detail,
+      },
+    };
+  } catch (error) {
+    return {
+      tthwMinutes: null,
+      source: {
+        id: "zero-config-tthw",
+        path: file,
         status: "unreadable",
         records: 0,
         detail: errorMessage(error),
@@ -1264,6 +1375,15 @@ function activityEvidence(row: ActivityRow): ActivityEvidence {
   };
 }
 
+function opEvidence(row: OpLogRow): ActivityEvidence {
+  return {
+    id: `op:${row.op_id}`,
+    at: iso(row.created_at),
+    kind: String(row.op),
+    status: stringOrNull(row.origin),
+  };
+}
+
 function isKitdRecord(value: unknown): value is KitdRecord {
   return typeof value === "object" && value !== null;
 }
@@ -1402,6 +1522,19 @@ interface ActivityRow {
   kind: string;
   status: string | null;
   summary: string | null;
+  created_at: string;
+}
+interface TthwCollection {
+  tthwMinutes: number | null;
+  source: EvidenceSourceStatus;
+}
+interface OpLogRow {
+  op_id: string;
+  entity_kind: string;
+  entity_id: string;
+  op: string;
+  actor: string;
+  origin: string;
   created_at: string;
 }
 interface DrillRow {

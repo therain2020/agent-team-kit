@@ -26,6 +26,14 @@ export default defineConfig({
         replacement: path.join(root, "packages/core/src/fs-lock.ts"),
       },
       {
+        find: /^@kit\/activity$/,
+        replacement: path.join(root, "packages/activity/src/index.ts"),
+      },
+      {
+        find: /^@kit\/evolution$/,
+        replacement: path.join(root, "packages/evolution/src/index.ts"),
+      },
+      {
         find: /^@kit\/store$/,
         replacement: path.join(root, "packages/store/src/index.ts"),
       },

@@ -3,6 +3,11 @@ import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  markColdStartStarted,
+  recordColdStartMilestone,
+  resolveRuntimeMode,
+} from "@kit/bootstrap";
 import { CliError } from "@kit/core";
 import {
   type LoadedPack,
@@ -35,6 +40,9 @@ export function registerDemo(program: Command): void {
       }) => {
         const json = wantsJson(options);
         const command = kitCommand();
+        await markColdStartStarted({
+          mode: resolveRuntimeMode(process.env),
+        }).catch(() => undefined);
         const demoRoot = path.join(kitHome(), "demo");
         const teamDir = path.join(demoRoot, TEAM_DIR);
         let reused = false;
@@ -84,6 +92,12 @@ export function registerDemo(program: Command): void {
         const report = simulatePack(loaded);
         const htmlPath = path.join(demoRoot, "team-plan.html");
         await writeFile(htmlPath, renderPlan(loaded, report), "utf8");
+        // Demo milestone (plan 91 §5): the built-in example team is the first
+        // user-visible value of the zero-config path, so it extends TTHW.
+        await recordColdStartMilestone("demo", {
+          flow: "kit-demo",
+          mode: resolveRuntimeMode(process.env),
+        }).catch(() => undefined);
 
         if (options.open) {
           openPath(htmlPath);
