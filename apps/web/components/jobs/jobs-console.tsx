@@ -137,7 +137,7 @@ export function JobsConsole({
             {JOB_SOURCES.map((source) => (
               <option key={source} value={source}>
                 {t(`source_${source}`)}
-                {counts[source] > 0 ? ` (${counts[source]})` : ""}
+                {(counts[source] ?? 0) > 0 ? ` (${counts[source]})` : ""}
               </option>
             ))}
           </select>

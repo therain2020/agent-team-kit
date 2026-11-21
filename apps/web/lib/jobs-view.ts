@@ -111,7 +111,8 @@ export function countJobsBySource(
     JOB_SOURCES.map((source) => [source, 0]),
   ) as Record<JobSource, number>;
   for (const job of jobs) {
-    counts[jobSource(job)] += 1;
+    const source = jobSource(job);
+    counts[source] = (counts[source] ?? 0) + 1;
   }
   return counts;
 }
