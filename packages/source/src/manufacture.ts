@@ -478,7 +478,8 @@ export async function reviseSourceProposal(
   return proposal;
 }
 
-export interface InstallSourceProposalInput extends SourceGateInput {
+export interface InstallSourceProposalInput
+  extends Omit<SourceGateInput, "yaml"> {
   id: string;
   /** Explicit observer approval; the only path that writes `sources/`. */
   approved: boolean;
