@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import {
   Bot,
   CheckCircle2,
+  Factory,
   FileCode2,
   FolderTree,
   Lock,
@@ -39,6 +40,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { parse, stringify } from "yaml";
+import { ManufacturePanel } from "./manufacture-panel";
 import { PackFiles } from "./pack-files";
 import { PackPublish } from "./pack-publish";
 import { StageFields } from "./stage-fields";
@@ -50,6 +52,7 @@ type Tab =
   | "workflows"
   | "approvals"
   | "autopilot"
+  | "manufacture"
   | "files"
   | "publish";
 
@@ -933,6 +936,7 @@ export function PackStudio({
               ["workflows", FileCode2],
               ["approvals", ShieldCheck],
               ["autopilot", Sparkles],
+              ["manufacture", Factory],
               ["files", FolderTree],
               ["publish", Rocket],
             ] as Array<[Tab, typeof UserCog]>
@@ -1848,6 +1852,10 @@ export function PackStudio({
             className="font-mono text-[11px] leading-relaxed"
           />
         </div>
+      ) : null}
+
+      {tab === "manufacture" ? (
+        <ManufacturePanel dirName={data.dirName} />
       ) : null}
 
       {tab === "files" ? (
