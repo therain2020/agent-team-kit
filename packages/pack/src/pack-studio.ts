@@ -1087,13 +1087,14 @@ export async function setStageApproval(
 }
 
 export interface StageFieldsUpdate {
-  type?: "workflow" | "agent" | "coder";
+  type?: "workflow" | "agent" | "coder" | null;
   agent?: string | null;
   coder?: "dsh" | "codex" | "opencode" | "command" | null;
   goal?: string | null;
   acceptance?: string | null;
-  inputs?: string[];
-  outputs?: string[];
+  /** `null` clears the field; `assign` deletes the key on null. */
+  inputs?: string[] | null;
+  outputs?: string[] | null;
   timeout?: string | null;
   retry?: { max: number; backoff: "fixed" | "exp" } | null;
   gate?: string | null;
