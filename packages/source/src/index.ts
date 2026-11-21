@@ -7,6 +7,7 @@ export * from "./collect";
 export * from "./fetch-source";
 export * from "./registry";
 export * from "./scoring";
+export * from "./scout";
 export * from "./types";
 
 export async function fetchEvidence(
