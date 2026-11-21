@@ -2298,7 +2298,7 @@
     "usageLine": "今日 · {runs}/{dailyRuns} 次 · {cost}/{dailyCost} 元",
     "reactionsTitle": "最近反应",
     "reactionCount": "{count} 次触发",
-    "noReactions": "还没有反应触发。运行：kit reaction run --event <id>",
+    "noReactions": "还没有反应触发。新事件会自动分发；如需重放某条事件：kit reaction run --event <id>",
     "auditTitle": "规则审计",
     "noHistory": "还没有规则修改。",
     "dispatchHint": "分发走唯一的 fireTrigger 入口：kill switch → 降级 → 去重 → 触发预算 → 预算账本 → 启动。",

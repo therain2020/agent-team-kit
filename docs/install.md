@@ -198,6 +198,10 @@ bun run kit manager brief <runId>
 | `KIT_EVENT_RUN_MODE` | `dry_run` | `live` lets routed events start LIVE runs |
 | `KIT_EVENT_DAILY_RUNS` | unset | Fallback daily run cap per workflow without `trigger.budget` |
 | `KIT_EVENT_DAILY_COST_CNY` | unset | Fallback daily cost cap per workflow without `trigger.budget` |
+| `KIT_REACTION_AUTO_DISPATCH` | on | `0` disables automatic event → ReactionRule dispatch; manual `kit reaction run` still works |
+| `KIT_REACTION_DISPATCH_INTERVAL_MS` | `60000` | Sweep interval for the automatic dispatcher |
+| `KIT_REACTION_DISPATCH_LOOKBACK_MS` | `3600000` | First-pass scan window after a runtime restart |
+| `KIT_REACTION_DISPATCH_MAX_EVENTS` | `200` | Events evaluated per pass (1–500) |
 | `KIT_REPAIR_ROUNDS` | `2` | Default repair attempts per task (0–5); explicit settings win |
 | `KIT_GATEWAY_PORT` | `8787` | Event gateway port |
 | `KIT_CODER_CODEX_CMD` | `codex exec --full-auto -` | Codex CLI template |
