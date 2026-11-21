@@ -234,16 +234,23 @@ mutable rubric.
 
 ## Security invariants
 
-`packages/evolution/src/security-invariants.ts` makes the evolution-plane
-invariants executable. Each probe carries a stable id so a failure points at
-the rule it protects (70 §3.3/§5, 85 §3.6, 50 §3.8):
+`packages/core/src/security-invariants.ts` makes the invariants executable
+(`@kit/core/security-invariants`; `packages/evolution/src/security-invariants.ts`
+re-exports it for the evolution import path). Each probe carries a stable id so
+a failure points at the rule it protects (70 §3.3/§5, 85 §3.6, 50 §3.8):
 
-| Id | Invariant | Enforcement |
-|---|---|---|
-| SEC-INV-01 | Agent writes to the recovery kernel, LKG or audit sink are rejected | `describeRecoverySurface` + `classifyProtectedWrite` against `<KIT_HOME>/bin`, `/audit`, `/state` and `KILL`; `evaluatePatchSecurity` refuses absolute or `..` patch paths |
-| SEC-INV-02 | Changes that disable audit or approval are blocked | `detectControlPlaneDisable` (config/flag forms) and `detectControlPlaneDeletion` (audit/approval code or tests) |
-| SEC-INV-03 | Eval snapshots live only in the external kit home | `assertSnapshotRootAllowed`; `createEvalSnapshot` rejects a root outside `KIT_HOME` or inside the repository when `kitHome` is supplied, and agents may not write under `<KIT_HOME>/cycles` |
-| SEC-INV-04 | Frozen eval snapshots fail closed when tampered | `assertFrozenSnapshotIntact` on top of the manifest hash check, plus a read-only write probe (Windows read-only attribute / POSIX 0444) |
+| Id | Invariant | Enforcement | Execution points |
+|---|---|---|---|
+| SEC-INV-01 | Agent writes to the recovery kernel, LKG or audit sink are rejected | `describeRecoverySurface` + `classifyProtectedWrite` against `<KIT_HOME>/bin`, `/audit`, `/state` and `KILL`; `evaluatePatchSecurity` refuses absolute or `..` patch paths | `applyDiffToRepo` (`@kit/iteration`), `writePackFile`/`createPack` (`@kit/pack`), `proposeVariant`/`promoteVariant` (`@kit/evolution`) |
+| SEC-INV-02 | Changes that disable audit or approval are blocked | `detectControlPlaneDisable` (config/flag forms) and `detectControlPlaneDeletion` (audit/approval code or tests) | Same apply/pack/evolution writes, plus `EventRouter.loadPacks` before a runtime pack becomes traffic |
+| SEC-INV-03 | Eval snapshots live only in the external kit home | `assertSnapshotRootAllowed`; `createEvalSnapshot` rejects a root outside `KIT_HOME` or inside the repository when `kitHome` is supplied, and agents may not write under `<KIT_HOME>/cycles` | `createEvalSnapshot`; the `enforce*` write gates reuse the same protected-surface classifier |
+| SEC-INV-04 | Frozen eval snapshots fail closed when tampered | `assertFrozenSnapshotIntact` on top of the manifest hash check, plus a read-only write probe (Windows read-only attribute / POSIX 0444) | `verifyEvalSnapshot` callers (`scoreVariant`, canary evaluation) |
+
+The `enforce*` helpers are fail-closed: a violation appends a record to
+`<KIT_HOME>/audit/security-invariants.jsonl` (outside the repository, next to
+the recovery kernel) and then throws, so the caller can never continue past a
+violation. Pack instruction writes through the Studio route through the same
+gate.
 
 The probes are injectable (`kitHome`, `repoRoot`, temp roots); the tests never
 read or write the operator's real home. Run the gate with:

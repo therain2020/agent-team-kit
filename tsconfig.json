@@ -10,6 +10,9 @@
       "@kit/core/fs-lock": ["./packages/core/src/fs-lock.ts"],
       "@kit/core/git-apply": ["./packages/core/src/git-apply.ts"],
       "@kit/core/quota": ["./packages/core/src/quota.ts"],
+      "@kit/core/security-invariants": [
+        "./packages/core/src/security-invariants.ts"
+      ],
       "@kit/bootstrap": ["./packages/bootstrap/src/index.ts"],
       "@kit/change": ["./packages/change/src/index.ts"],
       "@kit/change/rollback": ["./packages/change/src/rollback.ts"],

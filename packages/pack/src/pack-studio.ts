@@ -20,6 +20,10 @@ import {
   stageApprovalSchema,
   workflowDefinitionSchema,
 } from "@kit/core";
+import {
+  enforceAgentWriteAllowed,
+  enforceInstructionWrite,
+} from "@kit/core/security-invariants";
 import { KNOWN_TOOL_DEFINITIONS } from "@kit/tools";
 import { parse, stringify } from "yaml";
 import { type LoadResult, type LoadedPack, loadPack } from "./load-pack";
@@ -33,6 +37,15 @@ const WORKFLOW_ID = /^[a-z][a-z0-9-]*$/;
 const WORKFLOW_FILE = /^workflows\/[a-z][a-z0-9-]*\.yaml$/;
 const ALLOWED_FILES =
   /^(team\.yaml|iteration\.yaml|autopilot\.yaml|README\.md|agents\/[^/]+\.md|workflows\/[^/]+\.yaml|policies\/[^/]+\.yaml|evals\/(?:visible\/)?[^/]+\.yaml|skills\/[^/]+\/SKILL\.md)$/;
+
+/** Files that carry agent instructions and therefore the control-plane scan. */
+const INSTRUCTION_FILE = /^(?:agents\/[^/]+\.md|skills\/[^/]+\/SKILL\.md)$/;
+
+export interface PackWriteOptions {
+  /** External kit home for the security audit sink; defaults to KIT_HOME. */
+  kitHome?: string;
+  actor?: string;
+}
 
 export type PackTemplate = string;
 
@@ -117,6 +130,7 @@ export async function writePackFile(
   packDir: string,
   relative: string,
   content: string,
+  options: PackWriteOptions = {},
 ): Promise<void> {
   const file = resolvePackRelative(packDir, relative);
   if (!file) {
@@ -125,10 +139,51 @@ export async function writePackFile(
   if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) {
     throw new Error("file exceeds 256KB");
   }
+  await guardPackWrite(file, relative, content, options);
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.tmp-${Date.now()}`;
   await writeFile(temporary, content, "utf8");
   await rename(temporary, file);
+}
+
+/**
+ * Agent instruction writes are fail-closed (70 §5): the destination may not
+ * enter the recovery surface (SEC-INV-01/03) and the content may not disable
+ * audit or approval (SEC-INV-02). `file` already passed `resolvePackRelative`,
+ * so it cannot escape the pack root.
+ */
+async function guardPackWrite(
+  file: string,
+  relative: string,
+  content: string,
+  options: PackWriteOptions,
+): Promise<void> {
+  const actor = options.actor ?? "pack:studio";
+  if (INSTRUCTION_FILE.test(relative)) {
+    await enforceInstructionWrite({
+      target: file,
+      content,
+      actor,
+      ...(options.kitHome !== undefined ? { kitHome: options.kitHome } : {}),
+    });
+    return;
+  }
+  await enforceAgentWriteAllowed(file, {
+    actor,
+    action: "pack-write",
+    ...(options.kitHome !== undefined ? { kitHome: options.kitHome } : {}),
+  });
+}
+
+async function writeInstructionFile(
+  file: string,
+  relative: string,
+  content: string,
+  options: PackWriteOptions,
+): Promise<void> {
+  await guardPackWrite(file, relative, content, options);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, content, "utf8");
 }
 
 export async function createPack(
@@ -262,8 +317,9 @@ export async function createPack(
     stringify(autonomy),
     "utf8",
   );
-  await writeFile(
+  await writeInstructionFile(
     path.join(dir, "agents", "manager.md"),
+    "agents/manager.md",
     agentMarkdown({
       id: "manager",
       description: "Coordinates the team and handles exceptions",
@@ -271,11 +327,13 @@ export async function createPack(
       role: "manager",
       instructions: managerInstructions,
     }),
-    "utf8",
+    { actor: "pack:create" },
   );
   for (const agent of employees) {
-    await writeFile(
-      path.join(dir, "agents", `${agent.id}.md`),
+    const relative = `agents/${agent.id}.md`;
+    await writeInstructionFile(
+      path.join(dir, relative),
+      relative,
       agentMarkdown({
         id: agent.id,
         description: agent.description,
@@ -285,7 +343,7 @@ export async function createPack(
         tools: agent.tools,
         skills: agent.skills,
       }),
-      "utf8",
+      { actor: "pack:create" },
     );
   }
   await writeFile(
@@ -307,6 +365,7 @@ export async function updateAgent(
   packDir: string,
   agentId: string,
   update: AgentUpdate,
+  options: PackWriteOptions = {},
 ): Promise<StudioResult> {
   const loaded = await loadPack(packDir);
   if (!loaded.ok) {
@@ -372,8 +431,11 @@ export async function updateAgent(
     }
   }
 
-  await writePackFile(packDir, file, nextAgent);
-  await writePackFile(packDir, "team.yaml", stringify(teamDoc));
+  await writePackFile(packDir, file, nextAgent, {
+    ...options,
+    actor: options.actor ?? "pack:update-agent",
+  });
+  await writePackFile(packDir, "team.yaml", stringify(teamDoc), options);
 
   const validation = await loadPack(packDir);
   if (!validation.ok) {
@@ -613,6 +675,7 @@ export async function writeValidatedPackFile(
   packDir: string,
   relative: string,
   content: string,
+  options: PackWriteOptions = {},
 ): Promise<void> {
   const file = resolvePackRelative(packDir, relative);
   if (!file) {
@@ -625,7 +688,7 @@ export async function writeValidatedPackFile(
   }
   const hadFile = existsSync(file);
   const original = hadFile ? await readFile(file, "utf8") : "";
-  await writePackFile(packDir, relative, content);
+  await writePackFile(packDir, relative, content, options);
 
   const validation = await loadPack(packDir);
   if (!validation.ok) {
