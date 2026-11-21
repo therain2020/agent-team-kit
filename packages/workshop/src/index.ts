@@ -950,7 +950,7 @@ function pipelineWorkflow(spec: PipelineSpec): WorkflowDefinition {
 /** Stable topological order; pipelines are acyclic by contract. */
 function orderPipelineNodes(spec: PipelineSpec): PipelineNode[] {
   const nodes = spec.graph.nodes;
-  const indegree = new Map(nodes.map((node) => [node.id, 0] as const));
+  const indegree = new Map<string, number>(nodes.map((node) => [node.id, 0]));
   const children = new Map<string, string[]>();
   for (const edge of spec.graph.edges) {
     indegree.set(edge.to, (indegree.get(edge.to) ?? 0) + 1);
