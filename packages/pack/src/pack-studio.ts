@@ -9,10 +9,14 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import {
+  AVATAR_MAX_FRONTMATTER_BYTES,
   type AgentRole,
   type AutopilotConfig,
+  type AvatarSpec,
   type StageApproval,
   autopilotSchema,
+  avatarSpecSchema,
+  formatAvatarIssues,
   stageApprovalSchema,
   workflowDefinitionSchema,
 } from "@kit/core";
@@ -58,6 +62,11 @@ export interface AgentUpdate {
   skills: string[];
   instructions: string;
   permissions?: { filesystem?: string; network?: string };
+  /**
+   * `undefined` preserves the stored avatar (other Studio saves), `null`
+   * removes it, an object replaces it after schema validation (97 §3.4).
+   */
+  avatar?: AvatarSpec | null;
 }
 
 export interface CreateAgentInput {
@@ -324,10 +333,14 @@ export async function updateAgent(
     throw new Error(`invalid agent id: ${agentId}`);
   }
 
+  // Avatar is validated and size-bounded *before* touching disk so an invalid
+  // sprite never produces a half-written Pack (97 §3.4 acceptance).
+  const avatar = resolveAvatarUpdate(update.avatar);
+
   const originalAgent = await readFile(absolute, "utf8");
   const originalTeam = await readFile(path.join(packDir, "team.yaml"), "utf8");
   const frontmatter = splitFrontmatter(originalAgent);
-  const nextFrontmatter = {
+  const nextFrontmatter: Record<string, unknown> = {
     ...frontmatter.data,
     name: agentId,
     description: update.description,
@@ -337,6 +350,11 @@ export async function updateAgent(
     skills: update.skills,
     ...(update.permissions ? { permissions: update.permissions } : {}),
   };
+  if (avatar === null) {
+    Reflect.deleteProperty(nextFrontmatter, "avatar");
+  } else if (avatar) {
+    nextFrontmatter.avatar = avatar;
+  }
   const nextAgent = `---\n${stringify(nextFrontmatter)}---\n\n${update.instructions.trim()}\n`;
 
   const teamDoc = parseTeamDoc(originalTeam);
@@ -1312,6 +1330,31 @@ function defaultWorkflow(id: string, agent: string) {
     ],
     delivery: { channel: "local_file" },
   };
+}
+
+/**
+ * Validates an avatar override before it reaches the frontmatter:
+ * `undefined` = keep, `null` = remove, object = validate + size-check.
+ */
+function resolveAvatarUpdate(
+  value: AvatarSpec | null | undefined,
+): AvatarSpec | null | undefined {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  const parsed = avatarSpecSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new Error(
+      `invalid avatar:\n${formatAvatarIssues(parsed.error).join("\n")}`,
+    );
+  }
+  const bytes = Buffer.byteLength(stringify({ avatar: parsed.data }), "utf8");
+  if (bytes > AVATAR_MAX_FRONTMATTER_BYTES) {
+    throw new Error(
+      `avatar frontmatter exceeds ${AVATAR_MAX_FRONTMATTER_BYTES} bytes`,
+    );
+  }
+  return parsed.data;
 }
 
 export function splitFrontmatter(text: string): {

@@ -18,6 +18,11 @@ import { createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
 import { parse, stringify } from "yaml";
 import {
+  type EvolutionCallAttribution,
+  attributedEvolutionGateway,
+  evolutionCallScope,
+} from "./cost-attribution";
+import {
   EMPTY_HIDDEN_COVERAGE,
   type HiddenCase,
   type HiddenCoverage,
@@ -164,6 +169,8 @@ export async function scoreVariant(
     archive?: string;
     repo?: EvolutionRepository;
     evalDir?: string;
+    /** Charges draft/judge/hidden calls to the evolution cycle. */
+    cost?: EvolutionCallAttribution;
   } = {},
 ): Promise<EvolutionRecord> {
   const meta = await readVariantMeta(variantDir);
@@ -214,7 +221,13 @@ export async function scoreVariant(
     throw new Error(`rubric not found: ${options.rubricRef ?? "radar"}`);
   }
 
-  const gateway = createModelGateway();
+  const baseGateway = createModelGateway();
+  const gateway = options.cost
+    ? attributedEvolutionGateway(
+        baseGateway,
+        evolutionCallScope(options.cost, "score"),
+      )
+    : baseGateway;
   let draft = "";
   let costCny = 0;
   let tokens = 0;

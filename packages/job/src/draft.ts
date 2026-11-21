@@ -1,7 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { createModelGateway, loadModelConfig } from "@kit/model";
 import { loadPack } from "@kit/pack";
+import { type JobCostAttribution, composeGateway } from "./cost-attribution";
 import { type ProjectTarget, resolveProjectTarget } from "./projects";
 import { JobError } from "./types";
 
@@ -12,6 +12,8 @@ export interface DraftJobInput {
   packDir?: string;
   repoRoot: string;
   env?: Record<string, string | undefined>;
+  /** Charge the draft's model call to the job draft (60 §3.3). */
+  cost?: JobCostAttribution;
 }
 
 export type DraftApplyMode = "none" | "low" | "low-medium";
@@ -33,6 +35,8 @@ export interface DraftJobResult {
   warnings: string[];
   project: ProjectTarget;
   model: "live" | "heuristic";
+  /** Attribution key of the draft, echoed so the caller can link later jobs. */
+  jobId?: string;
 }
 
 const DEFAULT_ACCEPTANCE =
@@ -121,7 +125,11 @@ export async function draftJob(input: DraftJobInput): Promise<DraftJobResult> {
 
   try {
     const facts = await projectFacts(project);
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: input.cost,
+      source: "draft",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `You configure an autonomous coding job for a private agent team.
@@ -163,6 +171,7 @@ Rules:
     warnings: [...new Set(warnings)],
     project,
     model,
+    ...(input.cost ? { jobId: input.cost.jobId } : {}),
   };
 }
 

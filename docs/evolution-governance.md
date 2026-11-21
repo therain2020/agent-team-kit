@@ -167,6 +167,65 @@ gap: `manifest.hidden = { available: false }`, no `scores.hidden`, and
 `rationale` ends with `hidden coverage unavailable`. This keeps the cycle
 usable while making missing coverage visible in the records.
 
+## Outcome metrics (E3, 70 §3.4)
+
+Process scores only say a draft satisfied the rubric. An outcome observation
+captures the real result: an artifact was accepted, or a human reviewed the
+output and approved/rejected it.
+
+```text
+kit evolve outcome record --cycle <cycleId> --score 0.9 --pass \
+  --source human_review --ref review-123
+kit evolve outcome list
+```
+
+Observations live in `outcomes.jsonl` under `KIT_SIGNALS_ROOT` (default
+`~/.agent-team-kit/signals`); override with `evolve cycle --outcomes-file`.
+Each record carries `at`, `source` (`artifact_acceptance` | `human_review`),
+`score` in [0, 1], `pass`, `cycleId`/`variantId`, and `ref` (artifact or review
+id). Reading is defensive: missing files, corrupt lines and duplicate
+observations are skipped.
+
+`kit evolve status` and the console join observations onto cycles
+(`outcomeScore` / `outcomePass`) and report the evaluator-vs-human agreement
+rate (70 §5 requires ≥ 0.8). Reviews usually arrive after a cycle, so the join
+is the primary surface; cycle records carry the fields when an observation
+already exists.
+
+## Goodhart divergence (E3, 70 §3.4)
+
+A cycle is divergent when its judge score rose (candidate − baseline ≥ 0.02)
+while its outcome stayed flat or fell versus the previous reviewed cycle. The
+next cycle start checks this before spending anything:
+
+- `--divergence-window` consecutive divergent cycles (default 2), or
+- one severe cycle (score rise ≥ 0.15 and outcome drop ≥ 0.05),
+
+freezes evolution with `kind: "divergence"` through the E4 switch, writes a
+`governance.jsonl` event, and records the skipped cycle. Lifting the freeze
+requires a baseline review (`kit evolve unfreeze` after the investigation).
+
+## Drift re-evaluation (E3, 70 §3.5)
+
+Every cycle compares the current input distribution, evaluator-human agreement
+and provider pin against `<variantsRoot>/drift-baseline.json`:
+
+| Signal | Trigger | Effect |
+|---|---|---|
+| Input distribution | distribution total-variation distance > 0.2 | champion re-evaluation |
+| Evaluator agreement | rate < 0.8 with ≥ 5 reviews | alert record + champion re-evaluation |
+| Model pin | `--model-pin`/`KIT_MODEL_PROVIDER_PIN` changed | champion re-evaluation |
+
+A re-evaluation means the cycle re-scores the baseline (the champion) in full
+against the frozen snapshot instead of trusting the previous baseline score.
+Findings are written on the cycle (`drift`), to the event log, and shown by
+`kit evolve status` and the `/evolution` console. The baseline is advisory: a
+failed read/write means "no previous snapshot", never a failed cycle.
+
+The event log defaults to `variants/governance.jsonl`
+(`--governance-file`). It is an adapter for the CLI and console; the durable
+reason is on the cycle record and the freeze state (D-52).
+
 ## Canary
 
 `startCanary` stores `evalSnapshotPath` on the canary state and
@@ -197,5 +256,4 @@ CI runs it before the full suite, so an invariant failure blocks the PR.
 
 ## Follow-ups
 
-- Goodhart divergence and drift re-evaluation: E3 (#28).
 - Incident freeze and convergence: E4 (#29).

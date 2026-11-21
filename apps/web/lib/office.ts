@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import type { AgentRole } from "@kit/core";
+import type { AgentRole, AvatarSpec } from "@kit/core";
 import { loadPack } from "@kit/pack";
+import { ManifestBudget, selectOfficeRuns } from "./office-budget";
 import { type StudioAgent, loadStudioData } from "./pack-studio";
 import { getPacksRoot } from "./paths";
 import { loadArtifactContent } from "./runs";
@@ -33,6 +34,8 @@ export interface OfficeAgentView {
   activityDetail?: string;
   runId?: string;
   lastArtifactId?: string;
+  /** Custom sprite from the agent frontmatter; absent = seed sprite. */
+  avatar?: AvatarSpec;
 }
 
 export type OfficeTaskPhase =
@@ -85,6 +88,24 @@ export interface OfficeData {
   active: OfficeActivePack | null;
 }
 
+/** Payload of `GET /api/office?pack=<dir>` (97 §3.2 fallback snapshot). */
+export interface OfficeSnapshotPayload {
+  active: OfficeActivePack | null;
+  /** `MAX(activity_events.event_id)` at snapshot time. */
+  cursor: number;
+  generatedAt: string;
+}
+
+type MissionAssignment = {
+  goal?: string;
+  acceptance?: string;
+  manager?: string;
+  sellers?: string[];
+  builders?: string[];
+  specialists?: string[];
+  agents?: string[];
+};
+
 export async function loadOfficeData(packParam?: string): Promise<OfficeData> {
   const root = getPacksRoot();
   const packs: OfficePackOption[] = [];
@@ -131,74 +152,92 @@ export async function loadOfficeData(packParam?: string): Promise<OfficeData> {
   const store = await getStore();
   const recentRuns = await store.runs.listRecent(30);
   const workflowIds = new Set(loaded.workflows.map((workflow) => workflow.id));
-  const typedRuns = recentRuns.filter((run) => workflowIds.has(run.workflowId));
-  const runsWithData = await Promise.all(
-    typedRuns.slice(0, 12).map(async (run) => {
-      const artifacts = await store.artifactStore.listByRun(run.runId);
-      let costCny = 0;
-      let latestAgent: string | undefined;
-      let latestArtifactId: string | undefined;
-      let latestAt = "";
-      let mission:
-        | {
-            goal?: string;
-            acceptance?: string;
-            manager?: string;
-            sellers?: string[];
-            builders?: string[];
-            specialists?: string[];
-            agents?: string[];
-          }
-        | undefined;
-      let lastRole: AgentRole | undefined;
-      let builderArtifacts = 0;
+  // Budget: at most 12 runs and 60 distinct manifest reads per snapshot (§5).
+  const typedRuns = selectOfficeRuns(recentRuns, workflowIds);
+  type ManifestRecord = NonNullable<
+    Awaited<ReturnType<typeof store.manifests.get>>
+  >;
+  const manifestBudget = new ManifestBudget();
+  const manifestCache = new Map<string, ManifestRecord | null>();
+  const runsWithData: Array<{
+    run: (typeof typedRuns)[number];
+    costCny: number;
+    latestAgent?: string;
+    latestArtifactId?: string;
+    producents: Map<string, string>;
+    mission?: MissionAssignment;
+    phase: OfficeTaskPhase;
+  }> = [];
 
-      const producents = new Map<string, string>();
-      for (const artifact of artifacts) {
-        const manifest = await store.manifests.get(artifact.manifestId);
-        if (!manifest) {
+  for (const [runIndex, run] of typedRuns.entries()) {
+    const artifacts = await store.artifactStore.listByRun(run.runId);
+    let costCny = 0;
+    let latestAgent: string | undefined;
+    let latestArtifactId: string | undefined;
+    let latestAt = "";
+    let mission: MissionAssignment | undefined;
+    let lastRole: AgentRole | undefined;
+    let builderArtifacts = 0;
+    const producents = new Map<string, string>();
+
+    for (const artifact of artifacts) {
+      // A manifest is read once per snapshot and only while budget remains.
+      let manifest = manifestCache.get(artifact.manifestId);
+      if (manifest === undefined) {
+        if (!manifestBudget.claim(artifact.manifestId)) {
           continue;
         }
-        costCny += manifest.cost.amount;
-        const agentId = manifest.producer.agentId;
-        if (agentId && agentId !== "workflow" && agentId !== "manager") {
-          producents.set(agentId, artifact.createdAt);
+        manifest = await store.manifests.get(artifact.manifestId);
+        manifestCache.set(artifact.manifestId, manifest);
+      }
+      if (!manifest) {
+        continue;
+      }
+      costCny += manifest.cost.amount;
+      const agentId = manifest.producer.agentId;
+      if (agentId && agentId !== "workflow" && agentId !== "manager") {
+        producents.set(agentId, artifact.createdAt);
+      }
+      const role = roleById.get(agentId);
+      if (role) {
+        lastRole = role;
+        if (role === "builder" || role === "specialist") {
+          builderArtifacts += 1;
         }
-        const role = roleById.get(agentId);
-        if (role) {
-          lastRole = role;
-          if (role === "builder" || role === "specialist") {
-            builderArtifacts += 1;
-          }
-        }
-        if (artifact.createdAt > latestAt) {
-          latestAt = artifact.createdAt;
-          latestAgent = agentId;
-          latestArtifactId = artifact.artifactId;
-        }
-        if (manifest.stageId.endsWith(":mission-assignment")) {
-          const content = await loadArtifactContent(artifact, store, 20_000);
-          if (!content.unavailable) {
-            try {
-              mission = JSON.parse(content.text) as typeof mission;
-            } catch {
-              // ignore malformed mission assignment
-            }
+      }
+      if (artifact.createdAt > latestAt) {
+        latestAt = artifact.createdAt;
+        latestAgent = agentId;
+        latestArtifactId = artifact.artifactId;
+      }
+      // Mission metadata is only parsed for the newest run; older cards fall
+      // back to the workflow id, which keeps the snapshot within budget.
+      if (
+        runIndex === 0 &&
+        mission === undefined &&
+        manifest.stageId.endsWith(":mission-assignment")
+      ) {
+        const content = await loadArtifactContent(artifact, store, 20_000);
+        if (!content.unavailable) {
+          try {
+            mission = JSON.parse(content.text) as MissionAssignment;
+          } catch {
+            // ignore malformed mission assignment
           }
         }
       }
+    }
 
-      return {
-        run,
-        costCny,
-        latestAgent,
-        latestArtifactId,
-        producents,
-        mission,
-        phase: taskPhase(run.status, lastRole, builderArtifacts),
-      };
-    }),
-  );
+    runsWithData.push({
+      run,
+      costCny,
+      latestAgent,
+      latestArtifactId,
+      producents,
+      mission,
+      phase: taskPhase(run.status, lastRole, builderArtifacts),
+    });
+  }
 
   const agents: OfficeAgentView[] = studio.agents.map((agent) => {
     const latest = latestAgentActivity(agent, runsWithData);
@@ -216,6 +255,7 @@ export async function loadOfficeData(packParam?: string): Promise<OfficeData> {
       activityDetail: latest.activityDetail,
       runId: latest.runId,
       lastArtifactId: latest.artifactId,
+      avatar: agent.avatar,
     };
   });
 

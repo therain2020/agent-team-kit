@@ -231,6 +231,12 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   eval_snapshot_hash TEXT,
   evaluator_hash TEXT,
   evaluator_approval_ref TEXT,
+  outcome_score DOUBLE PRECISION,
+  outcome_pass BOOLEAN,
+  outcome_source TEXT,
+  outcome_ref TEXT,
+  divergence JSONB,
+  drift JSONB,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -305,6 +311,18 @@ ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS budget_refs JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE evolution_cycles
   ADD COLUMN IF NOT EXISTS budget_reconciliation JSONB;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS outcome_score DOUBLE PRECISION;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS outcome_pass BOOLEAN;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS outcome_source TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS outcome_ref TEXT;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS divergence JSONB;
+ALTER TABLE evolution_cycles
+  ADD COLUMN IF NOT EXISTS drift JSONB;
 ALTER TABLE evolution_state
   ADD COLUMN IF NOT EXISTS canary_eval_snapshot_path TEXT;
 
@@ -744,6 +762,11 @@ CREATE TABLE IF NOT EXISTS cost_records (
   call_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
   run_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL DEFAULT 'run',
+  scope_id TEXT,
+  job_id TEXT,
+  change_id TEXT,
+  manager_session_id TEXT,
   stage_id TEXT,
   agent_id TEXT,
   source TEXT NOT NULL,
@@ -770,6 +793,20 @@ CREATE INDEX IF NOT EXISTS idx_cost_records_run
   ON cost_records(workspace_id, run_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_cost_records_artifact
   ON cost_records(workspace_id, artifact_id);
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS scope_kind TEXT NOT NULL DEFAULT 'run';
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS scope_id TEXT;
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS job_id TEXT;
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS change_id TEXT;
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS manager_session_id TEXT;
+UPDATE cost_records SET scope_id = run_id WHERE scope_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cost_records_scope
+  ON cost_records(workspace_id, scope_kind, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_cost_records_job
+  ON cost_records(workspace_id, job_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_change
+  ON cost_records(workspace_id, change_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_manager_session
+  ON cost_records(workspace_id, manager_session_id);
 
 CREATE TABLE IF NOT EXISTS price_tables (
   version TEXT PRIMARY KEY,
@@ -850,6 +887,57 @@ CREATE TABLE IF NOT EXISTS source_health (
   PRIMARY KEY (workspace_id, source_id)
 );
 
+CREATE TABLE IF NOT EXISTS interest_profiles (
+  profile_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  version INTEGER NOT NULL,
+  topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+  entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+  exclusions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  thresholds JSONB NOT NULL DEFAULT '{}'::jsonb,
+  daily_budget_cny_micro BIGINT NOT NULL DEFAULT 0,
+  updated_by TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_interest_profiles_version
+  ON interest_profiles(workspace_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS interest_profile_audits (
+  audit_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  before JSONB,
+  after JSONB NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_interest_profile_audits_ws
+  ON interest_profile_audits(workspace_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS information_signal_audits (
+  event_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_version INTEGER NOT NULL,
+  model TEXT NOT NULL DEFAULT 'heuristic',
+  relevance DOUBLE PRECISION NOT NULL,
+  novelty DOUBLE PRECISION NOT NULL,
+  urgency DOUBLE PRECISION NOT NULL,
+  risk DOUBLE PRECISION NOT NULL,
+  confidence DOUBLE PRECISION NOT NULL,
+  passes BOOLEAN NOT NULL DEFAULT false,
+  flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+  scored_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_information_signal_audits_ws
+  ON information_signal_audits(workspace_id, scored_at DESC);
+
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -925,6 +1013,51 @@ CREATE TABLE IF NOT EXISTS recovery_drills (
 
 CREATE INDEX IF NOT EXISTS idx_recovery_drills_executed
   ON recovery_drills(executed_at DESC);
+
+CREATE TABLE IF NOT EXISTS change_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  substrate TEXT NOT NULL,
+  producer TEXT NOT NULL,
+  state TEXT NOT NULL,
+  risk TEXT NOT NULL,
+  hypothesis TEXT NOT NULL,
+  acceptance JSONB NOT NULL DEFAULT '[]'::jsonb,
+  signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  eval_plan JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_ref JSONB,
+  revert_ref TEXT,
+  budget_ref TEXT,
+  approval_ref TEXT,
+  outcome JSONB,
+  content_ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
+  ON change_proposals(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_change_proposals_state
+  ON change_proposals(workspace_id, state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_change_proposals_producer
+  ON change_proposals(workspace_id, producer, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS change_proposal_transitions (
+  audit_id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL REFERENCES change_proposals(proposal_id),
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  at TIMESTAMPTZ NOT NULL,
+  sequence INTEGER NOT NULL,
+  UNIQUE (proposal_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_transitions_proposal
+  ON change_proposal_transitions(proposal_id, sequence);
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -1140,6 +1273,12 @@ CREATE TABLE IF NOT EXISTS evolution_cycles (
   eval_snapshot_hash TEXT,
   evaluator_hash TEXT,
   evaluator_approval_ref TEXT,
+  outcome_score REAL,
+  outcome_pass INTEGER,
+  outcome_source TEXT,
+  outcome_ref TEXT,
+  divergence TEXT,
+  drift TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -1547,6 +1686,12 @@ ALTER TABLE evolution_cycles ADD COLUMN signal_sources TEXT NOT NULL DEFAULT '[]
 ALTER TABLE evolution_cycles ADD COLUMN budget_status TEXT NOT NULL DEFAULT 'unledgered';
 ALTER TABLE evolution_cycles ADD COLUMN budget_refs TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE evolution_cycles ADD COLUMN budget_reconciliation TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN outcome_score REAL;
+ALTER TABLE evolution_cycles ADD COLUMN outcome_pass INTEGER;
+ALTER TABLE evolution_cycles ADD COLUMN outcome_source TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN outcome_ref TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN divergence TEXT;
+ALTER TABLE evolution_cycles ADD COLUMN drift TEXT;
 ALTER TABLE evolution_state ADD COLUMN canary_eval_snapshot_path TEXT;
 
 CREATE TABLE IF NOT EXISTS budgets (
@@ -1662,6 +1807,11 @@ CREATE TABLE IF NOT EXISTS cost_records (
   call_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
   run_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL DEFAULT 'run',
+  scope_id TEXT,
+  job_id TEXT,
+  change_id TEXT,
+  manager_session_id TEXT,
   stage_id TEXT,
   agent_id TEXT,
   source TEXT NOT NULL,
@@ -1688,6 +1838,20 @@ CREATE INDEX IF NOT EXISTS idx_cost_records_run
   ON cost_records(workspace_id, run_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_cost_records_artifact
   ON cost_records(workspace_id, artifact_id);
+ALTER TABLE cost_records ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'run';
+ALTER TABLE cost_records ADD COLUMN scope_id TEXT;
+ALTER TABLE cost_records ADD COLUMN job_id TEXT;
+ALTER TABLE cost_records ADD COLUMN change_id TEXT;
+ALTER TABLE cost_records ADD COLUMN manager_session_id TEXT;
+UPDATE cost_records SET scope_id = run_id WHERE scope_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cost_records_scope
+  ON cost_records(workspace_id, scope_kind, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_cost_records_job
+  ON cost_records(workspace_id, job_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_change
+  ON cost_records(workspace_id, change_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_manager_session
+  ON cost_records(workspace_id, manager_session_id);
 
 CREATE TABLE IF NOT EXISTS price_tables (
   version TEXT PRIMARY KEY,
@@ -1768,6 +1932,57 @@ CREATE TABLE IF NOT EXISTS source_health (
   PRIMARY KEY (workspace_id, source_id)
 );
 
+CREATE TABLE IF NOT EXISTS interest_profiles (
+  profile_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  version INTEGER NOT NULL,
+  topics TEXT NOT NULL DEFAULT '[]',
+  entities TEXT NOT NULL DEFAULT '[]',
+  exclusions TEXT NOT NULL DEFAULT '[]',
+  thresholds TEXT NOT NULL DEFAULT '{}',
+  daily_budget_cny_micro INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_interest_profiles_version
+  ON interest_profiles(workspace_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS interest_profile_audits (
+  audit_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  before TEXT,
+  after TEXT NOT NULL,
+  occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_interest_profile_audits_ws
+  ON interest_profile_audits(workspace_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS information_signal_audits (
+  event_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_version INTEGER NOT NULL,
+  model TEXT NOT NULL DEFAULT 'heuristic',
+  relevance REAL NOT NULL,
+  novelty REAL NOT NULL,
+  urgency REAL NOT NULL,
+  risk REAL NOT NULL,
+  confidence REAL NOT NULL,
+  passes INTEGER NOT NULL DEFAULT 0,
+  flags TEXT NOT NULL DEFAULT '[]',
+  reasons TEXT NOT NULL DEFAULT '[]',
+  scored_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_information_signal_audits_ws
+  ON information_signal_audits(workspace_id, scored_at DESC);
+
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -1843,4 +2058,49 @@ CREATE TABLE IF NOT EXISTS recovery_drills (
 
 CREATE INDEX IF NOT EXISTS idx_recovery_drills_executed
   ON recovery_drills(executed_at DESC);
+
+CREATE TABLE IF NOT EXISTS change_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  substrate TEXT NOT NULL,
+  producer TEXT NOT NULL,
+  state TEXT NOT NULL,
+  risk TEXT NOT NULL,
+  hypothesis TEXT NOT NULL,
+  acceptance TEXT NOT NULL DEFAULT '[]',
+  signal_refs TEXT NOT NULL DEFAULT '[]',
+  eval_plan TEXT NOT NULL DEFAULT '{}',
+  source_ref TEXT,
+  revert_ref TEXT,
+  budget_ref TEXT,
+  approval_ref TEXT,
+  outcome TEXT,
+  content_ref TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
+  ON change_proposals(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_change_proposals_state
+  ON change_proposals(workspace_id, state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_change_proposals_producer
+  ON change_proposals(workspace_id, producer, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS change_proposal_transitions (
+  audit_id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL REFERENCES change_proposals(proposal_id),
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  at TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  UNIQUE (proposal_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_transitions_proposal
+  ON change_proposal_transitions(proposal_id, sequence);
 `;

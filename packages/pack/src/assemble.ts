@@ -102,6 +102,11 @@ export interface AssembleInput {
   components: ComponentRequest[];
   /** Allow toolpacks that ship `command` adapters (explicit consent). */
   allowCommand?: boolean;
+  /**
+   * Validate and plan the assembly without touching the pack or its lockfile.
+   * Used by the composer (94 C-6c) to preview an AI draft before approval.
+   */
+  dryRun?: boolean;
 }
 
 export interface AssemblyBinding {
@@ -120,6 +125,8 @@ export interface AssemblyResult {
   /** True when the assembly was already fully applied. */
   noop: boolean;
   lock: AssemblyLock;
+  /** True when this run only planned the assembly and wrote nothing. */
+  preview?: boolean;
 }
 
 /** Thrown with a structured issue list; nothing is written on this error. */
@@ -616,8 +623,24 @@ export async function assembleComponents(
     !lockExisted ||
     nextComponents.length !== lock.components.length ||
     nextBindings.length !== lock.bindings.length;
+  const noop = effectiveWrites.length === 0 && !teamChanged && !lockChanged;
 
-  if (effectiveWrites.length === 0 && !teamChanged && !lockChanged) {
+  // Preview mode: everything above is read-only validation and planning, so
+  // stop here with the same shape the real run returns. Nothing is written.
+  if (input.dryRun === true) {
+    return {
+      packDir,
+      lockPath,
+      bindings,
+      written: effectiveWrites.map((write) => write.relative),
+      warnings,
+      noop,
+      lock: buildLock(lock, packDir, nextComponents, nextBindings),
+      preview: true,
+    };
+  }
+
+  if (noop) {
     return {
       packDir,
       lockPath,

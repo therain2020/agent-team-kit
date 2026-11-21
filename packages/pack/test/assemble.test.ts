@@ -323,6 +323,40 @@ describe("component assembler", () => {
     ]);
   });
 
+  it("previews a planned assembly without writing the pack", async () => {
+    const packDir = await makePack();
+    const analyst = agentComponent("analyst");
+    const library = libraryFromFixtures({ "agent/analyst": analyst });
+    const before = await readFile(path.join(packDir, "team.yaml"), "utf8");
+
+    const preview = await assembleComponents(
+      {
+        packDir,
+        components: [{ kind: "agent", id: "analyst" }],
+        dryRun: true,
+      },
+      library,
+    );
+
+    expect(preview.preview).toBe(true);
+    expect(preview.noop).toBe(false);
+    expect(preview.bindings).toHaveLength(1);
+    expect(preview.written).toContain("agents/analyst.md");
+    expect(preview.lock.components).toHaveLength(1);
+    expect(existsSync(path.join(packDir, "agents", "analyst.md"))).toBe(false);
+    expect(existsSync(path.join(packDir, "components.lock.json"))).toBe(false);
+    expect(await readFile(path.join(packDir, "team.yaml"), "utf8")).toBe(
+      before,
+    );
+
+    const applied = await assembleComponents(
+      { packDir, components: [{ kind: "agent", id: "analyst" }] },
+      library,
+    );
+    expect(applied.preview).toBeUndefined();
+    expect(existsSync(path.join(packDir, "agents", "analyst.md"))).toBe(true);
+  });
+
   it("binds a skillpack and lets an agent reference its skill", async () => {
     const packDir = await makePack();
     const writer = skillpackComponent("writer-pack", "writer");

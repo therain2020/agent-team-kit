@@ -21,6 +21,7 @@
       "dependencies": {
         "@kit/activity": "workspace:*",
         "@kit/bootstrap": "workspace:*",
+        "@kit/change": "workspace:*",
         "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
         "@kit/engine": "workspace:*",
@@ -160,6 +161,14 @@
         "zod": "^3.24.1",
       },
     },
+    "packages/change": {
+      "name": "@kit/change",
+      "version": "0.9.0",
+      "dependencies": {
+        "@kit/core": "workspace:*",
+        "@kit/store": "workspace:*",
+      },
+    },
     "packages/coder": {
       "name": "@kit/coder",
       "version": "0.9.0",
@@ -184,6 +193,7 @@
       "version": "0.9.0",
       "dependencies": {
         "@kit/activity": "workspace:*",
+        "@kit/change": "workspace:*",
         "@kit/coder": "workspace:*",
         "@kit/core": "workspace:*",
         "@kit/delivery": "workspace:*",
@@ -271,6 +281,7 @@
       "version": "0.9.0",
       "dependencies": {
         "@kit/core": "workspace:*",
+        "@kit/model": "workspace:*",
         "@kit/tools": "workspace:*",
         "@kit/workflow": "workspace:*",
         "yaml": "^2.6.1",
@@ -630,6 +641,8 @@
     "@kit/autopilot": ["@kit/autopilot@workspace:packages/autopilot"],
 
     "@kit/bootstrap": ["@kit/bootstrap@workspace:packages/bootstrap"],
+
+    "@kit/change": ["@kit/change@workspace:packages/change"],
 
     "@kit/cli": ["@kit/cli@workspace:apps/cli"],
 

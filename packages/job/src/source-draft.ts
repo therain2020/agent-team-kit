@@ -1,4 +1,4 @@
-import { createModelGateway, loadModelConfig } from "@kit/model";
+import { type JobCostAttribution, composeGateway } from "./cost-attribution";
 import { JobError } from "./types";
 
 /**
@@ -358,6 +358,7 @@ export async function composeSource(
   intent: string,
   candidates: SourceCandidateInput[],
   env: Record<string, string | undefined>,
+  cost?: JobCostAttribution,
 ): Promise<SourceComposeResult> {
   const trimmed = intent.trim();
   if (!trimmed) {
@@ -388,7 +389,11 @@ export async function composeSource(
   let model: SourceComposeResult["model"] = "heuristic";
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:source",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `You pick ONE source adapter for a private agent team.

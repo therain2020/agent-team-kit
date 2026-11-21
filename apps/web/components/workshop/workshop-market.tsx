@@ -12,9 +12,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import {
+  type WorkshopAssetKind,
+  installDestination,
+  matchesAssetKind,
+} from "@/lib/workshop-library";
 import type {
   WorkshopCandidate,
-  WorkshopInstallRecord,
   WorkshopManifest,
   WorkshopPreview,
   WorkshopTrust,
@@ -26,7 +30,6 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
-  Store,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useRouter } from "next/navigation";
@@ -61,14 +64,27 @@ const PERMISSION_RISK_VARIANT = {
   high: "danger",
 } as const;
 
+/**
+ * Shared search-and-preview surface for one asset partition (88 §3.4 M2).
+ * Search, preview, trust grading, secret scan and the consent flow are the
+ * same for teams, pipelines, components and templates; only the result filter
+ * and the install destination differ.
+ */
 export function WorkshopMarket({
-  installed,
+  kind,
+  kindLabel,
+  installedRepos,
+  query,
+  onQueryChange,
 }: {
-  installed: WorkshopInstallRecord[];
+  kind: WorkshopAssetKind;
+  kindLabel: string;
+  installedRepos: string[];
+  query: string;
+  onQueryChange: (query: string) => void;
 }) {
   const t = useTranslations("workshop");
   const router = useRouter();
-  const [query, setQuery] = useState("");
   const [results, setResults] = useState<WorkshopCandidate[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,9 +130,14 @@ export function WorkshopMarket({
       if (!response.ok) {
         throw new Error(payload.error ?? t("searchFailed"));
       }
-      setResults(payload.candidates ?? []);
-      if ((payload.candidates ?? []).length === 0) {
-        toast.message(t("noResults"));
+      const candidates = (payload.candidates ?? []).filter(
+        (candidate) =>
+          candidate.manifest !== undefined &&
+          matchesAssetKind(candidate.manifest.kind, kind),
+      );
+      setResults(candidates);
+      if (candidates.length === 0) {
+        toast.message(t("noResultsKind", { kind: kindLabel }));
       }
     } catch (problem) {
       const text =
@@ -210,12 +231,16 @@ export function WorkshopMarket({
       if (payload.kind === "pack" && payload.id) {
         toast.success(t("installedPack", { name }));
         closeDialog();
-        // Packs live in the pack library now: hard-navigate so the console
-        // re-renders with the installed pack selected (`/packs/<id>` redirects
-        // to the workshop surface with `?pack=<id>`).
-        window.location.assign(`/packs/${encodeURIComponent(payload.id)}`);
+        // Packs live in the pack library: hard-navigate so the console
+        // re-renders with the installed pack selected.
+        window.location.assign(`/packs?pack=${encodeURIComponent(payload.id)}`);
       } else {
-        toast.success(t("installed", { name }));
+        toast.success(
+          t("installedStaged", {
+            name,
+            dir: payload.id ?? preview.manifest.id,
+          }),
+        );
         closeDialog();
         router.refresh();
       }
@@ -257,196 +282,110 @@ export function WorkshopMarket({
         <p>{t("securityNotice")}</p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-200">
-              <Store className="size-4 text-emerald-400" />
-              {t("installedTitle")}
-            </h2>
-            <Badge variant="outline">{installed.length}</Badge>
-          </div>
-          {installed.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-[11px] text-zinc-500">
-              {t("noInstalled")}
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {installed.map((record) => (
-                <li
-                  key={record.dirName}
-                  className="rounded-lg border border-border px-3 py-2"
-                >
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-mono text-xs text-zinc-200">
-                      {record.name}
-                    </span>
-                    <Badge variant="outline">v{record.version}</Badge>
-                    <Badge variant="outline">{record.kind}</Badge>
-                    <Badge variant={TRUST_VARIANT[record.trust.level]}>
-                      {trustLabels[record.trust.level]}
+      <section className="rounded-xl border border-border bg-card p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+            <Search className="size-4 text-sky-400" />
+            {t("marketTitle")}
+          </h2>
+          <span className="font-mono text-[10px] text-zinc-600">
+            {t("topicLabel")}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <Input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                void search();
+              }
+            }}
+            placeholder={t("searchPlaceholder")}
+            className="h-8 text-[11px]"
+          />
+          <Button size="sm" onClick={search} disabled={searching}>
+            <RefreshCw
+              className={cn("size-3.5", searching && "animate-spin")}
+            />
+            {t("search")}
+          </Button>
+        </div>
+        {error ? (
+          <p className="mt-2 whitespace-pre-wrap text-[10px] text-red-300">
+            {error}
+          </p>
+        ) : null}
+
+        <ul className="mt-3 space-y-2">
+          {results.map((candidate) => {
+            const installedRepo = installedRepos.includes(candidate.repo);
+            return (
+              <li
+                key={candidate.repo}
+                className="rounded-lg border border-border px-3 py-2"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-mono text-xs text-zinc-200">
+                    {candidate.repo}
+                  </span>
+                  <span className="text-[10px] text-amber-300/80">
+                    ★ {candidate.stars}
+                  </span>
+                  {candidate.manifest ? (
+                    <Badge variant="success">
+                      {candidate.manifest.name}@{candidate.manifest.version}
                     </Badge>
-                    <Badge variant="warning">{t("thirdParty")}</Badge>
-                  </div>
-                  <p className="mt-1 font-mono text-[10px] text-zinc-500">
-                    {record.repo}@{record.commit.slice(0, 8)}
+                  ) : (
+                    <Badge variant="danger">{t("invalidManifest")}</Badge>
+                  )}
+                  {candidate.trust ? (
+                    <Badge variant={TRUST_VARIANT[candidate.trust.level]}>
+                      {trustLabels[candidate.trust.level]}
+                    </Badge>
+                  ) : null}
+                  {installedRepo ? (
+                    <Badge variant="info">{t("installedLabel")}</Badge>
+                  ) : null}
+                </div>
+                <p className="mt-1 text-[11px] text-zinc-400">
+                  {candidate.description || "—"}
+                </p>
+                {candidate.manifestError ? (
+                  <p className="mt-1 text-[10px] text-red-300/80">
+                    {candidate.manifestError}
                   </p>
-                  <p className="mt-1 font-mono text-[10px] text-zinc-600">
-                    {t("manifestHash")}: {record.manifestSha256.slice(0, 16)}
-                    {record.manifestSha256.length > 16 ? "…" : ""}
-                  </p>
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <Badge variant="outline">
-                      {t("network")}:{" "}
-                      {record.permissions.network
-                        ? t("enabled")
-                        : t("disabled")}
-                    </Badge>
-                    <Badge variant="outline">
-                      {t("filesystem")}:{" "}
-                      {record.permissions.filesystem === "none"
-                        ? t("fsNone")
-                        : record.permissions.filesystem === "readonly"
-                          ? t("fsReadonly")
-                          : t("fsWorkspace")}
-                    </Badge>
-                    <Badge
-                      variant={record.permissions.code ? "warning" : "outline"}
-                    >
-                      {t("code")}:{" "}
-                      {record.permissions.code ? t("enabled") : t("disabled")}
-                    </Badge>
-                    <Badge variant="outline">
-                      {t("files", { count: record.fileCount })}
-                    </Badge>
-                    {record.installedAt ? (
-                      <span className="text-[10px] text-zinc-600">
-                        {record.installedAt.slice(0, 10)}
-                      </span>
-                    ) : null}
-                  </div>
+                ) : null}
+                <div className="mt-2 flex items-center gap-2">
                   <a
-                    href={`https://github.com/${record.repo}`}
+                    href={`${candidate.htmlUrl}/blob/HEAD/workshop.yaml`}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-2 inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-200"
+                    className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-200"
                   >
                     <ExternalLink className="size-3" />
-                    {t("viewRepo")}
+                    workshop.yaml
                   </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="rounded-xl border border-border bg-card p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-200">
-              <Search className="size-4 text-sky-400" />
-              {t("marketTitle")}
-            </h2>
-            <span className="font-mono text-[10px] text-zinc-600">
-              {t("topicLabel")}
-            </span>
-          </div>
-          <div className="flex gap-2">
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void search();
-                }
-              }}
-              placeholder={t("searchPlaceholder")}
-              className="h-8 text-[11px]"
-            />
-            <Button size="sm" onClick={search} disabled={searching}>
-              <RefreshCw
-                className={cn("size-3.5", searching && "animate-spin")}
-              />
-              {t("search")}
-            </Button>
-          </div>
-          {error ? (
-            <p className="mt-2 whitespace-pre-wrap text-[10px] text-red-300">
-              {error}
-            </p>
-          ) : null}
-
-          <ul className="mt-3 space-y-2">
-            {results.map((candidate) => {
-              const installedRepo = installed.find(
-                (record) => record.repo === candidate.repo,
-              );
-              return (
-                <li
-                  key={candidate.repo}
-                  className="rounded-lg border border-border px-3 py-2"
-                >
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="font-mono text-xs text-zinc-200">
-                      {candidate.repo}
-                    </span>
-                    <span className="text-[10px] text-amber-300/80">
-                      ★ {candidate.stars}
-                    </span>
-                    {candidate.manifest ? (
-                      <Badge variant="success">
-                        {candidate.manifest.name}@{candidate.manifest.version}
-                      </Badge>
-                    ) : (
-                      <Badge variant="danger">{t("invalidManifest")}</Badge>
-                    )}
-                    {candidate.trust ? (
-                      <Badge variant={TRUST_VARIANT[candidate.trust.level]}>
-                        {trustLabels[candidate.trust.level]}
-                      </Badge>
-                    ) : null}
-                    {installedRepo ? (
-                      <Badge variant="info">{t("installedLabel")}</Badge>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 text-[11px] text-zinc-400">
-                    {candidate.description || "—"}
-                  </p>
-                  {candidate.manifestError ? (
-                    <p className="mt-1 text-[10px] text-red-300/80">
-                      {candidate.manifestError}
-                    </p>
-                  ) : null}
-                  <div className="mt-2 flex items-center gap-2">
-                    <a
-                      href={`${candidate.htmlUrl}/blob/HEAD/workshop.yaml`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-200"
-                    >
-                      <ExternalLink className="size-3" />
-                      workshop.yaml
-                    </a>
-                    <Button
-                      size="sm"
-                      className="ml-auto"
-                      disabled={!candidate.manifest}
-                      onClick={() => void openPreview(candidate)}
-                    >
-                      <Download className="size-3.5" />
-                      {t("preview")}
-                    </Button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          {results.length === 0 && !searching ? (
-            <p className="mt-4 rounded-lg border border-dashed border-border px-3 py-8 text-center text-[11px] text-zinc-500">
-              {t("searchHint")}
-            </p>
-          ) : null}
-        </section>
-      </div>
+                  <Button
+                    size="sm"
+                    className="ml-auto"
+                    disabled={!candidate.manifest}
+                    onClick={() => void openPreview(candidate)}
+                  >
+                    <Download className="size-3.5" />
+                    {t("preview")}
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        {results.length === 0 && !searching ? (
+          <p className="mt-4 rounded-lg border border-dashed border-border px-3 py-8 text-center text-[11px] text-zinc-500">
+            {t("searchHint")}
+          </p>
+        ) : null}
+      </section>
 
       <Dialog
         open={Boolean(selected)}
@@ -497,6 +436,15 @@ export function WorkshopMarket({
                 ) : null}
               </div>
               <p>{preview.manifest.description || "—"}</p>
+              <p className="text-[10px] text-zinc-500">
+                {kind === "pack"
+                  ? t("destinationPack", {
+                      path: installDestination("pack", preview.manifest.id),
+                    })
+                  : t("destinationStaged", {
+                      path: `workshop/${preview.manifest.id}`,
+                    })}
+              </p>
 
               <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[10px]">
                 <span className="text-zinc-500">{t("entry")}</span>

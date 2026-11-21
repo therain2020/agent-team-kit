@@ -19,6 +19,28 @@ import {
   startCanary,
 } from "./canary";
 import {
+  type EvolutionCallAttribution,
+  type EvolutionCostAttribution,
+  attributedEvolutionGateway,
+} from "./cost-attribution";
+import {
+  DEFAULT_DIVERGENCE_WINDOW,
+  type DivergenceSummary,
+  buildDivergencePoints,
+  divergenceGuard,
+  divergenceSummary,
+} from "./divergence";
+import {
+  type DriftBaseline,
+  type DriftSummary,
+  detectDrift,
+  driftSummary,
+  inputDistributionOf,
+  modelPinFor,
+  readDriftBaseline,
+  writeDriftBaseline,
+} from "./drift";
+import {
   type EvolutionRecord,
   compareVariants,
   initVariant,
@@ -34,6 +56,19 @@ import {
   frozenRationale,
   loadFreezeState,
 } from "./freeze";
+import {
+  type EvolutionGovernanceEvent,
+  appendGovernanceEvent,
+  defaultGovernancePath,
+} from "./governance";
+import {
+  type OutcomeObservation,
+  type OutcomeSource,
+  defaultOutcomesPath,
+  evaluatorAgreement,
+  latestOutcomeForCycle,
+  readOutcomeObservations,
+} from "./outcome";
 import type { EvolutionRepository } from "./repository";
 import {
   type EvolutionSignalRef,
@@ -116,6 +151,20 @@ export interface EvolutionCycleRecord {
   evalSnapshotHash?: string;
   evaluatorHash?: string;
   evaluatorApprovalRef?: string;
+  /**
+   * Outcome signal for this cycle when a review/acceptance record already
+   * exists (70 §3.4). Reviews usually arrive after the cycle, so the joined
+   * view (`attachOutcomes`) is the primary surface; these fields keep the
+   * cycle self-describing when the observation is present.
+   */
+  outcomeScore?: number | null;
+  outcomePass?: boolean | null;
+  outcomeSource?: OutcomeSource;
+  outcomeRef?: string;
+  /** Goodhart guard state observed at the start of the cycle. */
+  divergence?: DivergenceSummary;
+  /** Drift findings observed at the start of the cycle (70 §3.5). */
+  drift?: DriftSummary;
 }
 
 export interface CycleOptions {
@@ -144,12 +193,27 @@ export interface CycleOptions {
    * (CLI, autopilot) ledger every cycle without touching their call sites.
    */
   budget?: EvolutionBudgetLedger;
+  /**
+   * Per-call cost ledger sink. Defaults to `repo.costSink`, so store-backed
+   * callers ledger every cycle without touching their call sites.
+   */
+  cost?: EvolutionCostAttribution;
   workspaceId?: string;
   cyclesRoot?: string;
   hiddenEvalsDir?: string;
   freezeSnapshot?: boolean;
   allowEvaluatorChange?: boolean;
   evaluatorApprovalRef?: string;
+  /** Outcome observations (acceptance/human review); defaults under signals root. */
+  outcomesPath?: string;
+  /** Consecutive divergent cycles that pause evolution. */
+  divergenceWindow?: number;
+  /** Drift baseline file (default `<variantsRoot>/drift-baseline.json`). */
+  driftBaselinePath?: string;
+  /** Divergence/drift event log (default `<variantsRoot>/governance.jsonl`). */
+  governancePath?: string;
+  /** Provider pin for model-drift detection (default KIT_MODEL_PROVIDER_PIN). */
+  modelPin?: string;
 }
 
 export async function runEvolutionCycle(
@@ -167,6 +231,17 @@ export async function runEvolutionCycle(
     options.variantsRoot ?? path.join(path.dirname(archivePath), "");
   const freezePath =
     options.freezePath ?? path.join(variantsRoot, "freeze.json");
+  const outcomesPath =
+    options.outcomesPath ?? defaultOutcomesPath(options.signalsRoot);
+  const driftBaselinePath =
+    options.driftBaselinePath ?? path.join(variantsRoot, "drift-baseline.json");
+  const governancePath =
+    options.governancePath ?? defaultGovernancePath(variantsRoot);
+  const divergenceWindow = Math.max(
+    1,
+    options.divergenceWindow ?? DEFAULT_DIVERGENCE_WINDOW,
+  );
+  let outcomes: OutcomeObservation[] = [];
   const repo = options.repo;
   if (repo) {
     await repo.ensureReady();
@@ -187,6 +262,17 @@ export async function runEvolutionCycle(
       : await loadEvolutionCycles(cyclesPath, limit);
   const ledger = options.budget ?? repo?.budget;
   const workspaceId = options.workspaceId ?? repo?.workspaceId ?? "default";
+  const costSink = options.cost?.sink ?? repo?.costSink;
+  const costAttribution: EvolutionCallAttribution | undefined = costSink
+    ? {
+        attribution: {
+          sink: costSink,
+          workspaceId: options.cost?.workspaceId ?? workspaceId,
+        },
+        workspaceId,
+        changeId: cycleId,
+      }
+    : undefined;
   const cycleBudgetCnyMicro =
     options.budgetCny === undefined ? null : cnyToMicro(options.budgetCny);
   let budgetStatus: EvolutionBudgetStatus = ledger ? "admitted" : "unledgered";
@@ -222,16 +308,42 @@ export async function runEvolutionCycle(
       return undefined;
     }
   };
+  const withOutcome = (record: EvolutionCycleRecord): EvolutionCycleRecord => {
+    const outcome = latestOutcomeForCycle(outcomes, record.cycleId);
+    if (!outcome) {
+      return record;
+    }
+    return {
+      ...record,
+      outcomeScore: outcome.score,
+      outcomePass: outcome.pass,
+      outcomeSource: outcome.source,
+      ...(outcome.ref ? { outcomeRef: outcome.ref } : {}),
+    };
+  };
+  const recordGovernance = async (
+    input: Omit<
+      EvolutionGovernanceEvent,
+      "eventId" | "createdAt" | "workspaceId"
+    >,
+  ): Promise<void> => {
+    try {
+      await appendGovernanceEvent({ ...input, workspaceId }, governancePath);
+    } catch {
+      // Events are explanatory; the cycle record and freeze state remain the
+      // durable copy, so a failed append must not change the cycle outcome.
+    }
+  };
   const persistCycle = async (record: EvolutionCycleRecord) => {
     const reconciliation = await reconcileBudget();
     const saved = await finish(
       cyclesPath,
-      {
+      withOutcome({
         ...record,
         budgetStatus,
         budgetRefs: [...budgetRefs],
         ...(reconciliation ? { budgetReconciliation: reconciliation } : {}),
-      },
+      }),
       repo,
     );
     if (saved.decision === "rejected" || saved.decision === "failed") {
@@ -393,9 +505,40 @@ export async function runEvolutionCycle(
       });
     }
 
+    // Goodhart divergence (70 §3.4) is checked before convergence: when
+    // scores rose while outcomes stayed flat or fell, the optimization target
+    // itself is suspect, so the reason is recorded as `divergence`, not
+    // `convergence`. The check reads outcomes only; it never spends.
+    outcomes = (await readOutcomeObservations(outcomesPath)).outcomes;
+    const recentCycles = await loadRecentCycles(
+      Math.max(convergenceWindow + 5, 50),
+    );
+    const divergence = divergenceGuard(
+      buildDivergencePoints(recentCycles, outcomes),
+      { window: divergenceWindow },
+    );
+    baseRecord.divergence = divergenceSummary(divergence);
+    if (divergence.divergent && divergence.hint) {
+      const frozen = await freezeEvolution(
+        { kind: "divergence", reason: divergence.hint, actor: "system" },
+        freezeOptions,
+      );
+      await recordGovernance({
+        kind: "divergence",
+        action: "paused",
+        reason: divergence.hint,
+        cycleIds: divergence.cycleIds,
+        details: { ...divergenceSummary(divergence) },
+      });
+      return await persistCycle({
+        ...baseRecord,
+        decision: "skipped",
+        rationale: frozenRationale(frozen),
+      });
+    }
+
     // Convergence is checked before any spend: once the trailing streak of
     // no-improvement cycles reaches the window, auto-freeze and stop.
-    const recentCycles = await loadRecentCycles(convergenceWindow + 5);
     const guard = convergenceGuard(recentCycles, convergenceWindow);
     if (guard.frozen && guard.hint) {
       const frozen = await freezeEvolution(
@@ -439,6 +582,48 @@ export async function runEvolutionCycle(
     baseRecord.agentId = agentId;
 
     const iterations = await readIterationSignals(iterationsPath);
+
+    // Drift (70 §3.5): the input distribution, evaluator-vs-human agreement
+    // and the provider pin are compared with the previous cycle's baseline.
+    // A finding forces a full champion re-evaluation: this cycle re-scores the
+    // baseline against the frozen snapshot instead of trusting the incremental
+    // history, and the reason is written as an event.
+    const agreement = evaluatorAgreement(recentCycles, outcomes);
+    const currentBaseline: DriftBaseline = {
+      modelPin:
+        options.modelPin ??
+        modelPinFor(
+          agent.frontmatter.model,
+          process.env.KIT_MODEL_PROVIDER_PIN,
+        ),
+      inputDistribution: inputDistributionOf(iterations.signals),
+      agreement: agreement.rate,
+      sample: agreement.sample,
+      updatedAt: new Date().toISOString(),
+    };
+    const previousBaseline = await readDriftBaseline(driftBaselinePath).catch(
+      () => null,
+    );
+    const drift = detectDrift({
+      previous: previousBaseline,
+      current: currentBaseline,
+    });
+    baseRecord.drift = driftSummary(drift);
+    if (drift.drifted) {
+      await recordGovernance({
+        kind: "drift",
+        action: drift.reevaluateChampion ? "reevaluate" : "alert",
+        reason: drift.reasons.join("; "),
+        cycleIds: [cycleId],
+        details: { ...driftSummary(drift) },
+      });
+    }
+    // The baseline is advisory: a failed write only means the next cycle sees
+    // no previous snapshot, never that this cycle fails.
+    await writeDriftBaseline(driftBaselinePath, currentBaseline).catch(
+      () => undefined,
+    );
+
     const manualRefs = (options.signals ?? []).map((signal) => ({
       signalId: hashSignalId(`manual ${signal}`),
       source: "manual" as const,
@@ -576,6 +761,7 @@ export async function runEvolutionCycle(
           signals,
           hypothesis,
           stub: options.stub ?? false,
+          ...(costAttribution ? { cost: costAttribution } : {}),
         });
         proposalUsage.costCny = result.costCny;
         proposalUsage.tokens = result.tokens;
@@ -665,6 +851,7 @@ export async function runEvolutionCycle(
             archive: archivePath,
             evalDir: snapshot.dir,
             ...(repo ? { repo } : {}),
+            ...(costAttribution ? { cost: costAttribution } : {}),
           },
         );
         scoreUsage.costCny += baselineScore.costCny;
@@ -679,6 +866,7 @@ export async function runEvolutionCycle(
             archive: archivePath,
             evalDir: snapshot.dir,
             ...(repo ? { repo } : {}),
+            ...(costAttribution ? { cost: costAttribution } : {}),
           },
         );
         scoreUsage.costCny += candidateScore.costCny;
@@ -766,6 +954,9 @@ export async function runEvolutionCycle(
           statePath,
           evalDir: snapshot.dir,
           ...(repo ? { repo } : {}),
+          ...(costAttribution
+            ? { cost: { ...costAttribution, phase: "canary" } }
+            : {}),
         });
         for (const record of [...value.champion, ...value.variant]) {
           canaryUsage.costCny += record.costCny;
@@ -896,6 +1087,7 @@ async function proposeInstructions(input: {
   signals: string[];
   hypothesis?: string;
   stub: boolean;
+  cost?: EvolutionCallAttribution;
 }): Promise<{ instructions: string; costCny: number; tokens: number }> {
   if (input.stub || process.env.KIT_MODEL_MODE === "stub") {
     return {
@@ -908,7 +1100,15 @@ async function proposeInstructions(input: {
     };
   }
 
-  const gateway = createModelGateway();
+  const baseGateway = createModelGateway();
+  const gateway = input.cost
+    ? attributedEvolutionGateway(baseGateway, {
+        attribution: input.cost.attribution,
+        workspaceId: input.cost.workspaceId,
+        changeId: input.cost.changeId,
+        phase: input.cost.phase ?? "proposal",
+      })
+    : baseGateway;
   const response = await gateway.complete({
     model: "deepseek-pro",
     instructions: `You are a meta-agent improving another agent's role instructions.
