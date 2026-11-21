@@ -70,6 +70,7 @@ describe("agent avatar persistence", () => {
       ...baseUpdate(),
       avatar: DEFAULT_AVATAR,
     });
+    const withAvatar = await readFile(file, "utf8");
 
     await updateAgent(dir, "worker", {
       ...baseUpdate(),
