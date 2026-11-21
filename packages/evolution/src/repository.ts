@@ -1,4 +1,5 @@
 import type { EvolutionBudgetLedger } from "@kit/core";
+import type { CostLedgerSink } from "@kit/model";
 import type { CanaryState, EvolutionDecisionRecord } from "./canary";
 import type { EvolutionCycleRecord } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
@@ -29,6 +30,12 @@ export interface EvolutionRepository {
    * legacy local flows) leave it undefined and cycles stay `unledgered`.
    */
   readonly budget?: EvolutionBudgetLedger;
+  /**
+   * Per-call cost ledger sink. Store-backed repositories expose it so every
+   * cycle charges its model calls to the cycle (`changeId`) without each call
+   * site passing a sink; file repositories leave it undefined.
+   */
+  readonly costSink?: CostLedgerSink;
   ensureReady(): Promise<void>;
   saveVariant(input: {
     meta: VariantMeta;

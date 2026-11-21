@@ -19,6 +19,11 @@ import {
   startCanary,
 } from "./canary";
 import {
+  type EvolutionCallAttribution,
+  type EvolutionCostAttribution,
+  attributedEvolutionGateway,
+} from "./cost-attribution";
+import {
   type EvolutionRecord,
   compareVariants,
   initVariant,
@@ -144,6 +149,11 @@ export interface CycleOptions {
    * (CLI, autopilot) ledger every cycle without touching their call sites.
    */
   budget?: EvolutionBudgetLedger;
+  /**
+   * Per-call cost ledger sink. Defaults to `repo.costSink`, so store-backed
+   * callers ledger every cycle without touching their call sites.
+   */
+  cost?: EvolutionCostAttribution;
   workspaceId?: string;
   cyclesRoot?: string;
   hiddenEvalsDir?: string;
@@ -187,6 +197,17 @@ export async function runEvolutionCycle(
       : await loadEvolutionCycles(cyclesPath, limit);
   const ledger = options.budget ?? repo?.budget;
   const workspaceId = options.workspaceId ?? repo?.workspaceId ?? "default";
+  const costSink = options.cost?.sink ?? repo?.costSink;
+  const costAttribution: EvolutionCallAttribution | undefined = costSink
+    ? {
+        attribution: {
+          sink: costSink,
+          workspaceId: options.cost?.workspaceId ?? workspaceId,
+        },
+        workspaceId,
+        changeId: cycleId,
+      }
+    : undefined;
   const cycleBudgetCnyMicro =
     options.budgetCny === undefined ? null : cnyToMicro(options.budgetCny);
   let budgetStatus: EvolutionBudgetStatus = ledger ? "admitted" : "unledgered";
@@ -576,6 +597,7 @@ export async function runEvolutionCycle(
           signals,
           hypothesis,
           stub: options.stub ?? false,
+          ...(costAttribution ? { cost: costAttribution } : {}),
         });
         proposalUsage.costCny = result.costCny;
         proposalUsage.tokens = result.tokens;
@@ -665,6 +687,7 @@ export async function runEvolutionCycle(
             archive: archivePath,
             evalDir: snapshot.dir,
             ...(repo ? { repo } : {}),
+            ...(costAttribution ? { cost: costAttribution } : {}),
           },
         );
         scoreUsage.costCny += baselineScore.costCny;
@@ -679,6 +702,7 @@ export async function runEvolutionCycle(
             archive: archivePath,
             evalDir: snapshot.dir,
             ...(repo ? { repo } : {}),
+            ...(costAttribution ? { cost: costAttribution } : {}),
           },
         );
         scoreUsage.costCny += candidateScore.costCny;
@@ -766,6 +790,9 @@ export async function runEvolutionCycle(
           statePath,
           evalDir: snapshot.dir,
           ...(repo ? { repo } : {}),
+          ...(costAttribution
+            ? { cost: { ...costAttribution, phase: "canary" } }
+            : {}),
         });
         for (const record of [...value.champion, ...value.variant]) {
           canaryUsage.costCny += record.costCny;
@@ -896,6 +923,7 @@ async function proposeInstructions(input: {
   signals: string[];
   hypothesis?: string;
   stub: boolean;
+  cost?: EvolutionCallAttribution;
 }): Promise<{ instructions: string; costCny: number; tokens: number }> {
   if (input.stub || process.env.KIT_MODEL_MODE === "stub") {
     return {
@@ -908,7 +936,15 @@ async function proposeInstructions(input: {
     };
   }
 
-  const gateway = createModelGateway();
+  const baseGateway = createModelGateway();
+  const gateway = input.cost
+    ? attributedEvolutionGateway(baseGateway, {
+        attribution: input.cost.attribution,
+        workspaceId: input.cost.workspaceId,
+        changeId: input.cost.changeId,
+        phase: input.cost.phase ?? "proposal",
+      })
+    : baseGateway;
   const response = await gateway.complete({
     model: "deepseek-pro",
     instructions: `You are a meta-agent improving another agent's role instructions.

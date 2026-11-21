@@ -1403,7 +1403,15 @@
     "variance": "偏差",
     "status": "状态",
     "withinTolerance": "2% 以内",
-    "outOfTolerance": "超过 2%"
+    "outOfTolerance": "超过 2%",
+    "priceTitle": "价格表版本",
+    "priceVersion": "当前版本",
+    "priceStable": "未检测到已失效的价格版本。",
+    "priceReminder": "已调价",
+    "nonRunTitle": "非 run 成本来源",
+    "nonRunHint": "compose 草稿、演化周期与 Manager 答复按各自聚合对象记账，不归入 run。",
+    "scopeKind": "作用域",
+    "scopeId": "对象"
   },
   "autopilot": {
     "title": "自主运行",

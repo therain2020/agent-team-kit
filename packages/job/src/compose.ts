@@ -5,7 +5,7 @@ import {
   agentRoleSchema,
   isCronExpression,
 } from "@kit/core";
-import { createModelGateway, loadModelConfig } from "@kit/model";
+import { loadModelConfig } from "@kit/model";
 import {
   type DraftStage,
   inferAgentRole,
@@ -16,6 +16,7 @@ import {
   validateStageGraph,
 } from "@kit/pack";
 import { type PackDraftValues, composePackDraft } from "./compose-pack";
+import { type JobCostAttribution, composeGateway } from "./cost-attribution";
 import {
   type SourceCandidateInput,
   type SourceDraftValues,
@@ -50,6 +51,11 @@ export interface ComposeInput {
   currentStages?: DraftStage[];
   /** Market candidates for the `source` kind; never fetched inside this pack. */
   sourceCandidates?: SourceCandidateInput[];
+  /**
+   * Cost attribution for the AI draft. Compose runs before a run exists, so
+   * any model call is charged to the job draft (`jobId`).
+   */
+  cost?: JobCostAttribution;
 }
 
 export interface MissionValues {
@@ -126,12 +132,19 @@ export interface ComposeResult {
   rationale: string;
   warnings: string[];
   model: "live" | "heuristic";
+  /** Draft attribution key recorded on any model call made for this draft. */
+  jobId?: string;
 }
 
 const DEFAULT_ACCEPTANCE =
   "Small verified changes; high-risk changes stay pending approval.";
 
 export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
+  const result = await composeJobInner(input);
+  return input.cost ? { ...result, jobId: input.cost.jobId } : result;
+}
+
+async function composeJobInner(input: ComposeInput): Promise<ComposeResult> {
   const intent = input.intent.trim();
   if (!intent) {
     throw new JobError("intent_required", "a one-line intent is required", 400);
@@ -142,6 +155,7 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
     const draft = await composePackDraft(intent, {
       templateId: input.templateId,
       env: input.env ?? process.env,
+      ...(input.cost ? { cost: input.cost } : {}),
     });
     return { kind: "pack", ...draft };
   }
@@ -151,6 +165,7 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
       intent,
       input.sourceCandidates ?? [],
       input.env ?? process.env,
+      input.cost,
     );
   }
   const packDir = resolvePackDir(input.repoRoot, input.packDir);
@@ -192,6 +207,7 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
         current: loaded.autopilot ?? null,
       },
       input.env ?? process.env,
+      input.cost,
     );
   }
   if (input.kind === "evolutionCycle") {
@@ -207,6 +223,7 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
         })),
       },
       input.env ?? process.env,
+      input.cost,
     );
   }
   if (input.kind === "agent") {
@@ -245,6 +262,7 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
         isManager,
       },
       env,
+      input.cost,
     );
   }
   if (input.kind === "workflow") {
@@ -272,10 +290,11 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
         current: parseWorkflowDraftStages(input.currentStages),
       },
       env,
+      input.cost,
     );
   }
   if (input.kind === "packRun") {
-    return composePackRun(intent, facts, input.env ?? process.env);
+    return composePackRun(intent, facts, input.env ?? process.env, input.cost);
   }
   if (input.kind === "approvalPolicy") {
     const policyWorkflows = loaded.workflows.map((workflow, index) => ({
@@ -292,9 +311,10 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
       intent,
       { pack: loaded.pack.metadata.name, workflows: policyWorkflows },
       input.env ?? process.env,
+      input.cost,
     );
   }
-  return composeMission(intent, facts, input.env ?? process.env);
+  return composeMission(intent, facts, input.env ?? process.env, input.cost);
 }
 
 interface PackFacts {
@@ -312,6 +332,7 @@ async function composeMission(
   intent: string,
   facts: PackFacts,
   env: Record<string, string | undefined>,
+  cost?: JobCostAttribution,
 ): Promise<ComposeResult> {
   const allowCombined = facts.roleRules.allowCombined;
   const fallback = defaultMission(facts);
@@ -328,7 +349,11 @@ async function composeMission(
   let model: ComposeResult["model"] = "heuristic";
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:mission",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `You assign a mission to a private agent team.
@@ -371,6 +396,7 @@ async function composePackRun(
   intent: string,
   facts: PackFacts,
   env: Record<string, string | undefined>,
+  cost?: JobCostAttribution,
 ): Promise<ComposeResult> {
   const fallback: PackRunValues = {
     workflow: facts.workflows[0]?.id ?? "",
@@ -382,7 +408,11 @@ async function composePackRun(
   const warnings: string[] = [];
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:packRun",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `Choose a workflow for a pack trial run.
@@ -471,6 +501,7 @@ async function composeAutopilot(
   intent: string,
   facts: AutopilotFacts,
   env: Record<string, string | undefined>,
+  cost?: JobCostAttribution,
 ): Promise<ComposeResult> {
   const fallback = defaultAutopilot(facts);
   const warnings: string[] = [];
@@ -485,7 +516,11 @@ async function composeAutopilot(
   let model: ComposeResult["model"] = "heuristic";
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:autopilot",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `You schedule an autonomous agent team.
@@ -639,6 +674,7 @@ async function composeEvolutionCycle(
   intent: string,
   facts: EvolutionFacts,
   env: Record<string, string | undefined>,
+  cost?: JobCostAttribution,
 ): Promise<ComposeResult> {
   const employees = facts.agents.filter((agent) => agent.role !== "manager");
   const pool = employees.length > 0 ? employees : facts.agents;
@@ -655,7 +691,11 @@ async function composeEvolutionCycle(
   let model: ComposeResult["model"] = "heuristic";
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:evolutionCycle",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `You propose one evolution cycle for a private agent team.
@@ -743,6 +783,7 @@ async function composeAgent(
   intent: string,
   facts: AgentDraftFacts,
   env: Record<string, string | undefined>,
+  cost?: JobCostAttribution,
 ): Promise<ComposeResult> {
   const warnings: string[] = [];
   const fallback = defaultAgentDraft(intent, facts, warnings);
@@ -753,7 +794,11 @@ async function composeAgent(
   let model: ComposeResult["model"] = "heuristic";
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:agent",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `You draft ONE teammate for a private agent team.
@@ -1066,6 +1111,7 @@ async function composeWorkflow(
   intent: string,
   facts: WorkflowDraftFacts,
   env: Record<string, string | undefined>,
+  cost?: JobCostAttribution,
 ): Promise<ComposeResult> {
   const warnings: string[] = [];
   const fallback = defaultWorkflowDraft(intent, facts, warnings);
@@ -1076,7 +1122,11 @@ async function composeWorkflow(
   let model: ComposeResult["model"] = "heuristic";
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:workflow",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `You draft a multi-stage workflow graph for a private agent team.
@@ -1446,6 +1496,7 @@ async function composeApprovalPolicy(
   intent: string,
   facts: PolicyFacts,
   env: Record<string, string | undefined>,
+  cost?: JobCostAttribution,
 ): Promise<ComposeResult> {
   const fallback = defaultPolicy(facts);
   const warnings: string[] = [];
@@ -1455,7 +1506,11 @@ async function composeApprovalPolicy(
   let model: ComposeResult["model"] = "heuristic";
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:approvalPolicy",
+    });
     const response = await gateway.complete({
       model: "deepseek-flash",
       instructions: `You design human approval gates for a private agent team.

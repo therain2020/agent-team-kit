@@ -26,7 +26,15 @@ export interface PriceTableSnapshot {
  */
 export interface CostRecordInput {
   workspaceId: string;
+  /** Real run id, or a namespaced `kind:id` key for non-run calls. */
   runId: string;
+  /** `run` (default), `job`, `evolution` or `manager`. */
+  scopeKind?: string;
+  /** Id of the aggregate object the call belongs to. */
+  scopeId?: string | null;
+  jobId?: string | null;
+  changeId?: string | null;
+  managerSessionId?: string | null;
   stageId?: string | null;
   agentId?: string | null;
   /** `model`, `tool:<name>`, `coder`. */
@@ -54,6 +62,11 @@ export interface CostRecord {
   callId: string;
   workspaceId: string;
   runId: string;
+  scopeKind: string;
+  scopeId: string | null;
+  jobId: string | null;
+  changeId: string | null;
+  managerSessionId: string | null;
   stageId: string | null;
   agentId: string | null;
   source: string;
@@ -109,6 +122,28 @@ export interface ArtifactCostReport {
   artifactCount: number;
   /** Mean cost per produced artifact version in the window. */
   averageUnitCostCnyMicro: number;
+}
+
+export interface ScopeCostRow {
+  scopeKind: string;
+  scopeId: string | null;
+  costCnyMicro: number;
+  calls: number;
+  trackedCalls: number;
+  untrackedCalls: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+export interface ScopeCostQuery {
+  workspaceId: string;
+  since: Date | string;
+  until: Date | string;
+  /** Restrict to one scope kind, e.g. `job`. */
+  scopeKind?: string;
+  /** Ops view: omit run-scoped calls to show non-run cost sources only. */
+  excludeRun?: boolean;
+  limit?: number;
 }
 
 export interface CostAnomaly {
@@ -180,6 +215,11 @@ interface CostRecordDbRow {
   call_id: string;
   workspace_id: string;
   run_id: string;
+  scope_kind: string | null;
+  scope_id: string | null;
+  job_id: string | null;
+  change_id: string | null;
+  manager_session_id: string | null;
   stage_id: string | null;
   agent_id: string | null;
   source: string;
@@ -240,14 +280,22 @@ export class CostLedger {
     const ts = toIso(input.ts ?? new Date());
     const recordId = costRecordId(input.workspaceId, input.callId);
     const dayKey = ts.slice(0, 10);
+    const scopeKind = input.scopeKind ?? "run";
+    // Run-scoped rows keep scope_id in sync with the run id; older rows were
+    // backfilled the same way, so scope filters stay complete.
+    const scopeId =
+      input.scopeId ?? (scopeKind === "run" ? input.runId : null);
     await this.store.sql`
       INSERT INTO cost_records (
-        record_id, call_id, workspace_id, run_id, stage_id, agent_id, source,
+        record_id, call_id, workspace_id, run_id, scope_kind, scope_id,
+        job_id, change_id, manager_session_id, stage_id, agent_id, source,
         artifact_id, model_id, provider, tokens_in, tokens_out,
         unit_price_in_micro, unit_price_out_micro, price_version, currency,
         cost_cny_micro, tracked, untracked_reason, day_key, ts, created_at
       ) VALUES (
         ${recordId}, ${input.callId}, ${input.workspaceId}, ${input.runId},
+        ${scopeKind}, ${scopeId}, ${input.jobId ?? null},
+        ${input.changeId ?? null}, ${input.managerSessionId ?? null},
         ${input.stageId ?? null}, ${input.agentId ?? null}, ${input.source},
         ${input.artifactId ?? null}, ${input.modelId}, ${input.provider},
         ${tokensIn}, ${tokensOut}, ${Math.max(0, Math.round(input.unitPriceInMicro))},
@@ -336,6 +384,82 @@ export class CostLedger {
       `;
     }
     return rows.map(fromCostRow);
+  }
+
+  /** Every record attributed to one aggregate object, newest first. */
+  async listByScope(query: {
+    workspaceId: string;
+    scopeKind: string;
+    scopeId: string;
+    since?: Date | string;
+    until?: Date | string;
+    limit?: number;
+  }): Promise<CostRecord[]> {
+    const limit = Math.max(1, Math.min(query.limit ?? 200, 2000));
+    const since = toIso(query.since ?? new Date(0));
+    const until = toIso(query.until ?? new Date("9999-12-31T23:59:59.999Z"));
+    const rows = await this.store.sql<CostRecordDbRow[]>`
+      SELECT * FROM cost_records
+      WHERE workspace_id = ${query.workspaceId}
+        AND scope_kind = ${query.scopeKind}
+        AND scope_id = ${query.scopeId}
+        AND ts >= ${since} AND ts < ${until}
+      ORDER BY ts DESC LIMIT ${limit}
+    `;
+    return rows.map(fromCostRow);
+  }
+
+  /**
+   * Spend grouped by the aggregate a call belongs to. `excludeRun` powers the
+   * ops view's non-run cost sources (compose drafts, evolution cycles and
+   * manager replies), which never appear under a run.
+   */
+  async scopeCost(query: ScopeCostQuery): Promise<ScopeCostRow[]> {
+    const sinceDay = toIso(query.since).slice(0, 10);
+    const untilDay = toIso(query.until).slice(0, 10);
+    const limit = Math.max(1, Math.min(query.limit ?? 50, 500));
+    const scopeKind = query.scopeKind?.trim() || null;
+    const rows = await this.store.sql<
+      Array<{
+        scope_kind: string;
+        scope_id: string | null;
+        cost_cny_micro: number | string;
+        calls: number | string;
+        tracked_calls: number | string;
+        untracked_calls: number | string;
+        tokens_in: number | string;
+        tokens_out: number | string;
+      }>
+    >`
+      SELECT
+        scope_kind,
+        scope_id,
+        SUM(CASE WHEN tracked THEN cost_cny_micro ELSE 0 END) AS cost_cny_micro,
+        COUNT(*) AS calls,
+        SUM(CASE WHEN tracked THEN 1 ELSE 0 END) AS tracked_calls,
+        SUM(CASE WHEN tracked THEN 0 ELSE 1 END) AS untracked_calls,
+        SUM(tokens_in) AS tokens_in,
+        SUM(tokens_out) AS tokens_out
+      FROM cost_records
+      WHERE workspace_id = ${query.workspaceId}
+        AND day_key >= ${sinceDay}
+        AND day_key <= ${untilDay}
+        AND (CAST(${scopeKind} AS TEXT) IS NULL OR scope_kind = ${scopeKind})
+        AND (${query.excludeRun === true ? 1 : 0} = 0 OR scope_kind <> 'run')
+      GROUP BY scope_kind, scope_id
+      ORDER BY cost_cny_micro DESC
+      LIMIT ${limit}
+    `;
+    return rows.map((row) => ({
+      scopeKind: row.scope_kind,
+      scopeId: row.scope_id,
+      costCnyMicro: Number(row.cost_cny_micro),
+      calls: Number(row.calls),
+      trackedCalls: Number(row.tracked_calls),
+      untrackedCalls: Number(row.untracked_calls),
+      tokensIn: Number(row.tokens_in),
+      tokensOut: Number(row.tokens_out),
+    }));
   }
 
   /** Daily spend in UTC days, split into tracked spend and untracked calls. */
@@ -547,8 +671,24 @@ export class CostLedger {
     return {
       version: row.version,
       effectiveAt: toIso(row.effective_at),
-      entries: JSON.parse(row.entries) as PriceTableSnapshot["entries"],
+      entries: parsePriceEntries(row.entries),
     };
+  }
+
+  /** Every registered price version, oldest effective date first. */
+  async listPriceTables(): Promise<PriceTableSnapshot[]> {
+    const rows = await this.store.sql<
+      Array<{ version: string; effective_at: string; entries: string }>
+    >`
+      SELECT version, effective_at, entries
+      FROM price_tables
+      ORDER BY effective_at ASC, version ASC
+    `;
+    return rows.map((row) => ({
+      version: row.version,
+      effectiveAt: toIso(row.effective_at),
+      entries: parsePriceEntries(row.entries),
+    }));
   }
 
   /** Import a provider statement; idempotent on its identity tuple. */
@@ -745,12 +885,25 @@ function billIdFor(input: ProviderBillInput): string {
   return `bil_${digest}`;
 }
 
+function parsePriceEntries(value: unknown): PriceTableSnapshot["entries"] {
+  // Postgres returns JSONB already parsed; SQLite returns the JSON text.
+  if (typeof value === "string") {
+    return JSON.parse(value) as PriceTableSnapshot["entries"];
+  }
+  return value as PriceTableSnapshot["entries"];
+}
+
 function fromCostRow(row: CostRecordDbRow): CostRecord {
   return {
     recordId: row.record_id,
     callId: row.call_id,
     workspaceId: row.workspace_id,
     runId: row.run_id,
+    scopeKind: row.scope_kind ?? "run",
+    scopeId: row.scope_id,
+    jobId: row.job_id,
+    changeId: row.change_id,
+    managerSessionId: row.manager_session_id,
     stageId: row.stage_id,
     agentId: row.agent_id,
     source: row.source,

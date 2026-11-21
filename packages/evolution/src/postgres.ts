@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { type EvolutionBudgetLedger, newId } from "@kit/core";
+import type { CostLedgerSink } from "@kit/model";
 import { type SqlClient, type initStore, withStoreLock } from "@kit/store";
 import {
   type CanaryState,
@@ -143,6 +144,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
   readonly kind: "postgres" | "sqlite";
   readonly workspaceId: string;
   readonly budget: EvolutionBudgetLedger;
+  readonly costSink: CostLedgerSink;
   private readonly variantsRoot: string;
   private readonly archivePath: string;
   private readonly cyclesPath: string;
@@ -156,6 +158,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
     this.kind = store.driver;
     this.workspaceId = options.workspaceId ?? "default";
     this.budget = store.budgetService;
+    this.costSink = store.costLedger;
     this.variantsRoot = path.resolve(options.variantsRoot ?? "variants");
     this.archivePath = path.resolve(
       options.archivePath ?? path.join(this.variantsRoot, "archive.jsonl"),

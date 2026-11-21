@@ -1,7 +1,12 @@
 import { appendActivity } from "@kit/activity";
 import { newId } from "@kit/core";
 import { buildManagerBrief } from "@kit/manager";
-import { calculateCostCny } from "@kit/model";
+import {
+  calculateCostCny,
+  computeCostMicro,
+  loadPriceTable,
+  resolveModelPrice,
+} from "@kit/model";
 import type { UIMessage } from "ai";
 import { recordManagerUsage } from "./manager-budget";
 import { loadArtifactContent, loadRunDetail } from "./runs";
@@ -154,6 +159,8 @@ export async function publishManagerExchange(input: {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Manager session being charged; defaults to the run id. */
+  managerSessionId?: string;
   store?: Store;
 }): Promise<{ artifactId: string; costCny: number }> {
   const store = input.store ?? (await getStore());
@@ -219,7 +226,56 @@ export async function publishManagerExchange(input: {
     store,
   });
 
+  // The chat reply also earns a per-call ledger record; without it, manager
+  // spend only exists on the artifact and session totals (60 §3.3).
+  await recordManagerReplyCost(store, input);
+
   return { artifactId: published.artifact.artifactId, costCny };
+}
+
+async function recordManagerReplyCost(
+  store: Store,
+  input: {
+    runId: string;
+    workspaceId: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    managerSessionId?: string;
+  },
+): Promise<void> {
+  try {
+    const now = new Date();
+    const price = resolveModelPrice(loadPriceTable(), input.model, now);
+    const sessionId = input.managerSessionId ?? input.runId;
+    await store.costLedger.record({
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      scopeKind: "manager",
+      scopeId: sessionId,
+      managerSessionId: sessionId,
+      source: "manager",
+      modelId: input.model,
+      provider: price.provider,
+      tokensIn: input.inputTokens,
+      tokensOut: input.outputTokens,
+      unitPriceInMicro: price.inputPer1kMicro,
+      unitPriceOutMicro: price.outputPer1kMicro,
+      priceVersion: price.priceVersion,
+      costCnyMicro: computeCostMicro(
+        price,
+        input.inputTokens,
+        input.outputTokens,
+      ),
+      tracked: price.tracked,
+      untrackedReason: price.untrackedReason,
+      callId: `manager:${sessionId}:${newId("call")}`,
+      ts: now,
+    });
+  } catch (error) {
+    // Ledger failures must never break a chat that already answered.
+    console.error("failed to record manager reply cost", error);
+  }
 }
 
 export function extractCitationIds(text: string): string[] {

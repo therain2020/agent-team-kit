@@ -1,6 +1,7 @@
 import { type AgentRole, agentRoleSchema } from "@kit/core";
-import { createModelGateway, loadModelConfig } from "@kit/model";
+import { loadModelConfig } from "@kit/model";
 import { type TemplateSummary, listTemplates } from "@kit/pack";
+import { type JobCostAttribution, composeGateway } from "./cost-attribution";
 import { JobError } from "./types";
 
 /**
@@ -54,6 +55,8 @@ export interface PackComposeOptions {
   /** Template pre-selected by the user; empty/omitted lets the AI choose. */
   templateId?: string;
   env: Record<string, string | undefined>;
+  /** Charge the draft's model call to the job draft (60 §3.3). */
+  cost?: JobCostAttribution;
 }
 
 export interface PackComposeFacts {
@@ -107,7 +110,11 @@ export async function composePackDraft(
   const config = loadModelConfig(env);
   if (config.mode === "live") {
     try {
-      const gateway = createModelGateway(config);
+      const gateway = composeGateway({
+        env,
+        attribution: options.cost,
+        source: "compose:pack",
+      });
       const response = await gateway.complete({
         model: "deepseek-flash",
         instructions: `You draft a Team Pack skeleton from a one-line intent.

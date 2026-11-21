@@ -744,6 +744,11 @@ CREATE TABLE IF NOT EXISTS cost_records (
   call_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
   run_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL DEFAULT 'run',
+  scope_id TEXT,
+  job_id TEXT,
+  change_id TEXT,
+  manager_session_id TEXT,
   stage_id TEXT,
   agent_id TEXT,
   source TEXT NOT NULL,
@@ -770,6 +775,20 @@ CREATE INDEX IF NOT EXISTS idx_cost_records_run
   ON cost_records(workspace_id, run_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_cost_records_artifact
   ON cost_records(workspace_id, artifact_id);
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS scope_kind TEXT NOT NULL DEFAULT 'run';
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS scope_id TEXT;
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS job_id TEXT;
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS change_id TEXT;
+ALTER TABLE cost_records ADD COLUMN IF NOT EXISTS manager_session_id TEXT;
+UPDATE cost_records SET scope_id = run_id WHERE scope_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cost_records_scope
+  ON cost_records(workspace_id, scope_kind, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_cost_records_job
+  ON cost_records(workspace_id, job_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_change
+  ON cost_records(workspace_id, change_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_manager_session
+  ON cost_records(workspace_id, manager_session_id);
 
 CREATE TABLE IF NOT EXISTS price_tables (
   version TEXT PRIMARY KEY,
@@ -1662,6 +1681,11 @@ CREATE TABLE IF NOT EXISTS cost_records (
   call_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL,
   run_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL DEFAULT 'run',
+  scope_id TEXT,
+  job_id TEXT,
+  change_id TEXT,
+  manager_session_id TEXT,
   stage_id TEXT,
   agent_id TEXT,
   source TEXT NOT NULL,
@@ -1688,6 +1712,20 @@ CREATE INDEX IF NOT EXISTS idx_cost_records_run
   ON cost_records(workspace_id, run_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_cost_records_artifact
   ON cost_records(workspace_id, artifact_id);
+ALTER TABLE cost_records ADD COLUMN scope_kind TEXT NOT NULL DEFAULT 'run';
+ALTER TABLE cost_records ADD COLUMN scope_id TEXT;
+ALTER TABLE cost_records ADD COLUMN job_id TEXT;
+ALTER TABLE cost_records ADD COLUMN change_id TEXT;
+ALTER TABLE cost_records ADD COLUMN manager_session_id TEXT;
+UPDATE cost_records SET scope_id = run_id WHERE scope_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_cost_records_scope
+  ON cost_records(workspace_id, scope_kind, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_cost_records_job
+  ON cost_records(workspace_id, job_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_change
+  ON cost_records(workspace_id, change_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_manager_session
+  ON cost_records(workspace_id, manager_session_id);
 
 CREATE TABLE IF NOT EXISTS price_tables (
   version TEXT PRIMARY KEY,

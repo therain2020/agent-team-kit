@@ -456,6 +456,11 @@ export const costRecords = pgTable(
     callId: text("call_id").notNull(),
     workspaceId: text("workspace_id").notNull(),
     runId: text("run_id").notNull(),
+    scopeKind: text("scope_kind").notNull().default("run"),
+    scopeId: text("scope_id"),
+    jobId: text("job_id"),
+    changeId: text("change_id"),
+    managerSessionId: text("manager_session_id"),
     stageId: text("stage_id"),
     agentId: text("agent_id"),
     source: text("source").notNull(),
@@ -489,6 +494,17 @@ export const costRecords = pgTable(
     index("idx_cost_records_day").on(table.workspaceId, table.dayKey),
     index("idx_cost_records_run").on(table.workspaceId, table.runId, table.ts),
     index("idx_cost_records_artifact").on(table.workspaceId, table.artifactId),
+    index("idx_cost_records_scope").on(
+      table.workspaceId,
+      table.scopeKind,
+      table.ts,
+    ),
+    index("idx_cost_records_job").on(table.workspaceId, table.jobId),
+    index("idx_cost_records_change").on(table.workspaceId, table.changeId),
+    index("idx_cost_records_manager_session").on(
+      table.workspaceId,
+      table.managerSessionId,
+    ),
   ],
 );
 
