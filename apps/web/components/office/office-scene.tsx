@@ -36,6 +36,7 @@ import type {
   OfficeSnapshotPayload,
 } from "@/lib/office";
 import { FACTORY_ROOM_HREF, resolveInitialAgent } from "@/lib/office-deeplink";
+import { officeRoomShortcut, stationAction } from "@/lib/office-keys";
 import {
   type LiveAgent,
   type LiveMission,
@@ -397,29 +398,12 @@ function OfficeSceneBody({
   // surfaces (mission dialog, stage drawer) keep the key to themselves.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (
-        missionOpen ||
-        stageTarget ||
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey
-      ) {
-        return;
-      }
-      const target = event.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
-      if (event.key.toLowerCase() === "f") {
+      const href = officeRoomShortcut(event, {
+        modalOpen: Boolean(missionOpen || stageTarget),
+      });
+      if (href) {
         event.preventDefault();
-        router.push(FACTORY_ROOM_HREF);
+        router.push(href);
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -914,37 +898,23 @@ function AgentPanel({
    * panel region and receives bubbled key events from its buttons and links.
    */
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (
-      event.defaultPrevented ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey
-    ) {
+    const action = stationAction(event, {
+      hasRun: runHref !== null,
+      hasApproval: approvalHref !== null,
+    });
+    if (!action) {
       return;
     }
-    const target = event.target as HTMLElement | null;
-    if (
-      target &&
-      (target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.tagName === "SELECT" ||
-        target.isContentEditable)
-    ) {
-      return;
-    }
-    const key = event.key.toLowerCase();
-    if (key === "m") {
-      event.preventDefault();
+    event.preventDefault();
+    if (action === "mission") {
       onStartMission(agent);
       return;
     }
-    if (key === "r" && runHref) {
-      event.preventDefault();
+    if (action === "run" && runHref) {
       router.push(runHref);
       return;
     }
-    if (key === "b" && approvalHref) {
-      event.preventDefault();
+    if (action === "approval" && approvalHref) {
       router.push(approvalHref);
     }
   }
