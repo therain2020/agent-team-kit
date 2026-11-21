@@ -7,137 +7,17 @@ import {
   runbookCoverage,
 } from "@kit/core";
 import { initStore } from "@kit/store";
+import { RUNBOOK_TEMPLATES as TEMPLATES } from "./runbook-templates";
 
 /**
  * Runbook coverage + drill records (61 §3.2, §5). Every declared degradation
  * mode needs an active runbook and at least one drill record. Dry-run by
  * default; `--execute --seed-runbooks` writes the default templates and
  * `--record --mode <id>` appends a drill record.
+ *
+ * Template bodies live in ./runbook-templates so other drills (degradation
+ * drills) seed the same runbooks instead of duplicating them.
  */
-interface RunbookTemplate {
-  trigger: string;
-  steps: { order: number; action: string; expected: string }[];
-  verification: { check: string; expected: string }[];
-}
-
-const TEMPLATES: Record<string, RunbookTemplate> = {
-  "model.provider": {
-    trigger: "model provider outage or circuit open",
-    steps: [
-      {
-        order: 1,
-        action: "Enable an allowed fallback model or pause the affected stage",
-        expected: "stage paused or serving a permitted fallback",
-      },
-      {
-        order: 2,
-        action: "Re-check the quality floor before any external output",
-        expected: "quality floor passes",
-      },
-      {
-        order: 3,
-        action: "Serve the verified LKG for external delivery",
-        expected: "delivery uses verified LKG",
-      },
-    ],
-    verification: [
-      { check: "quality floor", expected: "all external outputs pass" },
-    ],
-  },
-  event_bus: {
-    trigger: "event bus unavailable",
-    steps: [
-      {
-        order: 1,
-        action: "Enable the local persistent spool buffer",
-        expected: "buffer-only mode active",
-      },
-      {
-        order: 2,
-        action: "Stop accepting unbounded new tasks",
-        expected: "backlog bounded",
-      },
-      {
-        order: 3,
-        action: "On recovery replay by event_id and dedupe",
-        expected: "spool drained with no duplicates",
-      },
-    ],
-    verification: [
-      { check: "event_spool pending", expected: "0 after recovery" },
-    ],
-  },
-  artifact_store: {
-    trigger: "artifact store unavailable",
-    steps: [
-      {
-        order: 1,
-        action: "Stop publishing and suspend the run",
-        expected: "runs suspended",
-      },
-      {
-        order: 2,
-        action: "Stage outputs locally and checksum them",
-        expected: "staged files checksummed",
-      },
-      {
-        order: 3,
-        action: "On recovery re-write the Manifest",
-        expected: "Manifests re-written",
-      },
-    ],
-    verification: [
-      { check: "artifact integrity", expected: "hashes match Manifest" },
-    ],
-  },
-  source_api: {
-    trigger: "source ingestion interrupted",
-    steps: [
-      {
-        order: 1,
-        action: "Pause ingestion and keep the queue",
-        expected: "queue retained",
-      },
-      {
-        order: 2,
-        action: "Switch to a registered backup source",
-        expected: "backup source serving",
-      },
-      {
-        order: 3,
-        action: "Annotate the coverage gap in the report",
-        expected: "gap documented",
-      },
-    ],
-    verification: [
-      { check: "coverage gap", expected: "reported, no silent gap" },
-    ],
-  },
-  delivery: {
-    trigger: "quality floor not met on delivery",
-    steps: [
-      {
-        order: 1,
-        action: "Block external delivery",
-        expected: "no external output",
-      },
-      {
-        order: 2,
-        action: "Serve verified LKG if available",
-        expected: "LKG served or delivery stays blocked",
-      },
-      {
-        order: 3,
-        action: "Recheck quality before resuming delivery",
-        expected: "quality recheck passes",
-      },
-    ],
-    verification: [
-      { check: "external delivery", expected: "100% quality-floor checked" },
-    ],
-  },
-};
-
 const execute = process.argv.includes("--execute");
 const seed = process.argv.includes("--seed-runbooks");
 const record = process.argv.includes("--record");

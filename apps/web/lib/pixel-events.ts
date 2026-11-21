@@ -277,3 +277,55 @@ export function resolveMotionEnabled(
 ): boolean {
   return preference && !reduced;
 }
+
+/**
+ * Clock handed to every freezable floor primitive. With motion off — or the
+ * tab hidden — sprites, the belt and crates render at tick 0 instead of
+ * animating (97 §3.2).
+ */
+export function floorMotionTick(
+  tick: number,
+  enabled: boolean,
+  visible: boolean,
+): number {
+  return enabled && visible ? tick : 0;
+}
+
+/** CSS transition for a floor motion; reduced motion switches it off. */
+export function floorTransition(enabled: boolean, motion: string): string {
+  return enabled ? motion : "none";
+}
+
+/** The subset of a click event the door-wipe rule reads. */
+export interface RoomWipeClick {
+  defaultPrevented?: boolean;
+  button?: number;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
+  shiftKey?: boolean;
+  altKey?: boolean;
+}
+
+/**
+ * Whether a door click plays the 160ms room wipe before navigating (97 §3.5).
+ * Reduced motion falls through to the plain link, and modifier/middle clicks
+ * ("open in new tab") must never be swallowed by the animation.
+ */
+export function shouldPlayRoomWipe(
+  click: RoomWipeClick,
+  options: { motionEnabled: boolean; leaving: boolean },
+): boolean {
+  if (!options.motionEnabled || options.leaving || click.defaultPrevented) {
+    return false;
+  }
+  if (
+    (click.button ?? 0) !== 0 ||
+    click.metaKey ||
+    click.ctrlKey ||
+    click.shiftKey ||
+    click.altKey
+  ) {
+    return false;
+  }
+  return true;
+}
