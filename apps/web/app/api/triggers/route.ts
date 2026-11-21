@@ -68,6 +68,7 @@ export async function POST(request: Request) {
   let route: EventRoute | undefined;
 
   if (typeof body.triggerId === "string" && body.triggerId.length > 0) {
+    const requestedTriggerId = body.triggerId;
     const configured = plane.packs
       .flatMap((pack) =>
         pack.triggers.flatMap((item) => {
@@ -77,10 +78,10 @@ export async function POST(request: Request) {
           return matched ? [{ trigger: item, route: matched }] : [];
         }),
       )
-      .find((item) => item.trigger.triggerId === body.triggerId);
+      .find((item) => item.trigger.triggerId === requestedTriggerId);
     if (!configured) {
       return NextResponse.json(
-        { error: `unknown trigger: ${body.triggerId}` },
+        { error: `unknown trigger: ${requestedTriggerId}` },
         { status: 404 },
       );
     }
@@ -101,6 +102,7 @@ export async function POST(request: Request) {
       );
     }
     const triggerId = `manual:${actor}`;
+    const workflow = body.workflow;
     trigger = triggerSchema.parse({
       triggerId,
       kind: "manual",
@@ -113,7 +115,7 @@ export async function POST(request: Request) {
       triggerRef: triggerId,
       packDir,
       jobKind: "packRun",
-      workflow: body.workflow,
+      workflow,
       ...(typeof body.goal === "string" ? { goal: body.goal } : {}),
       runMode: body.runMode === "LIVE" ? "LIVE" : "DRY_RUN",
     });
