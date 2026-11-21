@@ -774,6 +774,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_reason TEXT,
   assignee TEXT,
   assigned_at TIMESTAMPTZ,
+  substrate TEXT,
+  change_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL
 );
@@ -784,6 +786,10 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assignee TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS substrate TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS change_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_approvals_change
+  ON approvals(change_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS cost_records (
   record_id TEXT PRIMARY KEY,
@@ -1850,6 +1856,8 @@ CREATE TABLE IF NOT EXISTS approvals (
   decision_reason TEXT,
   assignee TEXT,
   assigned_at TEXT,
+  substrate TEXT,
+  change_id TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
@@ -1860,6 +1868,10 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run
 
 ALTER TABLE approvals ADD COLUMN assignee TEXT;
 ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
+ALTER TABLE approvals ADD COLUMN substrate TEXT;
+ALTER TABLE approvals ADD COLUMN change_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_approvals_change
+  ON approvals(change_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS cost_records (
   record_id TEXT PRIMARY KEY,

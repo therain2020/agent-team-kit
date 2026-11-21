@@ -317,6 +317,28 @@ export class ChangeProposalService {
   }
 
   /**
+   * Links the approval that cleared a high-risk proposal. Idempotent and
+   * deliberately does not bump `version`: linking an approval is evidence, not
+   * a state transition, so a retried decision cannot invalidate a concurrent
+   * transition's CAS.
+   */
+  async setApprovalRef(
+    proposalId: string,
+    approvalRef: string,
+    at?: string,
+  ): Promise<ChangeProposal | null> {
+    const now = at ?? new Date().toISOString();
+    await this.store.sql`
+      UPDATE change_proposals
+      SET approval_ref = ${approvalRef},
+          updated_at = ${now}
+      WHERE proposal_id = ${proposalId}
+        AND (approval_ref IS NULL OR approval_ref = ${approvalRef})
+    `;
+    return await this.get(proposalId);
+  }
+
+  /**
    * Attaches (or replaces) the structured revert record and its display
    * pointer. Compare-and-set on `version`, so a concurrent transition loses
    * instead of overwriting the newer row. This is metadata only: it never

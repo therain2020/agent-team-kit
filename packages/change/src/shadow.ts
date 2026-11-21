@@ -99,8 +99,9 @@ export async function recordShadowIterationProposals(
       ...(input.checks ? { checks: input.checks } : {}),
       ...(input.at ? { at: input.at } : {}),
     };
+    const plan = adaptIterationChange(changeInput);
     try {
-      const proposal = await pipeline.record(adaptIterationChange(changeInput));
+      const proposal = await pipeline.record(plan);
       ids.push(proposal.id);
     } catch (error) {
       console.error(
@@ -109,8 +110,34 @@ export async function recordShadowIterationProposals(
         }`,
       );
     }
+    // High-risk proposals that cannot auto-promote still land in the shared
+    // approval inbox (85.3.5.5); the deterministic proposal id makes this
+    // idempotent even when the transition above was refused.
+    if (plan.proposal.risk === "high") {
+      await requestChangeApprovalSafely(store, plan.proposal.id);
+    }
   }
   return ids;
+}
+
+/**
+ * Queues an approval for a high-risk proposal. Best-effort like the rest of
+ * shadow recording: a decision inbox failure must never change the loop's
+ * result, and non-high proposals simply return null.
+ */
+async function requestChangeApprovalSafely(
+  store: Store,
+  changeId: string,
+): Promise<void> {
+  try {
+    await store.changeApprovals.request(changeId);
+  } catch (error) {
+    console.error(
+      `[change] approval request failed for ${changeId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 /**
@@ -132,6 +159,9 @@ export async function recordShadowEvolutionCycle(
     const proposal = await new ChangePipeline(store.changeProposals).record(
       plan,
     );
+    if (proposal.risk === "high") {
+      await requestChangeApprovalSafely(store, proposal.id);
+    }
     return proposal.id;
   } catch (error) {
     console.error(
