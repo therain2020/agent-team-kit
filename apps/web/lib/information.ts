@@ -92,10 +92,12 @@ export function parseSaveProfileBody(body: unknown): SaveProfileRequestBody {
     novelty: ratio(thresholdRecord.novelty, "thresholds.novelty"),
     urgency: ratio(thresholdRecord.urgency, "thresholds.urgency"),
   };
-  const updatedBy =
-    record.updatedBy === "ai" || record.updatedBy === "human"
-      ? record.updatedBy
-      : undefined;
+  const updatedBy: "human" | "ai" | undefined =
+    record.updatedBy === "ai"
+      ? "ai"
+      : record.updatedBy === "human"
+        ? "human"
+        : undefined;
   if (!updatedBy) {
     throw new Error("updatedBy must be human or ai");
   }
