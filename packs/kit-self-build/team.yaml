@@ -1,0 +1,77 @@
+apiVersion: agentteam/v1
+kind: TeamPack
+metadata:
+  name: kit-self-build
+  version: 1.0.0
+  description: Self-manufacture team for this repository's code and assets (98 I-7)
+  license: Apache-2.0
+  compatibility:
+    kit: ">=0.1 <2.0"
+
+manager:
+  agent: agents/manager.md
+  model: deepseek-pro
+  budget:
+    tokens: 40000
+    costCny: 8
+    wallClockSeconds: 900
+
+roles:
+  requireSeller: true
+  requireBuilder: true
+  allowCombined: false
+
+agents:
+  - id: manager
+    file: agents/manager.md
+    model: deepseek-pro
+    role: manager
+    tools: []
+    skills: []
+  - id: architect
+    file: agents/architect.md
+    model: deepseek-pro
+    role: specialist
+    tools: [repo_list, repo_read, repo_search, repo_diff, http_fetch]
+    skills: []
+  - id: frontend-designer
+    file: agents/frontend-designer.md
+    model: deepseek-pro
+    role: builder
+    tools:
+      [repo_list, repo_read, repo_search, repo_diff, workspace_write, workspace_diff, repo_build, repo_lint, repo_test, browser_inspect, http_fetch]
+    skills: []
+  - id: backend-designer
+    file: agents/backend-designer.md
+    model: deepseek-pro
+    role: builder
+    tools:
+      [repo_list, repo_read, repo_search, repo_diff, workspace_write, workspace_diff, repo_typecheck, repo_test, repo_lint, http_fetch]
+    skills: []
+  - id: critic
+    file: agents/critic.md
+    model: deepseek-pro
+    role: seller
+    tools: [repo_list, repo_read, repo_search, repo_diff, workspace_diff]
+    skills: []
+  - id: verifier
+    file: agents/verifier.md
+    model: deepseek-flash
+    role: specialist
+    tools:
+      [repo_typecheck, repo_test, repo_lint, repo_build, workspace_diff, security_scan_code, browser_inspect]
+    skills: []
+
+workspaces:
+  self:
+    agents: [architect, frontend-designer, backend-designer, critic, verifier]
+    delivery: local_file
+
+workflows:
+  - workflows/self-build.yaml
+
+policies:
+  - policies/autonomy.yaml
+
+evals:
+  rubrics: evals/self-build-rubrics.yaml
