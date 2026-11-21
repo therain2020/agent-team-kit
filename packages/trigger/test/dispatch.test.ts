@@ -16,6 +16,7 @@ import {
 
 const roots: string[] = [];
 const closers: Array<() => Promise<void>> = [];
+let jobSequence = 0;
 
 afterEach(async () => {
   for (const close of closers.splice(0)) {
@@ -77,13 +78,12 @@ function deps(
   trail: DispatchGate[],
   overrides: Partial<FireTriggerDeps> = {},
 ): FireTriggerDeps {
-  let counter = 0;
   const startJobFn = (async (_store: unknown, input: { kind: string }) => {
-    counter += 1;
+    jobSequence += 1;
     return {
-      jobId: `job-${counter}`,
+      jobId: `job-${jobSequence}`,
       kind: input.kind,
-      workflowId: `pack-job-${counter}`,
+      workflowId: `pack-job-${jobSequence}`,
       engine: "local",
       runMode: "DRY_RUN",
       pack: "tech-radar",
