@@ -317,6 +317,9 @@ function normalizeMeta(
   const retiredAt = asString(record.retiredAt);
   const retiredBy = asString(record.retiredBy);
   const retirement = normalizeRetirement(record.retirement);
+  const permissions = normalizePermissions(record.permissions);
+  const files = normalizeFiles(record.files);
+  const manifest = normalizeManifest(record.manifest);
   return {
     ...fallback,
     kind: record.kind === "source" ? "source" : fallback.kind,
@@ -340,7 +343,69 @@ function normalizeMeta(
     ...(retiredAt ? { retiredAt } : {}),
     ...(retiredBy ? { retiredBy } : {}),
     ...(retirement ? { retirement } : {}),
+    ...(permissions ? { permissions } : {}),
+    ...(files ? { files } : {}),
+    ...(manifest ? { manifest } : {}),
   };
+}
+
+function normalizePermissions(
+  value: unknown,
+): SourceMeta["permissions"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const network = record.network;
+  const code = record.code;
+  const filesystem =
+    record.filesystem === "none" ||
+    record.filesystem === "readonly" ||
+    record.filesystem === "workspace"
+      ? record.filesystem
+      : undefined;
+  if (
+    typeof network !== "boolean" ||
+    typeof code !== "boolean" ||
+    !filesystem
+  ) {
+    return undefined;
+  }
+  return { network, filesystem, code };
+}
+
+function normalizeFiles(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const files: Record<string, string> = {};
+  for (const [file, hash] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof hash === "string") {
+      files[file] = hash;
+    }
+  }
+  return Object.keys(files).length > 0 ? files : undefined;
+}
+
+function normalizeManifest(value: unknown): SourceMeta["manifest"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const id = asString(record.id);
+  const name = asString(record.name);
+  const version = asString(record.version);
+  const description = record.description;
+  if (
+    !id ||
+    !name ||
+    !version ||
+    record.kind !== "source" ||
+    typeof description !== "string"
+  ) {
+    return undefined;
+  }
+  return { id, name, version, kind: "source", description };
 }
 
 function normalizeBudget(value: unknown): SourceBudget | undefined {
