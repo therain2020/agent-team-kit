@@ -33,6 +33,10 @@ export default defineConfig({
         find: /^@kit\/store$/,
         replacement: path.join(root, "packages/store/src/index.ts"),
       },
+      {
+        find: /^@kit\/trigger$/,
+        replacement: path.join(root, "packages/trigger/src/index.ts"),
+      },
     ],
   },
   test: {
