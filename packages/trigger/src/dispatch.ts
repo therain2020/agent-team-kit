@@ -10,6 +10,7 @@ import {
 } from "@kit/core";
 import {
   type JobOriginKind,
+  type StartJobInput,
   dedupeRunId,
   startJob as defaultStartJob,
 } from "@kit/job";
@@ -77,14 +78,14 @@ export async function fireTrigger(
     gates.push(gate);
     deps.onGate?.(gate);
   };
-  const base = {
+  const base: Omit<TriggerResult, "dispatch" | "status" | "gate" | "reason"> = {
     triggerId: input.triggerId,
     triggerRunId: null,
     jobId: null,
     kind: null,
     estimateCny: 0,
     gates,
-  } as const;
+  };
 
   const resolved = await resolveRoute(input, deps);
   if ("error" in resolved) {
@@ -387,19 +388,18 @@ async function resolveRoute(
     : null;
   if (!fromRegistry) {
     // No gate ran yet; report an explicit failure rather than a silent skip.
-    return {
-      error: {
-        dispatch: "FAILED",
-        status: "failed",
-        triggerId: input.triggerId,
-        triggerRunId: null,
-        jobId: null,
-        kind: null,
-        gate: null,
-        reason: `unknown trigger: ${input.triggerId}`,
-        estimateCny: 0,
-      },
+    const error: Omit<TriggerResult, "gates"> = {
+      dispatch: "FAILED",
+      status: "failed",
+      triggerId: input.triggerId,
+      triggerRunId: null,
+      jobId: null,
+      kind: null,
+      gate: null,
+      reason: `unknown trigger: ${input.triggerId}`,
+      estimateCny: 0,
     };
+    return { error };
   }
   return fromRegistry;
 }
@@ -660,7 +660,8 @@ async function admitRoute(
     : { cny: estimateCny, tokens: 0 };
 
   const admit: (input: AdmitRunInput) => Promise<AdmitRunResult> =
-    deps.admitRunFn ?? ((input) => store.budgetService.admitRun(input));
+    deps.admitRunFn ??
+    ((input: AdmitRunInput) => store.budgetService.admitRun(input));
   return admit({
     workspaceId,
     runId,
@@ -679,7 +680,7 @@ function buildStartJobInput(
   triggerRunId: string,
   repoRoot: string,
   workspaceId: string,
-) {
+): StartJobInput {
   const origin = {
     kind: originKind,
     triggerId: trigger.triggerId,
