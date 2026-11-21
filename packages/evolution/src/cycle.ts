@@ -65,6 +65,7 @@ import {
   appendGovernanceEvent,
   defaultGovernancePath,
 } from "./governance";
+import type { HiddenEvalsMarker, HiddenEvalsResolution } from "./hidden";
 import {
   type OutcomeObservation,
   type OutcomeSource,
@@ -190,6 +191,12 @@ export interface EvolutionCycleRecord {
   changeId?: string;
   /** Structured promotion record; the rollback source for `changeId`. */
   promote?: EvolutionPromotionRecord;
+  /**
+   * Hidden-set coverage marker (70 §5). Present when the caller consulted the
+   * shared resolver; `available: false` carries the reason so a cycle that ran
+   * on the visible rubric alone is auditable.
+   */
+  hidden?: HiddenEvalsMarker;
 }
 
 export interface CycleOptions {
@@ -232,6 +239,14 @@ export interface CycleOptions {
   workspaceId?: string;
   cyclesRoot?: string;
   hiddenEvalsDir?: string;
+  /**
+   * Resolution from the shared `resolveHiddenEvalsDir` helper. Recorded as the
+   * `hidden` marker; when unavailable and `requireHiddenEvals` is set the
+   * cycle skips instead of silently scoring against the visible rubric (70 §5).
+   */
+  hiddenEvals?: HiddenEvalsResolution;
+  /** Refuse to score without hidden coverage (web and autopilot triggers). */
+  requireHiddenEvals?: boolean;
   freezeSnapshot?: boolean;
   allowEvaluatorChange?: boolean;
   evaluatorApprovalRef?: string;
@@ -300,6 +315,44 @@ export async function runEvolutionCycle(
       : await loadEvolutionCycles(cyclesPath, limit);
   const ledger = options.budget ?? repo?.budget;
   const workspaceId = options.workspaceId ?? repo?.workspaceId ?? "default";
+  // Hidden-set resolution (70 §5). Explicit paths keep the historical behavior
+  // and synthesize an `available` resolution so every record stays auditable.
+  const hiddenResolution: HiddenEvalsResolution | undefined =
+    options.hiddenEvals ??
+    (options.hiddenEvalsDir
+      ? {
+          status: "available",
+          dir: path.resolve(options.hiddenEvalsDir),
+          root: path.dirname(path.resolve(options.hiddenEvalsDir)),
+          reason: "",
+        }
+      : undefined);
+  // A resolution is authoritative; `hiddenEvalsDir` alone (older callers)
+  // still means "an explicit directory was supplied".
+  const resolvedHiddenDir =
+    hiddenResolution !== undefined
+      ? hiddenResolution.status === "available"
+        ? hiddenResolution.dir
+        : undefined
+      : options.hiddenEvalsDir
+        ? path.resolve(options.hiddenEvalsDir)
+        : undefined;
+  const hiddenRequired = options.requireHiddenEvals === true;
+  const hiddenMarker: HiddenEvalsMarker | undefined =
+    hiddenResolution || hiddenRequired
+      ? {
+          available: resolvedHiddenDir !== undefined,
+          required: hiddenRequired,
+          status: hiddenResolution?.status ?? "unresolved",
+          ...(hiddenResolution ? { dir: hiddenResolution.dir } : {}),
+          ...(hiddenResolution?.reason
+            ? { reason: hiddenResolution.reason }
+            : {}),
+          ...(!hiddenResolution && hiddenRequired
+            ? { reason: "hidden eval set was not resolved" }
+            : {}),
+        }
+      : undefined;
   const costSink = options.cost?.sink ?? repo?.costSink;
   const costAttribution: EvolutionCallAttribution | undefined = costSink
     ? {
@@ -563,6 +616,7 @@ export async function runEvolutionCycle(
     createdAt,
     budgetStatus,
     budgetRefs: [],
+    ...(hiddenMarker ? { hidden: hiddenMarker } : {}),
   };
 
   try {
@@ -725,6 +779,20 @@ export async function runEvolutionCycle(
       });
     }
 
+    // Required hidden coverage (web, autopilot): a missing or incomplete suite
+    // skips the cycle with the reason recorded, never a silent downgrade to
+    // the visible rubric (70 §5). No snapshot is written for a skipped cycle.
+    if (hiddenRequired && resolvedHiddenDir === undefined) {
+      const reason =
+        hiddenResolution?.reason ?? "hidden eval set was not resolved";
+      return await persistCycle({
+        ...baseRecord,
+        agentId,
+        decision: "skipped",
+        rationale: `hidden eval set unavailable: ${reason}; refusing to score against the visible rubric only (70 §5)`,
+      });
+    }
+
     const cyclesRoot = options.cyclesRoot ?? defaultCyclesRoot();
     const evaluatorHash = await evaluatorHashForPack(loaded.dir);
     const previous = await findPreviousEvalSnapshot({
@@ -747,8 +815,13 @@ export async function runEvolutionCycle(
       cycleId,
       packDir: loaded.dir,
       cyclesRoot,
-      ...(options.hiddenEvalsDir
-        ? { hiddenEvalsDir: options.hiddenEvalsDir }
+      ...(resolvedHiddenDir ? { hiddenEvalsDir: resolvedHiddenDir } : {}),
+      ...(hiddenMarker && !hiddenMarker.available
+        ? {
+            hiddenUnavailable: {
+              reason: hiddenMarker.reason ?? "hidden eval set unavailable",
+            },
+          }
         : {}),
       ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
       ...(options.freezeSnapshot === undefined

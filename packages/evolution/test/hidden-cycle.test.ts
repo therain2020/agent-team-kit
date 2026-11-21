@@ -12,6 +12,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type EvolutionCycleRecord, runEvolutionCycle } from "../src/cycle";
+import {
+  type HiddenEvalsResolution,
+  resolveHiddenEvalsDir,
+} from "../src/hidden";
 
 const SENTINEL = "HIDDEN_SENTINEL_9f3a";
 const roots: string[] = [];
@@ -62,6 +66,33 @@ async function runCycle(
     iterationsPath: path.join(fixture.root, "iterations.jsonl"),
     workspaceId: "ws-hidden",
     ...(hiddenEvalsDir ? { hiddenEvalsDir } : {}),
+    variantsRoot,
+    archivePath: path.join(variantsRoot, "archive.jsonl"),
+    cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
+    statePath: path.join(variantsRoot, "state.json"),
+  });
+}
+
+async function runResolvedCycle(
+  fixture: Fixture,
+  name: string,
+  hidden: HiddenEvalsResolution,
+  required: boolean,
+): Promise<EvolutionCycleRecord> {
+  const variantsRoot = path.join(fixture.root, name);
+  return await runEvolutionCycle({
+    packDir: fixture.packDir,
+    agentId: "writer",
+    inputFile: fixture.inputFile,
+    stub: true,
+    force: true,
+    autoApply: false,
+    cyclesRoot: fixture.cyclesRoot,
+    iterationsPath: path.join(fixture.root, "iterations.jsonl"),
+    workspaceId: "ws-hidden",
+    hiddenEvals: hidden,
+    ...(required ? { requireHiddenEvals: true } : {}),
+    ...(hidden.status === "available" ? { hiddenEvalsDir: hidden.dir } : {}),
     variantsRoot,
     archivePath: path.join(variantsRoot, "archive.jsonl"),
     cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
@@ -242,5 +273,61 @@ cases:
     );
     expect(archive).toContain("hidden 1/1 passed");
     expect(archive).not.toContain("hidden 2/2");
+  }, 60_000);
+
+  it("skips explicitly when a required hidden set is missing", async () => {
+    const fixture = await makeFixture();
+    const hidden = resolveHiddenEvalsDir({
+      workspaceId: "ws-hidden",
+      root: path.join(fixture.root, "absent-hidden-root"),
+    });
+
+    const record = await runResolvedCycle(fixture, "variants", hidden, true);
+
+    expect(record.decision).toBe("skipped");
+    expect(record.rationale).toContain("hidden eval set unavailable");
+    expect(record.rationale).toContain("refusing to score");
+    expect(record.hidden).toMatchObject({
+      available: false,
+      required: true,
+      status: "missing",
+    });
+    expect(record.evalSnapshotPath).toBeUndefined();
+    expect(
+      existsSync(path.join(fixture.cyclesRoot, "hidden-audit.jsonl")),
+    ).toBe(false);
+  }, 60_000);
+
+  it("records why an optional hidden set was unavailable", async () => {
+    const fixture = await makeFixture();
+    const hidden = resolveHiddenEvalsDir({
+      workspaceId: "ws-hidden",
+      root: path.join(fixture.root, "absent-hidden-root"),
+    });
+
+    const record = await runResolvedCycle(fixture, "variants", hidden, false);
+
+    expect(record.decision).toBe("canary");
+    expect(record.hidden).toMatchObject({
+      available: false,
+      required: false,
+      status: "missing",
+    });
+    expect(record.hidden?.reason).toContain("hidden eval directory missing");
+
+    const manifest = JSON.parse(
+      await readFile(
+        path.join(record.evalSnapshotPath ?? "", "manifest.json"),
+        "utf8",
+      ),
+    ) as { hidden: { available: boolean; reason?: string } };
+    expect(manifest.hidden.available).toBe(false);
+    expect(manifest.hidden.reason).toContain("hidden eval directory missing");
+
+    const archive = await readFile(
+      path.join(fixture.root, "variants", "archive.jsonl"),
+      "utf8",
+    );
+    expect(archive).toContain("hidden coverage unavailable");
   }, 60_000);
 });

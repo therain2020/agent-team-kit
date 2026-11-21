@@ -15,7 +15,11 @@ import {
   enqueueLocalIteration,
   enqueueLocalRun,
 } from "@kit/engine";
-import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
+import {
+  StoreEvolutionRepository,
+  resolveHiddenEvalsDir,
+  runEvolutionCycle,
+} from "@kit/evolution";
 import {
   buildPackRun,
   loadPack,
@@ -392,6 +396,10 @@ async function startEvolutionJob(
     cyclesPath,
     statePath,
   });
+  // Autopilot-triggered cycles demand the same hidden set as the CLI (70 §5):
+  // a missing or incomplete suite skips the cycle with the reason recorded,
+  // never a silent downgrade to the visible rubric.
+  const hiddenEvals = resolveHiddenEvalsDir({ workspaceId });
   const record = await runEvolutionCycle({
     packDir,
     ...(cycleId ? { cycleId } : {}),
@@ -404,6 +412,11 @@ async function startEvolutionJob(
       : {}),
     ...(options.cyclesRoot
       ? { cyclesRoot: path.resolve(options.cyclesRoot) }
+      : {}),
+    hiddenEvals,
+    requireHiddenEvals: true,
+    ...(hiddenEvals.status === "available"
+      ? { hiddenEvalsDir: hiddenEvals.dir }
       : {}),
     variantsRoot,
     archivePath,

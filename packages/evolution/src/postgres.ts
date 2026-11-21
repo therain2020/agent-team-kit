@@ -106,6 +106,7 @@ interface CycleRow {
   drift: NonNullable<EvolutionCycleRecord["drift"]> | string | null;
   change_id: string | null;
   promote: EvolutionCycleRecord["promote"] | string | null;
+  hidden: EvolutionCycleRecord["hidden"] | string | null;
   created_at: Date | string;
 }
 
@@ -685,7 +686,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         budget_status, budget_refs, budget_reconciliation,
         eval_snapshot_path, eval_snapshot_hash, evaluator_hash,
         evaluator_approval_ref, outcome_score, outcome_pass, outcome_source,
-        outcome_ref, divergence, drift, change_id, promote, created_at
+        outcome_ref, divergence, drift, change_id, promote, hidden, created_at
       ) VALUES (
         ${record.cycleId}, ${this.workspaceId}, ${record.packDir}, ${record.agentId},
         ${record.hypothesis}, ${this.store.sql.json(record.signals)},
@@ -711,6 +712,7 @@ export class StoreEvolutionRepository implements EvolutionRepository {
         ${record.drift ? this.store.sql.json(record.drift) : null},
         ${record.changeId ?? null},
         ${record.promote ? this.store.sql.json(record.promote) : null},
+        ${record.hidden ? this.store.sql.json(record.hidden) : null},
         ${record.createdAt}
       )
       ON CONFLICT (cycle_id) DO NOTHING
@@ -973,6 +975,9 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
   const promote = parseOptionalJson<
     NonNullable<EvolutionCycleRecord["promote"]>
   >(row.promote ?? null);
+  const hidden = parseOptionalJson<NonNullable<EvolutionCycleRecord["hidden"]>>(
+    row.hidden ?? null,
+  );
   return {
     cycleId: row.cycle_id,
     packDir: row.pack_dir,
@@ -1029,6 +1034,7 @@ function mapCycle(row: CycleRow): EvolutionCycleRecord {
     ...(drift ? { drift } : {}),
     ...(promote ? { promote } : {}),
     ...(row.change_id ? { changeId: row.change_id } : {}),
+    ...(hidden ? { hidden } : {}),
   };
 }
 

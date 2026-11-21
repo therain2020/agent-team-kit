@@ -47,7 +47,8 @@ export interface EvalSnapshotManifest {
   sources: SnapshotFile[];
   /**
    * Rotation record for the hidden eval set. `{ available: false }` means the
-   * cycle ran with the visible rubric only; older manifests omit the field.
+   * cycle ran with the visible rubric only; `reason` explains why a resolved
+   * hidden directory was unusable (70 §5). Older manifests omit the field.
    */
   hidden?: HiddenPlan;
 }
@@ -76,6 +77,12 @@ export async function createEvalSnapshot(input: {
   packDir: string;
   cyclesRoot?: string;
   hiddenEvalsDir?: string;
+  /**
+   * Recorded when the caller resolved a hidden set but it was unavailable
+   * (missing directory or missing suite). The manifest keeps the reason so a
+   * visible-only cycle is explicit rather than a silent fallback (70 §5).
+   */
+  hiddenUnavailable?: { reason: string };
   workspaceId?: string;
   /** Rotation clock; tests pin it to exercise the time-based rotation. */
   now?: Date;
@@ -118,7 +125,13 @@ export async function createEvalSnapshot(input: {
     await cp(fixturesDir, path.join(dir, "fixtures"), { recursive: true });
   }
 
-  let hidden: HiddenPlan = { available: false };
+  let hidden: HiddenPlan = input.hiddenUnavailable
+    ? {
+        available: false,
+        reason: input.hiddenUnavailable.reason,
+        checkedAt: new Date().toISOString(),
+      }
+    : { available: false };
   if (input.hiddenEvalsDir) {
     const hiddenDir = path.resolve(input.hiddenEvalsDir);
     if (!existsSync(hiddenDir)) {
