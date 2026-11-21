@@ -41,7 +41,9 @@ describe("store lock evidence (S9)", () => {
   it("records acquisition and contention in the op log", async () => {
     const store = await sqliteStore();
     const held = withStoreLock(store, "kit:test:lock", async () => {
-      await delay(350);
+      // Hold well past the 250ms acquisition timeout so a loaded CI runner
+      // cannot release the lock before the contending call gives up.
+      await delay(1200);
       return "first";
     });
 

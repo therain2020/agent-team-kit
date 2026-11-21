@@ -107,6 +107,20 @@ describe("zero-config TTHW ledger", () => {
     expect(record.measure).toBeNull();
   });
 
+  it("does not start the clock on an already configured home", async () => {
+    const env = await home();
+    const dir = path.dirname(coldStartTthwPath(env));
+    await writeFile(path.join(dir, "bootstrap.json"), "{}", "utf8");
+
+    const record = await markColdStartStarted({
+      env,
+      now: new Date("2026-11-20T10:00:00.000Z"),
+    });
+
+    expect(record.startedAt).toBeNull();
+    expect(readColdStartTthwSync(env)).toBeNull();
+  });
+
   it("reads malformed ledgers as absent", async () => {
     const env = await home();
     await writeFile(coldStartTthwPath(env), "{not json", "utf8");

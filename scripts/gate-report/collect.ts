@@ -177,8 +177,6 @@ export async function collectEvidence(
 
   const tthw = await collectTthw(
     options.tthwPath ?? path.join(home, "cold-start-tthw.json"),
-    window.start,
-    window.end,
   );
   sources.push(tthw.source);
 
@@ -1152,12 +1150,11 @@ function collectColdStart(
  * Reads the zero-config TTHW ledger written by the bootstrap flow (plan 91 §5,
  * 98 §5.2 S12). The collector never derives a duration: without a persisted
  * start marker and ready timestamp it returns null and the gate stays a GAP.
+ *
+ * This is a one-time install measurement, so it is not clipped to the report
+ * window; the ready timestamp is surfaced in the source detail for audit.
  */
-async function collectTthw(
-  file: string,
-  start: string,
-  end: string,
-): Promise<{ tthwMinutes: number | null; source: EvidenceSourceStatus }> {
+async function collectTthw(file: string): Promise<TthwCollection> {
   if (!existsSync(file)) {
     return {
       tthwMinutes: null,
@@ -1194,21 +1191,12 @@ async function collectTthw(
       detail = "ledger has no start marker; TTHW not measured";
     } else if (!readyAt) {
       detail = "ledger has no first-value milestone";
-    } else if (readyAt < start || readyAt > end) {
-      detail = `measurement ${readyAt} is outside the report window`;
     } else if (minutes === null) {
       detail = "ledger has no numeric TTHW";
     } else {
-      detail = `measure=${measure ?? "unknown"}`;
+      detail = `measure=${measure ?? "unknown"} readyAt=${readyAt}`;
     }
-    const measured =
-      startedAt &&
-      readyAt &&
-      readyAt >= start &&
-      readyAt <= end &&
-      minutes !== null
-        ? minutes
-        : null;
+    const measured = startedAt && readyAt && minutes !== null ? minutes : null;
     return {
       tthwMinutes: measured,
       source: {
@@ -1525,6 +1513,10 @@ interface ActivityRow {
   status: string | null;
   summary: string | null;
   created_at: string;
+}
+interface TthwCollection {
+  tthwMinutes: number | null;
+  source: EvidenceSourceStatus;
 }
 interface OpLogRow {
   op_id: string;
