@@ -1,3 +1,4 @@
+import path from "node:path";
 import { recordGateEvidenceSafely } from "@/lib/gate-evidence";
 import { sameOriginError } from "@/lib/http";
 import { getComponentsRoot, resolvePackDir } from "@/lib/paths";
@@ -9,7 +10,6 @@ import {
   assembleComponents,
 } from "@kit/pack";
 import { workshopComponentLibrary } from "@kit/workshop";
-import path from "node:path";
 import { NextResponse } from "next/server";
 
 /**

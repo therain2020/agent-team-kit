@@ -1109,7 +1109,10 @@ async function collectSupervisor(
   }
 }
 
-function collectColdStart(root: string, tthwMinutes: number | null): {
+function collectColdStart(
+  root: string,
+  tthwMinutes: number | null,
+): {
   evidence: ColdStartEvidence | null;
   source: EvidenceSourceStatus;
 } {
