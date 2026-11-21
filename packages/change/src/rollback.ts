@@ -207,7 +207,7 @@ export async function executeChangeRollback(
   const dryRun = options.dryRun ?? true;
   let plan = await planChangeRollback(deps, options.changeId);
   let before = await snapshotBefore(deps.repoRoot, plan);
-  const base = { changeId: options.changeId, auditPath };
+  const base = { changeId: options.changeId };
 
   if (plan.refusal) {
     return await finish({
