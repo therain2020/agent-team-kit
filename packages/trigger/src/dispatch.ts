@@ -20,8 +20,8 @@ import {
   type AdmitRunInput,
   type AdmitRunResult,
   type TriggerRunRecord,
-  type initStore,
   appendOp,
+  type initStore,
 } from "@kit/store";
 import {
   type BlockingGate,
