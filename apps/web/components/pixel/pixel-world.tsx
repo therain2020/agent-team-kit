@@ -1,5 +1,6 @@
 "use client";
 
+import { shouldPlayRoomWipe } from "@/lib/pixel-events";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -103,16 +104,7 @@ export function PixelDoor({
   );
 
   function handleClick(event: MouseEvent<HTMLAnchorElement>) {
-    if (
-      !enabled ||
-      leaving ||
-      event.defaultPrevented ||
-      event.button !== 0 ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.shiftKey ||
-      event.altKey
-    ) {
+    if (!shouldPlayRoomWipe(event, { motionEnabled: enabled, leaving })) {
       return;
     }
     event.preventDefault();

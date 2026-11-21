@@ -37,6 +37,7 @@ import {
 import type { ApprovalTowerSnapshot } from "@/lib/inbox-shared";
 import { groupApprovals } from "@/lib/inbox-shared";
 import { officeAgentHref, officeRoomHref } from "@/lib/office-deeplink";
+import { factoryRoomShortcut } from "@/lib/office-keys";
 import {
   type DecisionKind,
   type DecisionTarget,
@@ -585,10 +586,15 @@ export function ApprovalsSurface({
         toggleSelect(activeId);
         return;
       }
-      if (key === "o" && !queueMode) {
-        // Room switch (97 §3.5): O walks back through the office door.
+      // Room switch (97 §3.5): O walks back through the office door.
+      const roomHref = factoryRoomShortcut(event, {
+        href: officeHref,
+        queueMode,
+        dialogOpen: dialog !== null,
+      });
+      if (roomHref) {
         event.preventDefault();
-        router.push(officeHref);
+        router.push(roomHref);
         return;
       }
       if (event.key === "Escape") {
