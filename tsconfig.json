@@ -23,6 +23,7 @@
       "@kit/store": ["./packages/store/src/index.ts"],
       "@kit/trigger": ["./packages/trigger/src/index.ts"],
       "@kit/source": ["./packages/source/src/index.ts"],
+      "@kit/tools": ["./packages/tools/src/index.ts"],
       "@kit/queue": ["./packages/queue/src/index.ts"],
       "@kit/workflow": ["./packages/workflow/src/index.ts"],
       "@kit/model": ["./packages/model/src/index.ts"],

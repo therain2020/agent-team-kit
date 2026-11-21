@@ -2128,6 +2128,22 @@
     "auditSummary": "抽样信号中 {withReasons}/{total} 带有可读理由。",
     "noAudit": "还没有评分审计。",
     "historyTitle": "版本审计记录",
-    "noHistory": "还没有画像编辑记录。"
+    "noHistory": "还没有画像编辑记录。",
+    "scoutTitle": "主动调研",
+    "scoutHint": "一句话进入，只读调研一轮后产出。结果与订阅进入同一信息管线，每次工具调用都有审计。",
+    "scoutIntentLabel": "让 scout 调研什么？",
+    "scoutIntentPlaceholder": "例如：用于 CI 流水线的沙箱编码 agent",
+    "scoutIntentRequired": "请先描述关注点。",
+    "scoutButton": "开始调研",
+    "scoutRunning": "调研中…",
+    "scoutFailed": "调研失败",
+    "scoutNetworkOn": "网络已授权",
+    "scoutNetworkOff": "网络关闭 · 仅仓库文档",
+    "scoutResult": "新增 {events} 条事件 · 重复 {duplicates} 条 · 审计 {calls} 次工具调用",
+    "scoutQueries": "检索词",
+    "scoutItems": "调研条目",
+    "scoutNoItems": "没有找到条目。可换一个关注点，或由部署方授权网络访问。",
+    "scoutWarnings": "说明",
+    "scoutToolCalls": "工具审计"
   }
 }
