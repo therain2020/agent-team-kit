@@ -15,6 +15,7 @@ function run(partial: Partial<RunProjection> = {}): RunProjection {
   return {
     runId: "run_1",
     workspaceId: "default",
+    workflowId: "wf_1",
     status: "running",
     currentStage: "run_1:build",
     progress: 0.2,

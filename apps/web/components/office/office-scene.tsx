@@ -270,7 +270,10 @@ function OfficeSceneBody({
       known.add(mission.runId);
     }
     const unknown = runs.some(
-      (run) => workflowIds.has(run.workflowId) && !known.has(run.runId),
+      (run) =>
+        run.workflowId !== null &&
+        workflowIds.has(run.workflowId) &&
+        !known.has(run.runId),
     );
     if (!unknown) {
       return;

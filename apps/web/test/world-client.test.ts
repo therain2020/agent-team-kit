@@ -25,6 +25,7 @@ function run(
 ): RunProjection {
   return {
     workspaceId: "default",
+    workflowId: "wf_1",
     status: "running",
     currentStage: "plan:write",
     progress: 0.5,
