@@ -812,6 +812,7 @@ CREATE TABLE IF NOT EXISTS approvals (
   subject_ref TEXT,
   substrate TEXT,
   change_id TEXT,
+  risk_class TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL
 );
@@ -846,6 +847,7 @@ ALTER TABLE approvals ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS subject_ref TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS substrate TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS change_id TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS risk_class TEXT;
 CREATE INDEX IF NOT EXISTS idx_approvals_subject
   ON approvals(workspace_id, subject_ref, status);
 CREATE INDEX IF NOT EXISTS idx_approvals_change
@@ -1986,6 +1988,7 @@ CREATE TABLE IF NOT EXISTS approvals (
   subject_ref TEXT,
   substrate TEXT,
   change_id TEXT,
+  risk_class TEXT,
   version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
@@ -2020,6 +2023,7 @@ ALTER TABLE approvals ADD COLUMN assigned_at TEXT;
 ALTER TABLE approvals ADD COLUMN subject_ref TEXT;
 ALTER TABLE approvals ADD COLUMN substrate TEXT;
 ALTER TABLE approvals ADD COLUMN change_id TEXT;
+ALTER TABLE approvals ADD COLUMN risk_class TEXT;
 CREATE INDEX IF NOT EXISTS idx_approvals_subject
   ON approvals(workspace_id, subject_ref, status);
 CREATE INDEX IF NOT EXISTS idx_approvals_change

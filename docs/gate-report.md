@@ -127,10 +127,13 @@ assert a 60-second query latency it cannot measure.
 
 ## Known limits
 
-- Approval rows do not record a risk class, so an approval decision without
-  one is a GAP (`G5.approval-risk-recorded`) and does not raise the
-  intervention budget; automated events such as `ops.side_effect.blocked` are
-  never counted as human confirmations.
+- Approval rows record the guarded action's risk class (`approvals.risk_class`)
+  at creation: stage approvals take the pack approval policy's `riskClass`,
+  change approvals mirror the proposal's `risk`, promotion approvals use the
+  variant's declared class. Decisions on rows written before the column existed
+  stay unlabelled and are a GAP (`G5.approval-risk-recorded`) rather than a
+  guessed high-risk confirmation; automated events such as
+  `ops.side_effect.blocked` are never counted as human confirmations.
 - High-risk code changes have no recorded approval link yet, so any applied
   high-risk change is a GAP (`G4.high-risk-approved`).
 - Zero-config (S12) reads `<home>/cold-start-tthw.json`, written by the

@@ -100,6 +100,7 @@ export async function decideApproval(input: {
     return { ok: false, status: 409, error: "approval request expired" };
   }
 
+  const approvalRecord = await store.approvals.get(input.requestId);
   const recorded = await decideApprovalRecord(store, {
     runId: input.runId,
     requestId: input.requestId,
@@ -117,7 +118,9 @@ export async function decideApproval(input: {
       requestId: input.requestId,
       actor: input.actor,
       batchId,
-      riskClass: approval.riskClass,
+      // The approvals row is the durable risk record; the artifact payload is
+      // the fallback for rows written before the column existed.
+      riskClass: approvalRecord?.riskClass ?? approval.riskClass,
     });
   }
   const effectiveBatchId = batchId;

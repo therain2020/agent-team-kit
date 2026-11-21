@@ -114,6 +114,49 @@ describe("approval service (sqlite)", () => {
     expect(page.nextCursor).toBeNull();
   });
 
+  it("records the risk class and keeps unknown legacy rows null", async () => {
+    const { store } = await localStore();
+    await store.runs.create(run("run_risk"));
+
+    const typed = await store.approvals.enqueue({
+      approvalId: "apr_high",
+      workspaceId: "default",
+      runId: "run_risk",
+      kind: "stage_before",
+      riskClass: "high",
+    });
+    expect(typed.riskClass).toBe("high");
+
+    const legacy = await store.approvals.enqueue({
+      approvalId: "apr_legacy",
+      workspaceId: "default",
+      runId: "run_risk",
+      kind: "stage_before",
+    });
+    expect(legacy.riskClass).toBeNull();
+
+    const reread = await store.approvals.get("apr_high");
+    expect(reread?.riskClass).toBe("high");
+    const page = await store.approvals.list({ sort: "created" });
+    expect(
+      page.items.find((item) => item.approvalId === "apr_high")?.riskClass,
+    ).toBe("high");
+    expect(
+      page.items.find((item) => item.approvalId === "apr_legacy")?.riskClass,
+    ).toBeNull();
+
+    // Replays must not rewrite the recorded class or invent one for legacy
+    // rows: the first write is the evidence of record.
+    const replayed = await store.approvals.enqueue({
+      approvalId: "apr_legacy",
+      workspaceId: "default",
+      runId: "run_risk",
+      kind: "stage_before",
+      riskClass: "low",
+    });
+    expect(replayed.riskClass).toBeNull();
+  });
+
   it("pages without repeating or dropping approvals", async () => {
     const { store } = await localStore();
     for (const id of ["a", "b", "c"]) {

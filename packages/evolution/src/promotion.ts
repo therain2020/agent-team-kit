@@ -59,6 +59,27 @@ export function resolveVariantKind(input: {
   return input.kind ?? inferred;
 }
 
+/**
+ * Risk class a promotion carries into the approvals table (85 §3.4 risk table).
+ * Structural changes to team/workflow/role definitions are high risk; new
+ * skills/tools can expand capability and stay medium; context variants only
+ * change prompt material. Recorded so G5 can count architecture promotions as
+ * genuine high-risk confirmations.
+ */
+export const PROMOTION_RISK: Readonly<
+  Record<VariantKind, "low" | "medium" | "high">
+> = Object.freeze({
+  context: "low",
+  tool: "medium",
+  architecture: "high",
+});
+
+export function promotionRiskClass(
+  kind: VariantKind,
+): "low" | "medium" | "high" {
+  return PROMOTION_RISK[kind];
+}
+
 export const PROMOTION_ROLES = [
   "operator",
   "quality",
