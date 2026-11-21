@@ -1,9 +1,9 @@
 import type { PriorityClass } from "@kit/core";
-import {
-  type JobKind,
-  type JobOriginKind,
-  type JobRunMode,
-  type StartJobResult,
+import type {
+  JobKind,
+  JobOriginKind,
+  JobRunMode,
+  StartJobResult,
 } from "@kit/job";
 import { z } from "zod";
 
