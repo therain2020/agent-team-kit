@@ -6,6 +6,58 @@ export * from "./types";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
+/**
+ * Canonical production evidence kinds for the 1.0 support gates (issue #260,
+ * plan 98 §5.2 G8 S9-S11). The gate collector matches these kinds by pattern;
+ * emitting them here keeps the contract in one place instead of scattering
+ * magic strings across the engine, CLI and web routes.
+ *
+ * Every kind is written as an ordinary activity event, so the existing
+ * activity stream, projections and audit stay the single source of truth.
+ */
+export const GATE_EVIDENCE_KIND = {
+  /** Single-writer run lease claimed by a worker (85 §5.2 S9). */
+  runLeaseClaimed: "run.lease.claimed",
+  /** Component assembled from the workshop library into a pack (S10). */
+  workshopComponentAssembled: "workshop.component.assembled",
+  /** Workshop asset installed from a repo (S10). */
+  workshopComponentInstalled: "workshop.component.installed",
+  /** Workflow DAG edges/content saved by the workshop editor (S10). */
+  workshopDagUpdated: "workshop.dag.updated",
+  /** Low-risk approval batch released through the pixel factory (S11). */
+  factoryBatchApproved: "factory.batch_approved",
+  /** Batch rejection processed through the pixel factory (S11). */
+  factoryBatchRejected: "factory.batch_rejected",
+} as const;
+
+export type GateEvidenceKind =
+  (typeof GATE_EVIDENCE_KIND)[keyof typeof GATE_EVIDENCE_KIND];
+
+export interface GateEvidenceInput {
+  workspaceId?: string;
+  runId?: string;
+  agentId?: string;
+  kind: GateEvidenceKind;
+  status?: string;
+  summary?: string;
+  payload?: unknown;
+}
+
+/**
+ * Appends one gate evidence event. Callers decide whether a failure is fatal:
+ * production paths treat evidence as audit and swallow errors so a missing
+ * audit row never breaks the action it describes.
+ */
+export async function recordGateEvidence(
+  store: Store,
+  input: GateEvidenceInput,
+): Promise<number> {
+  return appendActivity(store, {
+    ...input,
+    agentId: input.agentId ?? "system",
+  });
+}
+
 interface ActivityRow {
   event_id: number;
   workspace_id: string;

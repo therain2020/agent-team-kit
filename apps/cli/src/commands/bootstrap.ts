@@ -5,8 +5,10 @@ import {
   detectCoderClis,
   installCoderClis,
   loadApiKey,
+  markColdStartStarted,
   probeModel,
   readBootstrapProfileSync,
+  recordColdStartMilestone,
   resolveRuntimeMode,
   saveApiKey,
   writeBootstrapProfile,
@@ -74,6 +76,12 @@ export function registerBootstrap(program: Command): void {
         }
         return;
       }
+
+      // Zero-config TTHW clock (plan 91 §5): the first configuration command
+      // starts the measurement; a later `kit demo` milestone extends it.
+      await markColdStartStarted({
+        mode: resolveRuntimeMode(process.env),
+      }).catch(() => undefined);
 
       const installs = options.installCoders
         ? installMissingCoders(Boolean(options.json))
@@ -165,6 +173,12 @@ export function registerBootstrap(program: Command): void {
         workspaceId: options.workspace ?? "default",
         createdAt: new Date().toISOString(),
       });
+      // First-value milestone; the probe latency is excluded per plan 91 §5.
+      await recordColdStartMilestone("profile", {
+        flow: "kit-bootstrap",
+        mode,
+        modelLatencyMs: probeResult?.latencyMs ?? null,
+      }).catch(() => undefined);
       const report = await collectPreflight({ probeResult });
 
       if (options.json) {

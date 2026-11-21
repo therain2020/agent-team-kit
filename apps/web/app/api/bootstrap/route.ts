@@ -1,8 +1,10 @@
 import { sameOriginError } from "@/lib/http";
 import {
   hasApiKey,
+  markColdStartStarted,
   probeModel,
   readBootstrapProfileSync,
+  recordColdStartMilestone,
   resolveRuntimeMode,
   saveApiKey,
   writeBootstrapProfile,
@@ -13,6 +15,13 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const profile = readBootstrapProfileSync();
+  // Zero-config TTHW clock (plan 91 §5): opening the welcome surface on an
+  // unconfigured home is the first use. Idempotent once a start exists.
+  if (!profile) {
+    await markColdStartStarted({ mode: resolveRuntimeMode(process.env) }).catch(
+      () => undefined,
+    );
+  }
   return NextResponse.json({
     configured: Boolean(profile),
     hasKey: hasApiKey(),
@@ -24,6 +33,8 @@ export async function POST(request: Request) {
   if (sameOriginError(request)) {
     return NextResponse.json({ error: "invalid origin" }, { status: 403 });
   }
+  const mode = resolveRuntimeMode(process.env);
+  await markColdStartStarted({ mode }).catch(() => undefined);
 
   let body: {
     apiKey?: unknown;
@@ -82,13 +93,19 @@ export async function POST(request: Request) {
   const saved = await saveApiKey(apiKey);
   const profile = {
     apiVersion: "agentteam/v1" as const,
-    mode: resolveRuntimeMode(process.env),
+    mode,
     baseUrl,
     models: { flash, pro },
     workspaceId: "default",
     createdAt: new Date().toISOString(),
   };
   await writeBootstrapProfile(profile);
+  // First-value milestone; model probe latency is excluded (plan 91 §5).
+  await recordColdStartMilestone("profile", {
+    flow: "web-welcome",
+    mode,
+    modelLatencyMs: probe.latencyMs,
+  }).catch(() => undefined);
 
   return NextResponse.json({
     ok: true,

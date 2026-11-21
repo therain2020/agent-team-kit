@@ -10,6 +10,7 @@ import {
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { markColdStartStarted, resolveRuntimeMode } from "@kit/bootstrap";
 import { CliError } from "@kit/core";
 import type { Command } from "commander";
 import { emit, emitError, wantsJson } from "../output";
@@ -91,6 +92,11 @@ async function start(options: {
     return;
   }
   const webMode = resolveWebMode(options.webMode ?? process.env.KIT_WEB_MODE);
+  // Zero-config TTHW clock (plan 91 §5): `kit up` on a fresh home starts the
+  // measurement before infra provisioning. Idempotent across repeated starts.
+  await markColdStartStarted({ mode: resolveRuntimeMode(process.env) }).catch(
+    () => undefined,
+  );
   const repoRoot = process.cwd();
   const stateDir = path.join(repoRoot, ".tmp", "supervisor");
   const statePath = path.join(stateDir, "state.json");
