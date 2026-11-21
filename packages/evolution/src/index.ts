@@ -1,3 +1,4 @@
+export * from "./attribution";
 export * from "./canary";
 export * from "./cost-attribution";
 export * from "./cycle";
@@ -11,6 +12,7 @@ export * from "./hidden";
 export * from "./outcome";
 export * from "./postgres";
 export * from "./repository";
+export * from "./revert";
 export * from "./security-invariants";
 export * from "./signals";
 export * from "./snapshot";

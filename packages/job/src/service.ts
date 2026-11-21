@@ -580,6 +580,12 @@ async function startIterationJob(
     ...(budget ? { budget } : {}),
     ...(dedupeKey ? { dedupeKey } : {}),
     origin: toRunOrigin(origin),
+    // The event router only routes to a canary variant; champion traffic has
+    // no change to attribute. A promoted change is recorded when its caller
+    // supplies the change explicitly (the pack itself carries no provenance).
+    ...(input.variant?.role === "canary"
+      ? { changeId: input.variant.variantId, changeStage: "canary" as const }
+      : {}),
   };
 
   const now = new Date().toISOString();
@@ -587,12 +593,15 @@ async function startIterationJob(
     INSERT INTO iteration_runs (
       iteration_id, workflow_id, workspace_id, repo_root, origin_kind,
       trigger_id, trigger_run_id, goal, acceptance,
-      run_mode, apply_mode, status, phase, started_at, updated_at
+      run_mode, apply_mode, status, phase, change_id, change_stage,
+      started_at, updated_at
     ) VALUES (
       ${iterationId}, ${workflowId}, ${workspaceId}, ${project.path},
       ${origin.kind}, ${origin.triggerId ?? null}, ${origin.triggerRunId ?? null},
       ${iterationInput.goal}, ${iterationInput.acceptance ?? null},
-      ${runMode}, ${applyMode}, 'running', 'queued', ${now}, ${now}
+      ${runMode}, ${applyMode}, 'running', 'queued',
+      ${iterationInput.changeId ?? null}, ${iterationInput.changeStage ?? null},
+      ${now}, ${now}
     )
     ON CONFLICT (iteration_id) DO NOTHING
   `;
