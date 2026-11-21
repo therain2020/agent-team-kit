@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { recordShadowEvolutionCycle } from "@kit/change";
 import { CliError } from "@kit/core";
 import {
   DEFAULT_CONVERGENCE_WINDOW,
@@ -360,10 +361,10 @@ export function registerEvolve(program: Command): void {
           return;
         }
         try {
-          const record = await withEvolutionRepo(async (repo) => {
+          const record = await withEvolutionRepo(async (repo, store) => {
             const hiddenEvalsDir =
               options.hiddenEvals ?? defaultHiddenDir(repo.workspaceId);
-            return await runEvolutionCycle({
+            const record = await runEvolutionCycle({
               packDir,
               agentId: options.agent,
               inputFile: options.inputFile,
@@ -389,6 +390,13 @@ export function registerEvolve(program: Command): void {
                 : {}),
               repo,
             });
+            // Shadow-only mirror onto the unified change pipeline (85 §3.5).
+            // Off by default; never changes the cycle record or CLI output.
+            await recordShadowEvolutionCycle(store, {
+              workspaceId: repo.workspaceId,
+              cycle: record,
+            });
+            return record;
           });
           emitResult(json, record);
           if (record.decision === "failed") {
@@ -642,14 +650,17 @@ function emitResult(json: boolean, data: unknown): void {
 }
 
 async function withEvolutionRepo<T>(
-  fn: (repo: StoreEvolutionRepository) => Promise<T>,
+  fn: (
+    repo: StoreEvolutionRepository,
+    store: Awaited<ReturnType<typeof initStore>>,
+  ) => Promise<T>,
 ): Promise<T> {
   const store = await initStore(loadStoreConfig());
   try {
     const repo = new StoreEvolutionRepository(store, {
       variantsRoot: path.resolve("variants"),
     });
-    return await fn(repo);
+    return await fn(repo, store);
   } finally {
     await store.close();
   }

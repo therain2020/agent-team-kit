@@ -2,6 +2,7 @@ import { ApprovalService } from "./approval-service";
 import { ArtifactService } from "./artifact-service";
 import { type BlobClient, FsBlobClient, S3BlobClient } from "./blob";
 import { BudgetService } from "./budget-service";
+import { ChangeProposalService } from "./change-service";
 import { CircuitBreakerService } from "./circuit-breaker-service";
 import { type StoreConfig, loadStoreConfig } from "./config";
 import { CostLedger } from "./cost-ledger";
@@ -129,6 +130,13 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     costLedger: new CostLedger({
       sql: handle.sql,
       driver: handle.driver,
+    }),
+    /** Unified change pipeline storage (85 §3.5, D-52). */
+    changeProposals: new ChangeProposalService({
+      sql: handle.sql,
+      driver: handle.driver,
+      blobs,
+      blobClient,
     }),
   };
 }

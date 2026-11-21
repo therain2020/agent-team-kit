@@ -925,6 +925,51 @@ CREATE TABLE IF NOT EXISTS recovery_drills (
 
 CREATE INDEX IF NOT EXISTS idx_recovery_drills_executed
   ON recovery_drills(executed_at DESC);
+
+CREATE TABLE IF NOT EXISTS change_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  substrate TEXT NOT NULL,
+  producer TEXT NOT NULL,
+  state TEXT NOT NULL,
+  risk TEXT NOT NULL,
+  hypothesis TEXT NOT NULL,
+  acceptance JSONB NOT NULL DEFAULT '[]'::jsonb,
+  signal_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+  eval_plan JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source_ref JSONB,
+  revert_ref TEXT,
+  budget_ref TEXT,
+  approval_ref TEXT,
+  outcome JSONB,
+  content_ref TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
+  ON change_proposals(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_change_proposals_state
+  ON change_proposals(workspace_id, state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_change_proposals_producer
+  ON change_proposals(workspace_id, producer, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS change_proposal_transitions (
+  audit_id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL REFERENCES change_proposals(proposal_id),
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  at TIMESTAMPTZ NOT NULL,
+  sequence INTEGER NOT NULL,
+  UNIQUE (proposal_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_transitions_proposal
+  ON change_proposal_transitions(proposal_id, sequence);
 `;
 
 export const SQLITE_SCHEMA_SQL = `
@@ -1843,4 +1888,49 @@ CREATE TABLE IF NOT EXISTS recovery_drills (
 
 CREATE INDEX IF NOT EXISTS idx_recovery_drills_executed
   ON recovery_drills(executed_at DESC);
+
+CREATE TABLE IF NOT EXISTS change_proposals (
+  proposal_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  substrate TEXT NOT NULL,
+  producer TEXT NOT NULL,
+  state TEXT NOT NULL,
+  risk TEXT NOT NULL,
+  hypothesis TEXT NOT NULL,
+  acceptance TEXT NOT NULL DEFAULT '[]',
+  signal_refs TEXT NOT NULL DEFAULT '[]',
+  eval_plan TEXT NOT NULL DEFAULT '{}',
+  source_ref TEXT,
+  revert_ref TEXT,
+  budget_ref TEXT,
+  approval_ref TEXT,
+  outcome TEXT,
+  content_ref TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_proposals_workspace
+  ON change_proposals(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_change_proposals_state
+  ON change_proposals(workspace_id, state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_change_proposals_producer
+  ON change_proposals(workspace_id, producer, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS change_proposal_transitions (
+  audit_id TEXT PRIMARY KEY,
+  proposal_id TEXT NOT NULL REFERENCES change_proposals(proposal_id),
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  trigger TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  at TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  UNIQUE (proposal_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_transitions_proposal
+  ON change_proposal_transitions(proposal_id, sequence);
 `;

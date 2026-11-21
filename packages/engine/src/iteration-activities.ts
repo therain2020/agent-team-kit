@@ -10,6 +10,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { type ActivityInput, appendActivity } from "@kit/activity";
+import { recordShadowIterationProposals } from "@kit/change";
 import {
   type CoderResult,
   type CoderStreamEvent,
@@ -1695,6 +1696,25 @@ export async function reportIteration(
       fitnessArtifactId,
     },
   });
+
+  // Shadow-only mirror onto the unified change pipeline (85 §3.5). Disabled by
+  // default (`KIT_CHANGE_PIPELINE`); it never changes the report or CLI output.
+  try {
+    await recordShadowIterationProposals(store, {
+      workspaceId: input.workspaceId,
+      iterationId: input.iterationId,
+      goal: input.goal,
+      plan: input.plan,
+      results: input.tasks,
+      at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error(
+      `[change] shadow iteration proposal recording failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 
   return { reportArtifactId, fitnessArtifactId, status };
 }
