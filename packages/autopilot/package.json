@@ -14,6 +14,7 @@
     "@kit/ops": "workspace:*",
     "@kit/pack": "workspace:*",
     "@kit/store": "workspace:*",
+    "@kit/trigger": "workspace:*",
     "@kit/workflow": "workspace:*"
   }
 }

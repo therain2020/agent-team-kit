@@ -80,7 +80,11 @@ export interface StartJobInput {
   evidenceArtifactId?: string;
   /** Reads the initial input from a file, taking precedence over text/goal. */
   inputFile?: string;
-  /** Pre-generated run id; triggers derive it from the dedupe key for bucketing. */
+  /**
+   * Pre-generated job id. Pack runs derive it from the dedupe key for
+   * bucketing; the trigger plane also supplies it for iterations so the
+   * budget ledger admits the same row the job will use.
+   */
   runId?: string;
   /** Correlates the run with the event that triggered it (event origins). */
   eventId?: string;

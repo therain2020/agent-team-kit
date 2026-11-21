@@ -26,6 +26,7 @@
     "@kit/source": "workspace:*",
     "@kit/store": "workspace:*",
     "@kit/telemetry": "workspace:*",
+    "@kit/trigger": "workspace:*",
     "@kit/workflow": "workspace:*",
     "@kit/workshop": "workspace:*",
     "@opentelemetry/api": "^1.9.0",

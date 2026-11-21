@@ -1,21 +1,30 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
-import {
-  type EventEnvelope,
-  isExecutionBlocked,
-  priorityClassFor,
-  resolveKillSwitch,
-} from "@kit/core";
-import { activeModeForWorkspace, auditBlockedExecution } from "@kit/engine";
+import { type EventEnvelope, priorityClassFor } from "@kit/core";
 import {
   type CanaryState,
   type EvolutionRepository,
   selectRunVariant,
 } from "@kit/evolution";
-import { JobError, dedupeRunId, startJob } from "@kit/job";
-import { type LoadedPack, loadPack, simulatePack } from "@kit/pack";
+import { dedupeRunId } from "@kit/job";
+import { type LoadedPack, loadPack } from "@kit/pack";
 import type { initStore } from "@kit/store";
+import {
+  type EventRoute,
+  type Trigger,
+  type TriggerBudget,
+  type TriggerResult,
+  eventRouteSchema,
+  fireTrigger,
+  resolveTriggerBudget,
+  triggerSchema,
+} from "@kit/trigger";
+
+export {
+  startOfUtcDay,
+  triggerBudgetSkip as eventBudgetSkip,
+} from "@kit/trigger";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -105,228 +114,141 @@ export class EventRouter {
     private readonly repoRoot: string,
     private readonly variantSelector: RunVariantSelector | null = null,
     private readonly workspaceId = "default",
+    /** Injectable clock keeps night-mode gates deterministic in tests. */
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   async route(event: EventEnvelope, payload: unknown): Promise<RouteResult> {
     const result: RouteResult = { started: [], skipped: [], errors: [] };
     const packs = await this.loadPacks();
-    const active = await this.store.runs.list({ limit: 200 });
-    const mode = await activeModeForWorkspace(this.store, event.workspaceId);
-    const readOnly = isExecutionBlocked(mode);
-    if (mode && readOnly) {
-      await auditBlockedExecution(this.store, mode, event.workspaceId, {
-        action: "route",
-        eventId: event.eventId,
-        eventType: event.type,
-      });
-    }
-    const since = startOfUtcDay(new Date()).toISOString();
-    const usage = new Map<string, BudgetUsage>();
-    const blockingSwitch = resolveKillSwitch(
-      await this.store.killSwitches.listActive(),
-      { workspaceId: event.workspaceId },
-    );
+    const now = this.now();
+    const runMode =
+      process.env.KIT_EVENT_RUN_MODE === "live" ? "LIVE" : "DRY_RUN";
+    const priority = priorityClassFor({
+      priority: eventPriorityOf(payload),
+      runMode,
+    });
 
     for (const pack of packs) {
-      let estimates: ReturnType<typeof simulatePack> | undefined;
-      const estimateCny = (workflowId: string): number => {
-        estimates ??= simulatePack(pack);
-        return (
-          estimates.workflows.find((item) => item.id === workflowId)
-            ?.totalCostCny ?? 0
-        );
-      };
-
       for (const workflow of pack.workflows) {
         if (!triggerMatches(workflow.trigger.event, event.type)) {
           continue;
         }
 
         const packName = pack.pack.metadata.name;
-        if (blockingSwitch) {
-          result.skipped.push({
-            pack: packName,
-            workflow: workflow.id,
-            reason: `kill switch ${blockingSwitch.scope}/${
-              blockingSwitch.target || "*"
+        const triggerId = `${packName}:${workflow.id}`;
+        const dedupeKey = `event:${this.workspaceId}:${event.eventId}:${workflow.id}`;
+        const runId = dedupeRunId(dedupeKey);
+        const selected = this.variantSelector
+          ? await this.variantSelector.select(this.workspaceId, runId)
+          : null;
+        const trigger = buildEventTrigger({
+          triggerId,
+          eventType: event.type,
+          enabled: true,
+        });
+        const route = buildEventRoute({
+          routeId: `event:${triggerId}`,
+          triggerRef: triggerId,
+          packDir: selected ? selected.path : pack.dir,
+          workflow: workflow.id,
+          runMode,
+          ...(workflow.trigger.budget
+            ? { budget: workflow.trigger.budget }
+            : {}),
+        });
+
+        const fired: TriggerResult | null = await fireTrigger(
+          {
+            triggerId,
+            dedupeKey,
+            payloadRef: event.payloadRef,
+            trigger,
+            route,
+            runId,
+            eventId: event.eventId,
+            evidenceText: JSON.stringify({ event, payload: payload ?? null }),
+            priority,
+            originKind: "event",
+            actor: "trigger:event-router",
+            ...(selected
+              ? {
+                  variant: {
+                    role: "canary" as const,
+                    variantId: selected.variantId,
+                    trafficPercent: selected.trafficPercent,
+                  },
+                }
+              : {}),
+          },
+          {
+            store: this.store,
+            repoRoot: this.repoRoot,
+            workspaceId: this.workspaceId,
+            now,
+          },
+        ).catch((error: unknown) => {
+          result.errors.push(
+            `${packName}/${workflow.id}: ${
+              error instanceof Error ? error.message : String(error)
             }`,
-          });
-          continue;
-        }
-        if (readOnly) {
-          result.skipped.push({
-            pack: packName,
-            workflow: workflow.id,
-            reason: "workspace is in read-only mode",
-          });
-          continue;
-        }
-        const busy = active.some(
-          (run) =>
-            run.workflowId === workflow.id &&
-            (run.status === "running" || run.status === "paused"),
-        );
-        if (busy) {
-          result.skipped.push({
-            pack: packName,
-            workflow: workflow.id,
-            reason: "workflow already active",
-          });
-          continue;
-        }
-
-        const budget = resolveEventBudget(workflow.trigger.budget);
-        const estimate =
-          budget?.dailyCostCny !== undefined ? estimateCny(workflow.id) : 0;
-        let used: BudgetUsage | undefined;
-        if (budget) {
-          used = usage.get(workflow.id);
-          if (!used) {
-            used = await this.loadUsage(
-              workflow.id,
-              since,
-              budget.dailyCostCny !== undefined,
-            );
-            usage.set(workflow.id, used);
-          }
-        }
-        const overBudget = eventBudgetSkip(
-          budget,
-          used ?? { runs: 0, costCny: 0 },
-          estimate,
-        );
-        if (overBudget) {
-          result.skipped.push({
-            pack: packName,
-            workflow: workflow.id,
-            reason: overBudget,
-          });
-          continue;
-        }
-
-        try {
-          const dedupeKey = `event:${this.workspaceId}:${event.eventId}:${workflow.id}`;
-          const runId = dedupeRunId(dedupeKey);
-          const selected = this.variantSelector
-            ? await this.variantSelector.select(this.workspaceId, runId)
-            : null;
-          const runMode =
-            process.env.KIT_EVENT_RUN_MODE === "live" ? "LIVE" : "DRY_RUN";
-          const started = await startJob(
-            this.store,
-            {
-              kind: "packRun",
-              packDir: selected ? selected.path : pack.dir,
-              workflow: workflow.id,
-              evidenceText: JSON.stringify({ event, payload: payload ?? null }),
-              runId,
-              dedupeKey,
-              eventId: event.eventId,
-              workspaceId: this.workspaceId,
-              runMode,
-              stub: process.env.KIT_MODEL_MODE === "stub",
-              // Rule 10 event priority → PriorityClass (60 §2). Explicit
-              // payload priority/tier wins; non-LIVE event runs fall back to P3.
-              priority: priorityClassFor({
-                priority: eventPriorityOf(payload),
-                runMode,
-              }),
-              origin: {
-                kind: "event",
-                triggerId: `${packName}:${workflow.id}`,
-                triggerRunId: event.eventId,
-                actor: "trigger:event-router",
-              },
-              ...(selected
-                ? {
-                    variant: {
-                      role: "canary" as const,
-                      variantId: selected.variantId,
-                      trafficPercent: selected.trafficPercent,
-                    },
-                  }
-                : {}),
-            },
-            { repoRoot: this.repoRoot, allowPackOutsideRoot: true },
           );
-          if (started.deduped) {
-            result.skipped.push({
-              pack: packName,
-              workflow: workflow.id,
-              reason: "duplicate event",
-            });
-            continue;
-          }
-          if (used) {
-            used.runs += 1;
-            used.costCny += estimate;
-          }
+          return null;
+        });
+        if (!fired) {
+          continue;
+        }
+
+        if (fired.dispatch === "STARTED" && fired.jobId) {
           result.started.push({
             pack: packName,
             workflow: workflow.id,
-            runId: started.jobId,
+            runId: fired.jobId,
             ...(selected ? { variant: "canary" as const } : {}),
           });
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          if (error instanceof JobError && error.code === "budget_exceeded") {
-            result.skipped.push({
-              pack: packName,
-              workflow: workflow.id,
-              reason: message,
-            });
-          } else if (
-            /already started|WorkflowExecutionAlreadyStarted/i.test(message)
-          ) {
-            result.skipped.push({
-              pack: packName,
-              workflow: workflow.id,
-              reason: "duplicate event",
-            });
-          } else {
-            result.errors.push(`${packName}/${workflow.id}: ${message}`);
-          }
+          continue;
         }
+        if (fired.dispatch === "USE_EXISTING") {
+          result.skipped.push({
+            pack: packName,
+            workflow: workflow.id,
+            reason: "duplicate event",
+          });
+          continue;
+        }
+        if (fired.dispatch === "SKIPPED") {
+          result.skipped.push({
+            pack: packName,
+            workflow: workflow.id,
+            reason: fired.reason ?? "skipped by dispatch gate",
+          });
+          continue;
+        }
+        const message = fired.reason ?? "dispatch failed";
+        if (
+          fired.gate === "budget-ledger" ||
+          /budget|exceeded/i.test(message)
+        ) {
+          result.skipped.push({
+            pack: packName,
+            workflow: workflow.id,
+            reason: message,
+          });
+          continue;
+        }
+        if (/already started|AlreadyStarted/i.test(message)) {
+          result.skipped.push({
+            pack: packName,
+            workflow: workflow.id,
+            reason: "duplicate event",
+          });
+          continue;
+        }
+        result.errors.push(`${packName}/${workflow.id}: ${message}`);
       }
     }
 
     return result;
-  }
-
-  private async loadUsage(
-    workflowId: string,
-    sinceIso: string,
-    withCost: boolean,
-  ): Promise<BudgetUsage> {
-    if (!withCost) {
-      const [row] = await this.store.sql<Array<{ count: number | string }>>`
-        SELECT COUNT(*) AS count FROM runs
-        WHERE workflow_id = ${workflowId} AND created_at >= ${sinceIso}
-      `;
-      return { runs: Number(row?.count ?? 0), costCny: 0 };
-    }
-    const rows = await this.store.sql<Array<{ run_id: string }>>`
-      SELECT run_id FROM runs
-      WHERE workflow_id = ${workflowId} AND created_at >= ${sinceIso}
-      ORDER BY created_at DESC
-      LIMIT 500
-    `;
-    let costCny = 0;
-    for (const row of rows) {
-      costCny += await this.runCost(row.run_id);
-    }
-    return { runs: rows.length, costCny };
-  }
-
-  private async runCost(runId: string): Promise<number> {
-    const artifacts = await this.store.artifactStore.listByRun(runId);
-    let total = 0;
-    for (const artifact of artifacts) {
-      const manifest = await this.store.manifests.get(artifact.manifestId);
-      total += manifest?.cost.amount ?? 0;
-    }
-    return total;
   }
 
   private async loadPacks(): Promise<LoadedPack[]> {
@@ -364,64 +286,40 @@ export class EventRouter {
 export function resolveEventBudget(
   declared: EventBudget | undefined,
   env: Record<string, string | undefined> = process.env,
-): EventBudget | undefined {
-  const dailyRuns =
-    declared?.dailyRuns ?? positiveInt(env.KIT_EVENT_DAILY_RUNS);
-  const dailyCostCny =
-    declared?.dailyCostCny ?? nonNegativeNumber(env.KIT_EVENT_DAILY_COST_CNY);
-  if (dailyRuns === undefined && dailyCostCny === undefined) {
-    return undefined;
-  }
-  return {
-    ...(dailyRuns !== undefined ? { dailyRuns } : {}),
-    ...(dailyCostCny !== undefined ? { dailyCostCny } : {}),
-  };
+): TriggerBudget | undefined {
+  return resolveTriggerBudget({ budget: declared }, "event", env);
 }
 
-export function eventBudgetSkip(
-  budget: EventBudget | undefined,
-  usage: BudgetUsage,
-  estimateCny: number,
-): string | null {
-  if (!budget) {
-    return null;
-  }
-  if (budget.dailyRuns !== undefined && usage.runs >= budget.dailyRuns) {
-    return `daily run budget reached (${usage.runs}/${budget.dailyRuns})`;
-  }
-  if (budget.dailyCostCny !== undefined) {
-    const projected = round4(usage.costCny + estimateCny);
-    if (projected > budget.dailyCostCny) {
-      return `daily cost budget would be exceeded (${projected} > ${budget.dailyCostCny} CNY)`;
-    }
-  }
-  return null;
+function buildEventTrigger(input: {
+  triggerId: string;
+  eventType: string;
+  enabled: boolean;
+}): Trigger {
+  return triggerSchema.parse({
+    triggerId: input.triggerId,
+    kind: "event",
+    source: "runtime",
+    enabled: input.enabled,
+    filter: { eventType: input.eventType },
+    routeRef: `event:${input.triggerId}`,
+    actor: "trigger:event-router",
+  });
 }
 
-export function startOfUtcDay(now: Date): Date {
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
-}
-
-function positiveInt(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
-}
-
-function nonNegativeNumber(value: string | undefined): number | undefined {
-  if (value === undefined || value === "") {
-    return undefined;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
-}
-
-function round4(value: number): number {
-  return Math.round(value * 10000) / 10000;
+function buildEventRoute(input: {
+  routeId: string;
+  triggerRef: string;
+  packDir: string;
+  workflow: string;
+  runMode: "DRY_RUN" | "LIVE";
+  budget?: TriggerBudget;
+}): EventRoute {
+  return eventRouteSchema.parse({
+    ...input,
+    jobKind: "packRun",
+    // The runtime resolves packs (and canary variants) to absolute paths.
+    allowPackOutsideRoot: true,
+  });
 }
 
 /**

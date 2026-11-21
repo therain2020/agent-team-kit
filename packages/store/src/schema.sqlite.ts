@@ -237,6 +237,37 @@ export const autopilotState = sqliteTable(
   (table) => [primaryKey({ columns: [table.workspaceId, table.packDir] })],
 );
 
+/** One row per trigger firing (96 §3.1); the audit/replay entry point. */
+export const triggerRuns = sqliteTable(
+  "trigger_runs",
+  {
+    triggerRunId: text("trigger_run_id").primaryKey(),
+    workspaceId: text("workspace_id").notNull(),
+    triggerId: text("trigger_id").notNull(),
+    triggerKind: text("trigger_kind").notNull(),
+    routeId: text("route_id").notNull(),
+    jobKind: text("job_kind").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    jobId: text("job_id"),
+    status: text("status").notNull(),
+    launchedAt: text("launched_at").notNull(),
+    estimateCny: real("estimate_cny").notNull().default(0),
+    payloadRef: text("payload_ref"),
+    lastError: text("last_error"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_trigger_runs_slot").on(table.triggerId, table.dedupeKey),
+    index("idx_trigger_runs_trigger").on(
+      table.workspaceId,
+      table.triggerId,
+      table.launchedAt,
+    ),
+    index("idx_trigger_runs_job").on(table.workspaceId, table.jobId),
+  ],
+);
+
 export const managerSessions = sqliteTable(
   "manager_sessions",
   {

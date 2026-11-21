@@ -49,6 +49,7 @@ import {
   fromRunbookDrillRow,
   fromRunbookRow,
   fromStageRow,
+  fromTriggerRunRow,
   toArtifactRow,
   toBlobRow,
   toDegradationAuditRow,
@@ -97,6 +98,9 @@ import type {
   RunbookListOptions,
   RunbookStore,
   StageStore,
+  TriggerRunListOptions,
+  TriggerRunRecord,
+  TriggerRunStore,
 } from "./repositories";
 import type * as sqliteSchema from "./schema.sqlite";
 import {
@@ -118,6 +122,7 @@ import {
   runbooks,
   runs,
   stages,
+  triggerRuns,
 } from "./schema.sqlite";
 import {
   VersionConflictError,
@@ -713,6 +718,101 @@ export class SqliteAutopilotStateStore implements AutopilotStateStore {
     }
     record.version = Number(row.version);
     return true;
+  }
+}
+
+export class SqliteTriggerRunStore implements TriggerRunStore {
+  constructor(private readonly db: SqliteDatabase) {}
+
+  async create(record: TriggerRunRecord): Promise<boolean> {
+    const rows = await this.db
+      .insert(triggerRuns)
+      .values({
+        triggerRunId: record.triggerRunId,
+        workspaceId: record.workspaceId,
+        triggerId: record.triggerId,
+        triggerKind: record.kind,
+        routeId: record.routeId,
+        jobKind: record.jobKind,
+        dedupeKey: record.dedupeKey,
+        jobId: record.jobId,
+        status: record.status,
+        launchedAt: record.launchedAt,
+        estimateCny: record.estimateCny,
+        payloadRef: record.payloadRef,
+        lastError: record.lastError,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      })
+      .onConflictDoNothing()
+      .returning({ triggerRunId: triggerRuns.triggerRunId });
+    return rows.length > 0;
+  }
+
+  async get(triggerRunId: string): Promise<TriggerRunRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(triggerRuns)
+      .where(eq(triggerRuns.triggerRunId, triggerRunId))
+      .limit(1);
+    return row ? fromTriggerRunRow(row) : null;
+  }
+
+  async findByDedupeKey(
+    triggerId: string,
+    dedupeKey: string,
+  ): Promise<TriggerRunRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(triggerRuns)
+      .where(
+        and(
+          eq(triggerRuns.triggerId, triggerId),
+          eq(triggerRuns.dedupeKey, dedupeKey),
+        ),
+      )
+      .limit(1);
+    return row ? fromTriggerRunRow(row) : null;
+  }
+
+  async list(
+    workspaceId: string,
+    options: TriggerRunListOptions = {},
+  ): Promise<TriggerRunRecord[]> {
+    const limit = Math.max(1, Math.min(options.limit ?? 50, 5000));
+    const conditions: SQL[] = [eq(triggerRuns.workspaceId, workspaceId)];
+    if (options.triggerId) {
+      conditions.push(eq(triggerRuns.triggerId, options.triggerId));
+    }
+    if (options.status) {
+      conditions.push(eq(triggerRuns.status, options.status));
+    }
+    if (options.since) {
+      conditions.push(sql`${triggerRuns.launchedAt} >= ${options.since}`);
+    }
+    const rows = await this.db
+      .select()
+      .from(triggerRuns)
+      .where(and(...conditions))
+      .orderBy(desc(triggerRuns.launchedAt))
+      .limit(limit);
+    return rows.map(fromTriggerRunRow);
+  }
+
+  async finish(
+    triggerRunId: string,
+    jobId: string | null,
+    status: string,
+    estimateCny: number,
+    lastError: string | null,
+    updatedAt: string,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(triggerRuns)
+      .set({ jobId, status, estimateCny, lastError, updatedAt })
+      .where(eq(triggerRuns.triggerRunId, triggerRunId))
+      .returning({ triggerRunId: triggerRuns.triggerRunId });
+    return rows.length > 0;
   }
 }
 

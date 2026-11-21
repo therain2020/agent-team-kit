@@ -25,6 +25,7 @@
     "@kit/pack": "workspace:*",
     "@kit/source": "workspace:*",
     "@kit/store": "workspace:*",
+    "@kit/trigger": "workspace:*",
     "@kit/workshop": "workspace:*",
     "@kit/workflow": "workspace:*",
     "ai": "^7.0.173",

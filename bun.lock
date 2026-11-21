@@ -35,6 +35,7 @@
         "@kit/source": "workspace:*",
         "@kit/store": "workspace:*",
         "@kit/telemetry": "workspace:*",
+        "@kit/trigger": "workspace:*",
         "@kit/workflow": "workspace:*",
         "@kit/workshop": "workspace:*",
         "@opentelemetry/api": "^1.9.0",
@@ -72,6 +73,7 @@
         "@kit/store": "workspace:*",
         "@kit/telemetry": "workspace:*",
         "@kit/tools": "workspace:*",
+        "@kit/trigger": "workspace:*",
         "@kit/workflow": "workspace:*",
         "@opentelemetry/api": "^1.9.0",
         "@temporalio/activity": "^1.15.0",
@@ -102,6 +104,7 @@
         "@kit/pack": "workspace:*",
         "@kit/source": "workspace:*",
         "@kit/store": "workspace:*",
+        "@kit/trigger": "workspace:*",
         "@kit/workflow": "workspace:*",
         "@kit/workshop": "workspace:*",
         "ai": "^7.0.173",
@@ -151,6 +154,7 @@
         "@kit/ops": "workspace:*",
         "@kit/pack": "workspace:*",
         "@kit/store": "workspace:*",
+        "@kit/trigger": "workspace:*",
         "@kit/workflow": "workspace:*",
       },
     },
@@ -349,6 +353,19 @@
       "dependencies": {
         "@kit/core": "workspace:*",
         "diff": "^9.0.0",
+      },
+    },
+    "packages/trigger": {
+      "name": "@kit/trigger",
+      "version": "0.9.0",
+      "dependencies": {
+        "@kit/core": "workspace:*",
+        "@kit/job": "workspace:*",
+        "@kit/ops": "workspace:*",
+        "@kit/pack": "workspace:*",
+        "@kit/store": "workspace:*",
+        "yaml": "^2.6.1",
+        "zod": "^3.24.1",
       },
     },
     "packages/workflow": {
@@ -688,6 +705,8 @@
     "@kit/testing": ["@kit/testing@workspace:packages/testing"],
 
     "@kit/tools": ["@kit/tools@workspace:packages/tools"],
+
+    "@kit/trigger": ["@kit/trigger@workspace:packages/trigger"],
 
     "@kit/web": ["@kit/web@workspace:apps/web"],
 

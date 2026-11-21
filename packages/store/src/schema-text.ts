@@ -109,6 +109,34 @@ CREATE TABLE IF NOT EXISTS autopilot_state (
   PRIMARY KEY (workspace_id, pack_dir)
 );
 
+CREATE TABLE IF NOT EXISTS trigger_runs (
+  trigger_run_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  trigger_id TEXT NOT NULL,
+  trigger_kind TEXT NOT NULL,
+  route_id TEXT NOT NULL,
+  job_kind TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  job_id TEXT,
+  status TEXT NOT NULL,
+  launched_at TIMESTAMPTZ NOT NULL,
+  estimate_cny NUMERIC NOT NULL DEFAULT 0,
+  payload_ref TEXT,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (trigger_id, dedupe_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trigger_runs_trigger
+  ON trigger_runs(workspace_id, trigger_id, launched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trigger_runs_job
+  ON trigger_runs(workspace_id, job_id);
+
+-- One TriggerRun per job: a job is launched by exactly one firing.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_trigger_runs_job_id
+  ON trigger_runs(job_id);
+
 CREATE TABLE IF NOT EXISTS run_requests (
   request_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL UNIQUE,
@@ -1170,6 +1198,34 @@ CREATE TABLE IF NOT EXISTS autopilot_state (
   version INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (workspace_id, pack_dir)
 );
+
+CREATE TABLE IF NOT EXISTS trigger_runs (
+  trigger_run_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  trigger_id TEXT NOT NULL,
+  trigger_kind TEXT NOT NULL,
+  route_id TEXT NOT NULL,
+  job_kind TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  job_id TEXT,
+  status TEXT NOT NULL,
+  launched_at TEXT NOT NULL,
+  estimate_cny REAL NOT NULL DEFAULT 0,
+  payload_ref TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (trigger_id, dedupe_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_trigger_runs_trigger
+  ON trigger_runs(workspace_id, trigger_id, launched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trigger_runs_job
+  ON trigger_runs(workspace_id, job_id);
+
+-- One TriggerRun per job: a job is launched by exactly one firing.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_trigger_runs_job_id
+  ON trigger_runs(job_id);
 
 CREATE TABLE IF NOT EXISTS run_requests (
   request_id TEXT PRIMARY KEY,

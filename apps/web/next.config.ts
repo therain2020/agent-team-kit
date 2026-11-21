@@ -23,6 +23,7 @@ const nextConfig: NextConfig = {
     "@kit/evolution",
     "@kit/iteration",
     "@kit/job",
+    "@kit/trigger",
     "@kit/workflow",
     "@kit/source",
     "@kit/workshop",

@@ -101,14 +101,23 @@ describe("autopilot trigger writes", () => {
       workflowId: string;
       runMode: string;
       initialInput: string;
-      origin: unknown;
+      origin: { kind: string; triggerId: string; triggerRunId: string };
     };
     expect(payload.workflowId).toBe("daily-radar");
     expect(payload.runMode).toBe("DRY_RUN");
     expect(payload.initialInput).toContain("scheduled evidence");
-    expect(payload.origin).toEqual({
+    expect(payload.origin).toMatchObject({
       kind: "schedule",
       triggerId: "daily-radar",
     });
+    expect(payload.origin.triggerRunId).toMatch(/^trg_/);
+
+    const triggerRuns = await store.triggerRuns.list("default", {
+      triggerId: "daily-radar",
+    });
+    expect(triggerRuns).toHaveLength(1);
+    expect(triggerRuns[0]?.jobId).toBe(launched?.runId);
+    expect(triggerRuns[0]?.triggerRunId).toBe(payload.origin.triggerRunId);
+    expect(triggerRuns[0]?.status).toBe("started");
   }, 60_000);
 });

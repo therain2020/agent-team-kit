@@ -21,6 +21,7 @@
       "@kit/iteration": ["../../packages/iteration/src/index.ts"],
       "@kit/job": ["../../packages/job/src/index.ts"],
       "@kit/store": ["../../packages/store/src/index.ts"],
+      "@kit/trigger": ["../../packages/trigger/src/index.ts"],
       "@kit/queue": ["../../packages/queue/src/index.ts"],
       "@kit/workflow": ["../../packages/workflow/src/index.ts"],
       "@kit/model": ["../../packages/model/src/index.ts"],

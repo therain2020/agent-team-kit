@@ -1,15 +1,6 @@
-import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
 import path from "node:path";
-import {
-  type AutopilotConfig,
-  type AutopilotSchedule,
-  isAutoApproveOriginEligible,
-  resolveKillSwitch,
-  utcDayKey,
-} from "@kit/core";
+import { isAutoApproveOriginEligible, resolveKillSwitch } from "@kit/core";
 import { StoreEvolutionRepository, runEvolutionCycle } from "@kit/evolution";
-import { JobError, startJob } from "@kit/job";
 import {
   backfillApprovals,
   decideApprovalRecord,
@@ -18,13 +9,19 @@ import {
   recordDecision,
 } from "@kit/manager";
 import { getActiveAutonomyPreset, getOpsGate } from "@kit/ops";
-import { type LoadedPack, loadPack, simulatePack } from "@kit/pack";
 import {
   appendOp,
   initStore,
   loadStoreConfig,
   withStoreLock,
 } from "@kit/store";
+import {
+  type TriggerPlanePack,
+  fireTrigger,
+  loadTriggerPlane,
+  loadTriggerUsage,
+  registryFromPlane,
+} from "@kit/trigger";
 import { createTemporalClient } from "@kit/workflow";
 import { nextCronOccurrence } from "./cron";
 import { applyAutonomyPreset } from "./preset";
@@ -48,12 +45,7 @@ export interface TickResult {
   expired?: string[];
 }
 
-interface PackContext {
-  dirName: string;
-  dir: string;
-  loaded: LoadedPack;
-  config: AutopilotConfig;
-}
+type PackContext = TriggerPlanePack;
 
 export async function runAutopilotTick(
   options: { repoRoot?: string; now?: Date; dryRun?: boolean } = {},
@@ -73,8 +65,6 @@ export async function runAutopilotTick(
     return result;
   }
 
-  const packs = await loadAutopilotPacks(repoRoot);
-  result.packs = packs.length;
   const configuredRoot = process.env.KIT_BLOB_ROOT;
   const blobRoot = configuredRoot
     ? path.isAbsolute(configuredRoot)
@@ -83,12 +73,6 @@ export async function runAutopilotTick(
     : path.join(repoRoot, ".tmp", "blobs");
   const store = await initStore(
     loadStoreConfig({ ...process.env, KIT_BLOB_ROOT: blobRoot }),
-  );
-  const activeRuns = await store.runs.list({ limit: 100 });
-  const runningWorkflows = new Set(
-    activeRuns
-      .filter((run) => run.status === "running" || run.status === "paused")
-      .map((run) => run.workflowId),
   );
   let temporal: Awaited<ReturnType<typeof createTemporalClient>> | undefined;
   const gate = await getOpsGate(store, now, WORKSPACE_ID);
@@ -99,6 +83,18 @@ export async function runAutopilotTick(
   const preset = await getActiveAutonomyPreset(store, WORKSPACE_ID);
 
   try {
+    // One loading layer: `autopilot.yaml` maps to Trigger/EventRoute here, and
+    // an invalid file makes the pack refuse to schedule (96 §5.4).
+    const plane = await loadTriggerPlane(repoRoot, {
+      transformConfig: (config) => applyAutonomyPreset(config, preset),
+    });
+    const packs = plane.packs;
+    result.packs = packs.length;
+    // Invalid packs are reported and excluded from `plane.packs`; valid packs
+    // still tick so one bad file cannot silently freeze the whole daemon.
+    result.errors.push(...plane.errors);
+    const registry = registryFromPlane(plane);
+
     const hit = resolveKillSwitch(await store.killSwitches.listActive(), {
       workspaceId: WORKSPACE_ID,
     });
@@ -120,9 +116,6 @@ export async function runAutopilotTick(
         await maintainApprovals(store, now, result);
         for (const pack of packs) {
           try {
-            const effective: PackContext = preset
-              ? { ...pack, config: applyAutonomyPreset(pack.config, preset) }
-              : pack;
             const state = await ensureState(
               store.autopilotState,
               WORKSPACE_ID,
@@ -132,7 +125,7 @@ export async function runAutopilotTick(
             );
             // The preset enables the loop at runtime without persisting
             // enabled=true, so rollback needs no state surgery.
-            if (!state.enabled && !effective.config.enabled) {
+            if (!state.enabled && !pack.config.enabled) {
               state.lastTickAt = now.toISOString();
               if (!(await saveState(store.autopilotState, state))) {
                 result.errors.push(
@@ -147,28 +140,29 @@ export async function runAutopilotTick(
 
             if (!gate.readOnly) {
               await processSchedules({
-                pack: effective,
+                pack,
                 state,
                 now,
-                runningWorkflows,
                 dryRun: options.dryRun ?? false,
                 repoRoot,
                 store,
+                registry,
                 result,
               });
 
               await processIterations({
-                pack: effective,
+                pack,
                 state,
                 now,
                 dryRun: options.dryRun ?? false,
                 repoRoot,
                 store,
+                registry,
                 result,
               });
 
               await processAutoApprovals({
-                pack: effective,
+                pack,
                 state,
                 now,
                 store,
@@ -180,13 +174,27 @@ export async function runAutopilotTick(
               });
 
               await processEvolution({
-                pack: effective,
+                pack,
                 state,
                 now,
                 dryRun: options.dryRun ?? false,
                 store,
                 result,
               });
+            }
+
+            // Counters stay as a read-model projection; TriggerRun is the
+            // single budget fact source (96 §5.1).
+            try {
+              const usage = await packUsage(store, pack, now);
+              state.runsToday = usage.runs;
+              state.spentToday = usage.costCny;
+            } catch (error) {
+              result.errors.push(
+                `${pack.dirName}: usage projection failed: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+              );
             }
 
             state.lastTickAt = now.toISOString();
@@ -290,63 +298,86 @@ async function recordTickOp(
   }
 }
 
-async function loadAutopilotPacks(repoRoot: string): Promise<PackContext[]> {
-  const packsRoot = path.join(repoRoot, "packs");
-  if (!existsSync(packsRoot)) {
-    return [];
-  }
-  const entries = await readdir(packsRoot, { withFileTypes: true });
-  const packs: PackContext[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const dir = path.join(packsRoot, entry.name);
-    if (!existsSync(path.join(dir, "team.yaml"))) {
-      continue;
-    }
-    const loaded = await loadPack(dir);
-    if (!loaded.ok || !loaded.autopilot) {
-      continue;
-    }
-    packs.push({
-      dirName: entry.name,
-      dir,
-      loaded,
-      config: loaded.autopilot,
-    });
-  }
-  return packs;
-}
-
 async function processSchedules(input: {
   pack: PackContext;
   state: AutopilotState;
   now: Date;
-  runningWorkflows: Set<string>;
   dryRun: boolean;
   repoRoot: string;
   store: Awaited<ReturnType<typeof initStore>>;
+  registry: ReturnType<typeof registryFromPlane>;
   result: TickResult;
 }): Promise<boolean> {
-  const { pack, state, now, repoRoot, result } = input;
-  let changed = false;
-  const simulation = simulatePack(pack.loaded);
+  return processDueTriggers({ ...input, jobKind: "packRun" });
+}
 
-  for (const schedule of pack.config.schedules) {
-    const nextKey = schedule.id;
+async function processIterations(input: {
+  pack: PackContext;
+  state: AutopilotState;
+  now: Date;
+  dryRun: boolean;
+  repoRoot: string;
+  store: Awaited<ReturnType<typeof initStore>>;
+  registry: ReturnType<typeof registryFromPlane>;
+  result: TickResult;
+}): Promise<boolean> {
+  return processDueTriggers({ ...input, jobKind: "iteration" });
+}
+
+/**
+ * One scheduling loop for every cron-backed trigger. Due slots advance here;
+ * everything else (gates, budget, startJob, TriggerRun write-back) belongs to
+ * `fireTrigger`, so adding a trigger kind never touches this function.
+ */
+async function processDueTriggers(input: {
+  pack: PackContext;
+  state: AutopilotState;
+  now: Date;
+  dryRun: boolean;
+  repoRoot: string;
+  store: Awaited<ReturnType<typeof initStore>>;
+  registry: ReturnType<typeof registryFromPlane>;
+  result: TickResult;
+  jobKind: "packRun" | "iteration";
+}): Promise<boolean> {
+  const { pack, state, now, repoRoot, store, result } = input;
+  let changed = false;
+
+  for (const route of pack.routes) {
+    if (route.jobKind !== input.jobKind) {
+      continue;
+    }
+    const trigger = pack.triggers.find(
+      (item) => item.triggerId === route.triggerRef,
+    );
+    // The console toggle lives in state; either side can enable a pack.
+    if (!trigger?.schedule || (!trigger.enabled && !state.enabled)) {
+      continue;
+    }
+    if (input.jobKind === "iteration" && !pack.loaded.iteration) {
+      result.errors.push(
+        `${pack.dirName}/${trigger.triggerId}: iteration.yaml is missing`,
+      );
+      continue;
+    }
+    const nextKey =
+      input.jobKind === "iteration"
+        ? `__iteration:${trigger.triggerId}`
+        : trigger.triggerId;
     const nextValue = state.nextRuns[nextKey];
     if (!nextValue) {
       try {
         state.nextRuns[nextKey] = nextCronOccurrence(
-          schedule.cron,
+          trigger.schedule.cron,
           now,
-          pack.config.timezone,
+          trigger.schedule.timezone,
         ).toISOString();
         changed = true;
       } catch (error) {
         result.errors.push(
-          `${pack.dirName}/${schedule.id}: ${error instanceof Error ? error.message : String(error)}`,
+          `${pack.dirName}/${trigger.triggerId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         );
       }
       continue;
@@ -360,231 +391,77 @@ async function processSchedules(input: {
 
     try {
       state.nextRuns[nextKey] = nextCronOccurrence(
-        schedule.cron,
+        trigger.schedule.cron,
         now,
-        pack.config.timezone,
+        trigger.schedule.timezone,
       ).toISOString();
     } catch (error) {
       result.errors.push(
-        `${pack.dirName}/${schedule.id}: ${error instanceof Error ? error.message : String(error)}`,
+        `${pack.dirName}/${trigger.triggerId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       );
       continue;
     }
     changed = true;
 
-    if (input.runningWorkflows.has(schedule.workflow)) {
-      result.errors.push(
-        `${pack.dirName}/${schedule.id}: skipped, previous run still active`,
-      );
-      continue;
-    }
-
-    const simulated = simulation.workflows.find(
-      (workflow) => workflow.id === schedule.workflow,
-    );
-    const estimate = simulated?.totalCostCny ?? 0;
-    if (!withinBudget(state, schedule, estimate)) {
-      result.errors.push(
-        `${pack.dirName}/${schedule.id}: skipped, daily budget reached`,
-      );
-      continue;
-    }
+    const workflowLabel =
+      route.jobKind === "iteration"
+        ? `iteration:${trigger.triggerId}`
+        : (route.workflow ?? trigger.triggerId);
 
     if (input.dryRun) {
       result.launched.push({
         pack: pack.dirName,
-        workflow: schedule.workflow,
+        workflow: workflowLabel,
         runId: "dry-run",
       });
       continue;
     }
 
-    try {
-      const inputFile = schedule.inputFile
-        ? path.isAbsolute(schedule.inputFile)
-          ? schedule.inputFile
-          : path.resolve(pack.dir, schedule.inputFile)
-        : undefined;
-      const started = await startJob(
-        input.store,
-        {
-          kind: "packRun",
-          packDir: pack.dir,
-          workflow: schedule.workflow,
-          ...(inputFile ? { inputFile } : {}),
-          runMode: schedule.mode,
-          stub: process.env.KIT_MODEL_MODE === "stub",
-          dedupeKey: `autopilot:${pack.dirName}:${schedule.id}:${slot}`,
-          origin: {
-            kind: "schedule",
-            triggerId: schedule.id,
-            actor: "policy:autopilot",
-          },
-        },
-        { repoRoot },
-      );
-      if (started.deduped) {
-        result.errors.push(
-          `${pack.dirName}/${schedule.id}: skipped, already launched for slot ${slot}`,
-        );
-        continue;
-      }
-      state.runsToday += 1;
-      state.spentToday =
-        Math.round((state.spentToday + estimate) * 10000) / 10000;
-      input.runningWorkflows.add(schedule.workflow);
-      result.launched.push({
-        pack: pack.dirName,
-        workflow: schedule.workflow,
-        runId: started.jobId,
-      });
-    } catch (error) {
-      const message =
-        error instanceof JobError && error.code === "budget_exceeded"
-          ? `skipped, ${error.message}`
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      state.lastError = message;
-      result.errors.push(`${pack.dirName}/${schedule.id}: ${message}`);
-    }
-  }
-
-  return changed;
-}
-
-async function processIterations(input: {
-  pack: PackContext;
-  state: AutopilotState;
-  now: Date;
-  dryRun: boolean;
-  repoRoot: string;
-  store: Awaited<ReturnType<typeof initStore>>;
-  result: TickResult;
-}): Promise<boolean> {
-  const { pack, state, now, repoRoot, store, result } = input;
-  let changed = false;
-
-  for (const iteration of pack.config.iterations) {
-    if (!pack.loaded.iteration) {
-      result.errors.push(
-        `${pack.dirName}/${iteration.id}: iteration.yaml is missing`,
-      );
-      continue;
-    }
-    const key = `__iteration:${iteration.id}`;
-    const nextValue = state.nextRuns[key];
-    if (!nextValue) {
-      try {
-        state.nextRuns[key] = nextCronOccurrence(
-          iteration.cron,
-          now,
-          pack.config.timezone,
-        ).toISOString();
-        changed = true;
-      } catch (error) {
-        result.errors.push(
-          `${pack.dirName}/${iteration.id}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-      continue;
-    }
-
-    const nextAt = new Date(nextValue);
-    if (Number.isNaN(nextAt.getTime()) || nextAt.getTime() > now.getTime()) {
-      continue;
-    }
-    const slot = nextValue;
-
-    try {
-      state.nextRuns[key] = nextCronOccurrence(
-        iteration.cron,
-        now,
-        pack.config.timezone,
-      ).toISOString();
-    } catch (error) {
-      result.errors.push(
-        `${pack.dirName}/${iteration.id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    changed = true;
-
-    if (
-      iteration.budget?.dailyRuns !== undefined &&
-      state.runsToday >= iteration.budget.dailyRuns
-    ) {
-      result.errors.push(
-        `${pack.dirName}/${iteration.id}: skipped, daily run budget reached`,
-      );
-      continue;
-    }
-
-    if (input.dryRun) {
-      result.launched.push({
-        pack: pack.dirName,
-        workflow: `iteration:${iteration.id}`,
-        runId: "dry-run",
-      });
-      continue;
-    }
-
-    if (iteration.budget?.dailyCostCny !== undefined) {
-      const spent = await daySpendCny(store, WORKSPACE_ID, now);
-      if (spent >= iteration.budget.dailyCostCny) {
-        result.errors.push(
-          `${pack.dirName}/${iteration.id}: skipped, daily cost budget reached`,
-        );
-        continue;
-      }
-    }
-
-    const dedupeKey = `autopilot:${pack.dirName}:${iteration.id}:${slot}`;
-    try {
-      const started = await startJob(
+    const fired = await fireTrigger(
+      {
+        triggerId: trigger.triggerId,
+        dedupeKey: `autopilot:${pack.dirName}:${trigger.triggerId}:${slot}`,
+        trigger,
+        route,
+      },
+      {
         store,
-        {
-          kind: "iteration",
-          packDir: pack.dir,
-          goal: iteration.goal,
-          ...(iteration.acceptance ? { acceptance: iteration.acceptance } : {}),
-          maxTasks: iteration.maxTasks,
-          maxRepair: iteration.maxRepair,
-          runMode: iteration.mode,
-          applyMode: iteration.mode === "LIVE" ? iteration.applyMode : "none",
-          ...(iteration.coder ? { coder: iteration.coder } : {}),
-          stub: false,
-          dedupeKey,
-          origin: {
-            kind: "schedule",
-            triggerId: iteration.id,
-            actor: "policy:autopilot",
-          },
-        },
-        { repoRoot },
-      );
-      if (started.deduped) {
-        result.errors.push(
-          `${pack.dirName}/${iteration.id}: skipped, already launched for slot ${slot}`,
-        );
-        continue;
-      }
-      state.runsToday += 1;
+        repoRoot,
+        workspaceId: WORKSPACE_ID,
+        now,
+        registry: input.registry,
+      },
+    ).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      state.lastError = message;
+      result.errors.push(`${pack.dirName}/${trigger.triggerId}: ${message}`);
+      return null;
+    });
+    if (!fired) {
+      continue;
+    }
+
+    if (fired.dispatch === "STARTED" && fired.jobId) {
       result.launched.push({
         pack: pack.dirName,
-        workflow: `iteration:${iteration.id}`,
-        runId: started.jobId,
+        workflow: workflowLabel,
+        runId: fired.jobId,
       });
-    } catch (error) {
-      const message =
-        error instanceof JobError && error.code === "budget_exceeded"
-          ? `skipped, ${error.message}`
-          : error instanceof Error
-            ? error.message
-            : String(error);
-      state.lastError = message;
-      result.errors.push(`${pack.dirName}/${iteration.id}: ${message}`);
+      continue;
     }
+    if (fired.dispatch === "USE_EXISTING") {
+      result.errors.push(
+        `${pack.dirName}/${trigger.triggerId}: skipped, already launched for slot ${slot}`,
+      );
+      continue;
+    }
+    const message = fired.reason ?? "dispatch failed";
+    if (fired.dispatch === "FAILED") {
+      state.lastError = message;
+    }
+    result.errors.push(`${pack.dirName}/${trigger.triggerId}: ${message}`);
   }
 
   return changed;
@@ -822,27 +699,6 @@ async function processEvolution(input: {
   return true;
 }
 
-function withinBudget(
-  state: AutopilotState,
-  schedule: AutopilotSchedule,
-  estimateCny: number,
-): boolean {
-  const budget = schedule.budget;
-  if (!budget) {
-    return true;
-  }
-  if (budget.dailyRuns !== undefined && state.runsToday >= budget.dailyRuns) {
-    return false;
-  }
-  if (
-    budget.dailyCostCny !== undefined &&
-    state.spentToday + estimateCny > budget.dailyCostCny
-  ) {
-    return false;
-  }
-  return true;
-}
-
 async function runCost(
   store: Awaited<ReturnType<typeof initStore>>,
   runId: string,
@@ -856,19 +712,25 @@ async function runCost(
   return total;
 }
 
-async function daySpendCny(
+async function packUsage(
   store: Awaited<ReturnType<typeof initStore>>,
-  workspaceId: string,
+  pack: PackContext,
   now: Date,
-): Promise<number> {
-  const dayKey = utcDayKey(now);
-  const budgets = await store.budgetService.listBudgets({
-    workspaceId,
-    scope: "day",
-    limit: 10,
-  });
-  const day = budgets.find((budget) => budget.targetKey === dayKey);
-  return day ? day.spentCnyMicro / 1_000_000 : 0;
+): Promise<{ runs: number; costCny: number }> {
+  let runs = 0;
+  let costCny = 0;
+  for (const trigger of pack.triggers) {
+    const usage = await loadTriggerUsage(
+      store,
+      WORKSPACE_ID,
+      trigger,
+      now,
+      true,
+    );
+    runs += usage.runs;
+    costCny += usage.costCny;
+  }
+  return { runs, costCny: Math.round(costCny * 10000) / 10000 };
 }
 
 function addCadence(now: Date, cadence: "daily" | "weekly"): string {

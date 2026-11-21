@@ -524,7 +524,9 @@ async function startIterationJob(
     );
   }
   const dedupeKey = input.dedupeKey?.trim();
-  const iterationId = newId("it");
+  // The trigger plane reserves the ledger before starting, so it supplies the
+  // iteration id; direct callers keep the generated id.
+  const iterationId = input.runId?.trim() || newId("it");
   const workflowId = dedupeKey
     ? `iteration-${workspaceId}-${hash(dedupeKey)}`
     : `iteration-${iterationId}`;
