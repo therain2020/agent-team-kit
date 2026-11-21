@@ -7,6 +7,7 @@ import {
   DEFAULT_DIVERGENCE_WINDOW,
   type EvolutionFreezeKind,
   type OutcomeSource,
+  PromotionGateError,
   StoreEvolutionRepository,
   buildDivergencePoints,
   canaryStatus,
@@ -22,13 +23,18 @@ import {
   evolutionCostReport,
   freezeEvolution,
   initVariant,
+  isVariantKind,
   loadEvolutionCycles,
   loadFreezeState,
   loadGovernanceEvents,
+  loadPromotionApprovals,
   promoteVariant,
   proposeVariant,
   readOutcomeObservations,
+  readVariantMeta,
   recordOutcome,
+  requestPromotionApprovals,
+  resolveVariantKind,
   rollbackCanary,
   runEvolutionCycle,
   scoreVariant,
@@ -36,6 +42,7 @@ import {
   startCanary,
   summarizeOutcomes,
   unfreezeEvolution,
+  validateVariantNonLive,
   verifyEvalSnapshot,
 } from "@kit/evolution";
 import { initStore, loadStoreConfig } from "@kit/store";
@@ -56,19 +63,43 @@ export function registerEvolve(program: Command): void {
     .description("Create a baseline variant from a pack")
     .requiredOption("--out <dir>", "variant output directory")
     .requiredOption("--name <name>", "variant name")
+    .option("--kind <kind>", "context | tool | architecture")
+    .option("--workspace <id>", "workspace that owns the variant")
     .option("--json", "machine-readable output", false)
     .action(
       async (
         packDir: string,
-        options: { out: string; name: string; json?: boolean },
+        options: {
+          out: string;
+          name: string;
+          kind?: string;
+          workspace?: string;
+          json?: boolean;
+        },
       ) => {
         const json = wantsJson(options);
+        if (options.kind && !isVariantKind(options.kind)) {
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              "kind must be context, tool, or architecture",
+            ),
+          );
+          return;
+        }
         try {
           const result = await withEvolutionRepo(async (repo) => {
             const created = await initVariant(
               packDir,
               options.out,
               options.name,
+              {
+                ...(options.kind ? { kind: options.kind } : {}),
+                ...(options.workspace
+                  ? { workspaceId: options.workspace }
+                  : { workspaceId: repo.workspaceId }),
+              },
             );
             await repo.saveVariant({
               meta: created.meta,
@@ -92,6 +123,8 @@ export function registerEvolve(program: Command): void {
     .requiredOption("--out <dir>", "variant output directory")
     .requiredOption("--name <name>", "variant name")
     .option("--model <alias>", "override model alias")
+    .option("--kind <kind>", "context | tool | architecture")
+    .option("--workspace <id>", "workspace that owns the variant")
     .option("--json", "machine-readable output", false)
     .action(
       async (
@@ -102,10 +135,22 @@ export function registerEvolve(program: Command): void {
           out: string;
           name: string;
           model?: string;
+          kind?: string;
+          workspace?: string;
           json?: boolean;
         },
       ) => {
         const json = wantsJson(options);
+        if (options.kind && !isVariantKind(options.kind)) {
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              "kind must be context, tool, or architecture",
+            ),
+          );
+          return;
+        }
         try {
           const result = await withEvolutionRepo(async (repo) => {
             const created = await proposeVariant(
@@ -115,6 +160,12 @@ export function registerEvolve(program: Command): void {
               options.out,
               options.name,
               options.model,
+              {
+                ...(options.kind ? { kind: options.kind } : {}),
+                ...(options.workspace
+                  ? { workspaceId: options.workspace }
+                  : { workspaceId: repo.workspaceId }),
+              },
             );
             await repo.saveVariant({
               meta: created.meta,
@@ -810,23 +861,217 @@ export function registerEvolve(program: Command): void {
 
   evolve
     .command("promote <variantDir>")
-    .description("Promote a variant into a target pack")
+    .description(
+      "Promote a variant into a target pack (three-party gate for architecture)",
+    )
     .requiredOption("--target <dir>", "target pack directory")
     .option("--apply", "write changes (default is dry-run)", false)
+    .option("--kind <kind>", "context | tool | architecture")
+    .option("--target-workspace <id>", "workspace that owns the target pack")
+    .option("--variant-workspace <id>", "workspace that owns the variant")
+    .option("--exemption-id <id>", "explicit cross-workspace exemption id")
+    .option("--exemption-reason <text>", "why the exemption was granted")
+    .option("--exemption-by <actor>", "who granted the exemption")
+    .option("--actor <actor>", "operator identity", "operator:cli")
     .option("--json", "machine-readable output", false)
     .action(
       async (
         variantDir: string,
-        options: { target: string; apply: boolean; json?: boolean },
+        options: {
+          target: string;
+          apply: boolean;
+          kind?: string;
+          targetWorkspace?: string;
+          variantWorkspace?: string;
+          exemptionId?: string;
+          exemptionReason?: string;
+          exemptionBy?: string;
+          actor: string;
+          json?: boolean;
+        },
+      ) => {
+        const json = wantsJson(options);
+        if (options.kind && !isVariantKind(options.kind)) {
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              "kind must be context, tool, or architecture",
+            ),
+          );
+          return;
+        }
+        if (
+          options.exemptionId &&
+          !(options.exemptionReason && options.exemptionBy)
+        ) {
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              "exemption-id requires exemption-reason and exemption-by",
+            ),
+          );
+          return;
+        }
+        try {
+          const result = await withEvolutionRepo(async (repo, store) => {
+            const meta = await readVariantMeta(variantDir);
+            const kind = resolveVariantKind({
+              ...(meta.kind ? { kind: meta.kind } : {}),
+              ...(isVariantKind(options.kind) ? { kind: options.kind } : {}),
+              changedFiles: meta.changedFiles,
+            });
+            const variantWorkspaceId =
+              options.variantWorkspace ?? meta.workspaceId ?? repo.workspaceId;
+            const targetWorkspaceId =
+              options.targetWorkspace ?? repo.workspaceId;
+            const approvals = await loadPromotionApprovals(store.approvals, {
+              workspaceId: targetWorkspaceId,
+              variantId: meta.id,
+              targetDir: options.target,
+            });
+            const validation =
+              kind === "architecture"
+                ? await validateVariantNonLive(variantDir)
+                : null;
+            const exemption = options.exemptionId
+              ? {
+                  exemptionId: options.exemptionId,
+                  variantId: meta.id,
+                  fromWorkspaceId: variantWorkspaceId,
+                  toWorkspaceId: targetWorkspaceId,
+                  reason: options.exemptionReason ?? "",
+                  approvedBy: options.exemptionBy ?? options.actor,
+                  approvedAt: new Date().toISOString(),
+                }
+              : null;
+            return await promoteVariant(
+              variantDir,
+              options.target,
+              options.apply,
+              repo,
+              {
+                kind,
+                variantWorkspaceId,
+                targetWorkspaceId,
+                approvals,
+                exemption,
+                validation,
+                actor: options.actor,
+              },
+            );
+          });
+          emitResult(json, result);
+        } catch (error) {
+          if (error instanceof PromotionGateError) {
+            emitError(
+              json,
+              new CliError(
+                "permission",
+                `promotion blocked (${error.code}): ${error.message}`,
+                { details: error.decision },
+              ),
+            );
+            return;
+          }
+          reportError("promote", error, json);
+        }
+      },
+    );
+
+  const approvals = evolve
+    .command("approvals")
+    .description("Evolution promotion approvals (three-party gate)");
+
+  approvals
+    .command("request <variantDir>")
+    .description("Queue approvals for a promotion subject")
+    .requiredOption("--target <dir>", "target pack directory")
+    .option("--requester <actor>", "who is asking for approval", "operator")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        variantDir: string,
+        options: { target: string; requester: string; json?: boolean },
       ) => {
         const json = wantsJson(options);
         try {
-          const result = await withEvolutionRepo((repo) =>
-            promoteVariant(variantDir, options.target, options.apply, repo),
-          );
-          emitResult(json, result);
+          const records = await withEvolutionRepo(async (repo, store) => {
+            const meta = await readVariantMeta(variantDir);
+            const kind = resolveVariantKind({
+              ...(meta.kind ? { kind: meta.kind } : {}),
+              changedFiles: meta.changedFiles,
+            });
+            return await requestPromotionApprovals(store.approvals, {
+              workspaceId: repo.workspaceId,
+              variantId: meta.id,
+              variantKind: kind,
+              targetDir: options.target,
+              requester: options.requester,
+            });
+          });
+          emitResult(json, records);
         } catch (error) {
-          reportError("promote", error, json);
+          reportError("approvals request", error, json);
+        }
+      },
+    );
+
+  approvals
+    .command("decide <approvalId>")
+    .description("Approve or reject a queued promotion approval")
+    .requiredOption("--by <actor>", "deciding operator")
+    .option("--approve", "approve the request", false)
+    .option("--reject", "reject the request", false)
+    .option("--reason <text>", "decision reason", "")
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (
+        approvalId: string,
+        options: {
+          by: string;
+          approve: boolean;
+          reject: boolean;
+          reason: string;
+          json?: boolean;
+        },
+      ) => {
+        const json = wantsJson(options);
+        if (options.approve === options.reject) {
+          emitError(
+            json,
+            new CliError("usage", "pass exactly one of --approve or --reject"),
+          );
+          return;
+        }
+        try {
+          const record = await withEvolutionRepo(async (_repo, store) => {
+            const current = await store.approvals.get(approvalId);
+            if (!current) {
+              throw new CliError(
+                "not_found",
+                `approval not found: ${approvalId}`,
+              );
+            }
+            const decided = await store.approvals.decide({
+              approvalId,
+              expectedVersion: current.version,
+              status: options.approve ? "approved" : "rejected",
+              decisionBy: options.by,
+              decisionReason: options.reason,
+            });
+            if (!decided.ok) {
+              throw new CliError(
+                "conflict",
+                `approval ${approvalId} could not be decided (${decided.code})`,
+              );
+            }
+            return decided.record;
+          });
+          emitResult(json, record);
+        } catch (error) {
+          reportError("approvals decide", error, json);
         }
       },
     );

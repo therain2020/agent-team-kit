@@ -24,6 +24,7 @@ import type {
 } from "./cycle";
 import type { EvolutionRecord, VariantMeta } from "./evolve";
 import type { EvolutionFreezeState } from "./freeze";
+import { isVariantKind } from "./promotion";
 import type {
   EvolutionRepository,
   StoredCanaryState,
@@ -130,6 +131,9 @@ interface DecisionRow {
   trigger_kind: string;
   reason: string;
   actor: string;
+  variant_kind: string | null;
+  subject_ref: string | null;
+  exemption_ref: string | null;
   created_at: Date | string;
 }
 
@@ -641,13 +645,15 @@ export class StoreEvolutionRepository implements EvolutionRepository {
       INSERT INTO evolution_decisions (
         decision_id, workspace_id, kind, variant_id, agent_id, from_status,
         to_status, from_traffic_percent, to_traffic_percent, trigger_kind,
-        reason, actor, created_at
+        reason, actor, variant_kind, subject_ref, exemption_ref, created_at
       ) VALUES (
         ${record.decisionId}, ${this.workspaceId}, ${record.kind},
         ${record.variantId}, ${record.agentId}, ${record.fromStatus},
         ${record.toStatus}, ${record.fromTrafficPercent},
         ${record.toTrafficPercent}, ${record.trigger}, ${record.reason},
-        ${record.actor}, ${record.createdAt}
+        ${record.actor}, ${record.variantKind ?? null},
+        ${record.subjectRef ?? null}, ${record.exemptionRef ?? null},
+        ${record.createdAt}
       )
       ON CONFLICT (decision_id) DO NOTHING
     `;
@@ -898,6 +904,11 @@ function mapDecision(row: DecisionRow): EvolutionDecisionRecord {
     reason: row.reason,
     actor: row.actor,
     createdAt: toIso(row.created_at) ?? new Date().toISOString(),
+    ...(isVariantKind(row.variant_kind)
+      ? { variantKind: row.variant_kind }
+      : {}),
+    ...(row.subject_ref ? { subjectRef: row.subject_ref } : {}),
+    ...(row.exemption_ref ? { exemptionRef: row.exemption_ref } : {}),
   };
 }
 

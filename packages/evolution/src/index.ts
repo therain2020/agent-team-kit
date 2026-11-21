@@ -10,6 +10,8 @@ export * from "./governance";
 export * from "./hidden";
 export * from "./outcome";
 export * from "./postgres";
+export * from "./promotion";
+export * from "./promotion-approvals";
 export * from "./repository";
 export * from "./security-invariants";
 export * from "./signals";

@@ -21,6 +21,10 @@ import { toast } from "sonner";
 const EVIDENCE_PLACEHOLDER =
   '{"sources":[{"citationId":"S1","title":"…","url":"…"}],"errors":[]}';
 
+const VARIANT_KINDS = ["context", "tool", "architecture"] as const;
+
+type VariantKind = (typeof VARIANT_KINDS)[number];
+
 type Mode = "start" | "traffic" | "evaluate" | "rollback" | "promote" | null;
 
 interface EvaluationResult {
@@ -72,6 +76,7 @@ export function EvolutionActions({
   const [targetPack, setTargetPack] = useState(packs[0]?.dirName ?? "");
   const [apply, setApply] = useState(false);
   const [confirmation, setConfirmation] = useState("");
+  const [kind, setKind] = useState<VariantKind>("context");
 
   async function post(url: string, body: unknown) {
     const response = await fetch(url, {
@@ -137,6 +142,7 @@ export function EvolutionActions({
         const payload = await post("/api/evolution/promote", {
           variantDir,
           targetDir: targetPack,
+          kind,
           apply,
           confirmation,
         });
@@ -157,6 +163,28 @@ export function EvolutionActions({
         }
       }
       setMode(null);
+    } catch (actionError) {
+      setError(
+        actionError instanceof Error ? actionError.message : t("actionFailed"),
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function requestApprovals() {
+    setPending(true);
+    setError(null);
+    try {
+      const payload = (await post("/api/evolution/promote", {
+        variantDir,
+        targetDir: targetPack,
+        kind,
+        requestApprovals: true,
+      })) as { requested?: unknown[] };
+      toast.success(
+        t("approvalsRequested", { count: payload.requested?.length ?? 0 }),
+      );
     } catch (actionError) {
       setError(
         actionError instanceof Error ? actionError.message : t("actionFailed"),
@@ -449,6 +477,30 @@ export function EvolutionActions({
                     }))}
                   />
                 </Field>
+                <Field label={t("variantKind")}>
+                  <Select
+                    value={kind}
+                    onChange={(value) => setKind(value as VariantKind)}
+                    options={VARIANT_KINDS.map((value) => ({
+                      value,
+                      label: t(`kindOption.${value}`),
+                    }))}
+                  />
+                </Field>
+                {kind === "architecture" ? (
+                  <div className="space-y-2 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200/90">
+                    <p>{t("architectureHint")}</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={requestApprovals}
+                      disabled={pending}
+                    >
+                      <ShieldCheck className="size-3.5" />
+                      {t("requestApprovals")}
+                    </Button>
+                  </div>
+                ) : null}
                 <label className="flex items-center gap-2 text-xs text-zinc-300">
                   <input
                     type="checkbox"

@@ -831,7 +831,8 @@
       "traffic_change": "调整比例",
       "evaluate": "评估",
       "rollback": "回滚",
-      "promote": "晋升"
+      "promote": "晋升",
+      "promotion_gate": "晋升门禁"
     },
     "trigger": {
       "manual": "手动",
@@ -943,6 +944,15 @@
     "reasonPlaceholder": "在控制台手动回滚",
     "variant": "变体",
     "targetPack": "目标模具",
+    "variantKind": "变体类型",
+    "kindOption": {
+      "context": "上下文（提示词）",
+      "tool": "工具（技能、工具）",
+      "architecture": "架构（角色、workflow）"
+    },
+    "architectureHint": "架构晋升需要操作者、安全、架构三方批准，非 LIVE 模式验证，且必须同 workspace。先申请审批，再到审批收件箱裁决。",
+    "requestApprovals": "申请三方审批",
+    "approvalsRequested": "已排入 {count} 条审批。",
     "applyChanges": "应用修改（否则仅 dry-run）",
     "typePromote": "输入 \"PROMOTE\" 确认",
     "cancel": "取消",

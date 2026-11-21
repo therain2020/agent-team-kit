@@ -13,10 +13,11 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { newId } from "@kit/core";
+import { type RunMode, newId, runModePolicy } from "@kit/core";
 import { createModelGateway } from "@kit/model";
 import { loadPack } from "@kit/pack";
 import { parse, stringify } from "yaml";
+import type { EvolutionDecisionRecord } from "./canary";
 import {
   type EvolutionCallAttribution,
   attributedEvolutionGateway,
@@ -31,6 +32,17 @@ import {
   checkHiddenDraft,
   loadHiddenSuite,
 } from "./hidden";
+import {
+  type ArchitectureValidation,
+  type PromotionApproval,
+  type PromotionGateDecision,
+  type VariantKind,
+  type WorkspaceExemption,
+  assertPromotionGate,
+  evaluatePromotionGate,
+  inferVariantKind,
+  resolveVariantKind,
+} from "./promotion";
 import type { EvolutionRepository } from "./repository";
 import { readEvalSnapshotManifest, verifyEvalSnapshot } from "./snapshot";
 
@@ -45,6 +57,20 @@ export interface VariantMeta {
   createdAt: string;
   baselineHashes: Record<string, string>;
   changedFiles: string[];
+  /**
+   * Evolution surface the variant changes (70 §3.1). Missing means legacy:
+   * the kind is inferred from `changedFiles` and defaults to `context`.
+   */
+  kind?: VariantKind;
+  /** Workspace that owns the variant; missing means the current workspace. */
+  workspaceId?: string;
+}
+
+export interface VariantWriteOptions {
+  /** Explicit evolution surface; otherwise inferred from the changed files. */
+  kind?: VariantKind;
+  /** Workspace that owns the new variant. */
+  workspaceId?: string;
 }
 
 export interface EvolutionRecord {
@@ -66,6 +92,7 @@ export async function initVariant(
   packDir: string,
   outDir: string,
   name: string,
+  options: VariantWriteOptions = {},
 ): Promise<{ meta: VariantMeta; dir: string }> {
   const loaded = await loadPack(packDir);
   if (!loaded.ok) {
@@ -87,6 +114,8 @@ export async function initVariant(
     createdAt: new Date().toISOString(),
     baselineHashes: await hashLockedFiles(outDir),
     changedFiles: [],
+    kind: options.kind ?? "context",
+    ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
   };
 
   await writeFile(
@@ -105,6 +134,7 @@ export async function proposeVariant(
   outDir: string,
   name: string,
   model?: string,
+  options: VariantWriteOptions = {},
 ): Promise<{ meta: VariantMeta; dir: string }> {
   const parentMeta = await readVariantMeta(fromDir);
   const loaded = await loadPack(fromDir);
@@ -147,6 +177,12 @@ export async function proposeVariant(
     createdAt: new Date().toISOString(),
     baselineHashes: parentMeta.baselineHashes,
     changedFiles: [agent.spec.file],
+    kind: options.kind ?? inferVariantKind([agent.spec.file]),
+    ...(options.workspaceId
+      ? { workspaceId: options.workspaceId }
+      : parentMeta.workspaceId
+        ? { workspaceId: parentMeta.workspaceId }
+        : {}),
   };
 
   await writeFile(
@@ -368,16 +404,50 @@ export async function compareVariants(
   );
 }
 
+export interface PromoteVariantResult {
+  apply: boolean;
+  files: string[];
+  backupDir?: string;
+  /** Evolution surface used by the gate. */
+  kind?: VariantKind;
+  workspaceId?: string;
+  targetWorkspaceId?: string;
+  /** Workspace gate outcome; always present so dry runs can preview it. */
+  gate?: PromotionGateDecision;
+  /** Decision record written for an applied promotion. */
+  decisionId?: string;
+}
+
+export interface PromoteVariantOptions {
+  kind?: VariantKind;
+  /** Workspace that owns the variant; defaults to its meta or the repository. */
+  variantWorkspaceId?: string;
+  /** Workspace that owns the target pack; defaults to the repository. */
+  targetWorkspaceId?: string;
+  approvals?: readonly PromotionApproval[];
+  exemption?: WorkspaceExemption | null;
+  /** Defaults to a non-LIVE validation of the variant for architecture kinds. */
+  validation?: ArchitectureValidation | null;
+  actor?: string;
+  /** Skips the gate decision record; defaults to writing through the repo. */
+  recordDecision?: boolean;
+}
+
+/**
+ * Copies a variant into a target pack after the promotion gate allows it.
+ *
+ * The gate (70 §3.1/§3.3/§3.6) requires three-party approval for architecture
+ * variants, a non-LIVE validation with zero real side effects, and same
+ * workspace ownership unless an explicit exemption is supplied. Dry runs
+ * return the gate verdict without writing anything.
+ */
 export async function promoteVariant(
   variantDir: string,
   targetDir: string,
   apply: boolean,
   repo?: EvolutionRepository,
-): Promise<{
-  apply: boolean;
-  files: string[];
-  backupDir?: string;
-}> {
+  options: PromoteVariantOptions = {},
+): Promise<PromoteVariantResult> {
   const diskMeta = await readVariantMeta(variantDir);
   let meta = diskMeta;
   let sourceDir = variantDir;
@@ -416,9 +486,41 @@ export async function promoteVariant(
       throw new Error(target.errors.join("\n"));
     }
 
+    const kind = promoteKind(meta, options.kind);
+    const variantWorkspaceId =
+      options.variantWorkspaceId ??
+      meta.workspaceId ??
+      repo?.workspaceId ??
+      "default";
+    const targetWorkspaceId =
+      options.targetWorkspaceId ?? repo?.workspaceId ?? "default";
+    const validation =
+      options.validation ??
+      (kind === "architecture"
+        ? await validateVariantNonLive(sourceDir)
+        : null);
+    const gateInput = {
+      kind,
+      variantId: meta.id,
+      variantWorkspaceId,
+      targetWorkspaceId,
+      approvals: options.approvals ?? [],
+      exemption: options.exemption ?? null,
+      validation,
+    };
+    const gate = evaluatePromotionGate(gateInput);
+
     if (!apply) {
-      return { apply: false, files: meta.changedFiles };
+      return {
+        apply: false,
+        files: meta.changedFiles,
+        kind,
+        workspaceId: variantWorkspaceId,
+        targetWorkspaceId,
+        gate,
+      };
     }
+    assertPromotionGate(gateInput);
 
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const backupDir = path.join(target.dir, ".backup", "evolution", stamp);
@@ -459,17 +561,38 @@ export async function promoteVariant(
       return { apply: true, files: meta.changedFiles, backupDir };
     };
 
-    if (repo) {
-      const result = await repo.withLock(
-        `kit:evolution:promote:${path.resolve(target.dir)}`,
-        run,
-      );
-      if (result === null) {
-        throw new Error("timed out waiting for the evolution promotion lock");
-      }
-      return result;
+    const result = repo
+      ? await repo.withLock(
+          `kit:evolution:promote:${path.resolve(target.dir)}`,
+          run,
+        )
+      : await run();
+    if (result === null) {
+      throw new Error("timed out waiting for the evolution promotion lock");
     }
-    return await run();
+
+    const decision =
+      options.recordDecision === false
+        ? undefined
+        : promotionDecision({
+            meta,
+            kind,
+            gate,
+            workspaceId: targetWorkspaceId,
+            actor: options.actor ?? "operator",
+          });
+    if (decision && repo) {
+      await repo.appendDecision(decision);
+    }
+
+    return {
+      ...result,
+      kind,
+      workspaceId: variantWorkspaceId,
+      targetWorkspaceId,
+      gate,
+      ...(decision ? { decisionId: decision.decisionId } : {}),
+    };
   } finally {
     if (materialized) {
       await rm(materialized, { recursive: true, force: true });
@@ -477,7 +600,92 @@ export async function promoteVariant(
   }
 }
 
-async function readVariantMeta(dir: string): Promise<VariantMeta> {
+function promoteKind(
+  meta: VariantMeta,
+  override: VariantKind | undefined,
+): VariantKind {
+  return resolveVariantKind({
+    kind: override ?? meta.kind,
+    changedFiles: meta.changedFiles,
+  });
+}
+
+/**
+ * Records the gate outcome as an evolution DecisionRecord (70 §3.3 invariant 7,
+ * §3.6). Exemption ids stay on the decision so cross-workspace reuse is
+ * traceable after the fact.
+ */
+function promotionDecision(input: {
+  meta: VariantMeta;
+  kind: VariantKind;
+  gate: PromotionGateDecision;
+  workspaceId: string;
+  actor: string;
+}): EvolutionDecisionRecord {
+  return {
+    decisionId: newId("dec"),
+    workspaceId: input.workspaceId,
+    kind: "promotion_gate",
+    variantId: input.meta.id,
+    agentId: input.meta.agentId,
+    fromStatus: null,
+    toStatus: "promoted",
+    fromTrafficPercent: 0,
+    toTrafficPercent: 0,
+    trigger: "manual",
+    reason: input.gate.reasons.join("; ") || "promotion gate passed",
+    actor: input.actor,
+    createdAt: new Date().toISOString(),
+    variantKind: input.kind,
+    subjectRef: `promotion:${input.meta.id}`,
+    ...(input.gate.exemptionId ? { exemptionRef: input.gate.exemptionId } : {}),
+  };
+}
+
+/**
+ * Validates a variant without executing it: pack load, locked-file hashes and
+ * changed-file presence are all read-only, so real side effects stay at 0.
+ * LIVE is rejected outright (70 §3.1: architecture variants are validated in
+ * SHADOW / DRY_RUN).
+ */
+export async function validateVariantNonLive(
+  variantDir: string,
+  options: { mode?: RunMode; validationRef?: string } = {},
+): Promise<ArchitectureValidation & { checkedFiles: string[] }> {
+  const mode = options.mode ?? "DRY_RUN";
+  const policy = runModePolicy(mode);
+  if (policy.sideEffects === "execute") {
+    throw new Error(
+      `architecture variants must be validated outside LIVE (got ${mode})`,
+    );
+  }
+
+  const meta = await readVariantMeta(variantDir);
+  await verifyLockedFiles(variantDir, meta.baselineHashes);
+
+  const variant = await loadPack(variantDir);
+  if (!variant.ok) {
+    throw new Error(variant.errors.join("\n"));
+  }
+  const checkedFiles: string[] = [];
+  for (const relative of meta.changedFiles) {
+    if (!existsSync(path.join(variantDir, relative))) {
+      throw new Error(`variant changed file missing: ${relative}`);
+    }
+    checkedFiles.push(relative);
+  }
+
+  return {
+    mode,
+    realSideEffects: 0,
+    validationRef:
+      options.validationRef ?? `validation:${meta.id}:${mode.toLowerCase()}`,
+    validatedAt: new Date().toISOString(),
+    checkedFiles,
+  };
+}
+
+export async function readVariantMeta(dir: string): Promise<VariantMeta> {
   const metaPath = path.join(dir, "variant.json");
   if (!existsSync(metaPath)) {
     throw new Error(`variant.json missing: ${dir}`);

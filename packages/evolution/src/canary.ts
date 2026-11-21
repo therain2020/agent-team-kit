@@ -5,6 +5,7 @@ import path from "node:path";
 import { newId } from "@kit/core";
 import type { EvolutionCallAttribution } from "./cost-attribution";
 import { type EvolutionRecord, type VariantMeta, scoreVariant } from "./evolve";
+import type { VariantKind } from "./promotion";
 import type { EvolutionRepository } from "./repository";
 
 export const DEFAULT_STATE = "variants/state.json";
@@ -22,7 +23,9 @@ export type EvolutionDecisionKind =
   | "traffic_change"
   | "evaluate"
   | "rollback"
-  | "promote";
+  | "promote"
+  /** Promotion gate verdict, including any cross-workspace exemption. */
+  | "promotion_gate";
 
 export interface CanaryState {
   workspaceId: string;
@@ -59,6 +62,10 @@ export interface EvolutionDecisionRecord {
   reason: string;
   actor: string;
   createdAt: string;
+  /** Promotion gate fields (70 §3.1/§3.6); absent on canary decisions. */
+  variantKind?: VariantKind;
+  subjectRef?: string;
+  exemptionRef?: string;
 }
 
 export interface CanaryThresholds {
