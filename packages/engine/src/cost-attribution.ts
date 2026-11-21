@@ -6,6 +6,7 @@ import {
   cnyToMicro,
   computeCostMicro,
   loadPriceTable,
+  resolveCostScope,
   resolveModelPrice,
   resolveToolCallPrice,
 } from "@kit/model";
@@ -25,6 +26,7 @@ export function trackedGateway(
   inner: ModelGateway,
 ): ModelGateway {
   ensurePriceTable(store);
+  const scope = resolveCostScope(context);
   return new CostTrackingGateway(inner, {
     context,
     sink: { record: (record) => store.costLedger.record(record) },
@@ -32,7 +34,7 @@ export function trackedGateway(
     // A re-executed stage really paid again (budget charges re-book as well),
     // so ids are unique per execution; idempotency is per charged call.
     callIdPrefix: [
-      context.runId,
+      scope.runId,
       context.stageId ?? "",
       context.agentId ?? "",
       context.source ?? "model",
@@ -50,12 +52,15 @@ export async function recordToolCall(
 ): Promise<void> {
   try {
     const price = resolveToolCallPrice(toolName);
+    const scope = resolveCostScope(context);
     // One tool call is priced as a single unit, expressed as 1,000 input
     // "tokens" at the configured per-call rate so the unit-price columns stay
     // meaningful across sources.
     await store.costLedger.record({
       workspaceId: context.workspaceId,
-      runId: context.runId,
+      runId: scope.runId,
+      scopeKind: scope.kind,
+      scopeId: scope.id,
       stageId: context.stageId ?? null,
       agentId: context.agentId ?? null,
       source: `tool:${toolName}`,
@@ -68,7 +73,7 @@ export async function recordToolCall(
       priceVersion: price.priceVersion,
       costCnyMicro: cnyToMicro(price.unitPriceCny),
       tracked: true,
-      callId: `${context.runId}:${context.stageId ?? ""}:${context.agentId ?? ""}:tool:${toolName}:${newId("t")}`,
+      callId: `${scope.runId}:${context.stageId ?? ""}:${context.agentId ?? ""}:tool:${toolName}:${newId("t")}`,
     });
   } catch (error) {
     logCostError(error);
@@ -88,11 +93,14 @@ export async function recordCoderCost(
   try {
     const table = loadPriceTable();
     const price = resolveModelPrice(table, input.coder);
+    const scope = resolveCostScope(context);
     const tokensIn = Math.max(0, Math.round(input.tokens));
     const costCnyMicro = computeCostMicro(price, tokensIn, 0);
     await store.costLedger.record({
       workspaceId: context.workspaceId,
-      runId: context.runId,
+      runId: scope.runId,
+      scopeKind: scope.kind,
+      scopeId: scope.id,
       stageId: context.stageId ?? null,
       agentId: context.agentId ?? null,
       source: "coder",
@@ -106,7 +114,7 @@ export async function recordCoderCost(
       costCnyMicro,
       tracked: price.tracked,
       untrackedReason: price.untrackedReason,
-      callId: `${context.runId}:${context.stageId ?? ""}:${context.agentId ?? ""}:coder:${newId("c")}`,
+      callId: `${scope.runId}:${context.stageId ?? ""}:${context.agentId ?? ""}:coder:${newId("c")}`,
     });
   } catch (error) {
     logCostError(error);

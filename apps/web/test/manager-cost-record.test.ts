@@ -1,39 +1,29 @@
 import type { CostRecordInput } from "@kit/store";
 import { describe, expect, it, vi } from "vitest";
-import { publishManagerExchange } from "../lib/manager";
-
-type Store = NonNullable<Parameters<typeof publishManagerExchange>[0]["store"]>;
+import {
+  type ManagerReplyCostStore,
+  recordManagerReplyCost,
+} from "../lib/manager-cost";
 
 function fakeStore() {
   const records: CostRecordInput[] = [];
-  const publish = vi.fn(async () => ({
-    artifact: { artifactId: "art_exchange" },
-  }));
-  const addUsage = vi.fn(async () => undefined);
   const record = vi.fn(async (input: CostRecordInput) => {
     records.push(input);
     return input;
   });
-  const store = {
-    artifactService: { publish },
-    managerSessions: { addUsage },
-    costLedger: { record },
-  } as unknown as Store;
-  return { store, records, publish, addUsage };
+  const store = { costLedger: { record } } as ManagerReplyCostStore;
+  return { store, records, record };
 }
 
-describe("manager exchange cost record", () => {
+describe("manager reply cost record", () => {
   it("charges the reply to the manager session, not just the artifact", async () => {
     const { store, records } = fakeStore();
-    await publishManagerExchange({
+    await recordManagerReplyCost(store, {
       runId: "run_1",
       workspaceId: "default",
-      question: "what happened?",
-      answer: "The run succeeded.",
       model: "deepseek-pro",
       inputTokens: 1000,
       outputTokens: 500,
-      store,
     });
 
     expect(records).toHaveLength(1);
@@ -54,16 +44,13 @@ describe("manager exchange cost record", () => {
 
   it("keeps an office thread on its own manager session", async () => {
     const { store, records } = fakeStore();
-    await publishManagerExchange({
+    await recordManagerReplyCost(store, {
       runId: "thread_1",
       workspaceId: "default",
-      question: "status?",
-      answer: "Ready.",
       model: "deepseek-pro",
       inputTokens: 10,
       outputTokens: 5,
       managerSessionId: "thread_1",
-      store,
     });
 
     expect(records[0]?.managerSessionId).toBe("thread_1");
@@ -71,22 +58,21 @@ describe("manager exchange cost record", () => {
   });
 
   it("never fails the exchange when the ledger is down", async () => {
-    const { store } = fakeStore();
-    (store.costLedger as unknown as { record: () => Promise<never> }).record =
-      async () => {
-        throw new Error("ledger down");
-      };
+    const record = vi.fn(async () => {
+      throw new Error("ledger down");
+    });
+    const store = {
+      costLedger: { record },
+    } as unknown as ManagerReplyCostStore;
     await expect(
-      publishManagerExchange({
+      recordManagerReplyCost(store, {
         runId: "run_2",
         workspaceId: "default",
-        question: "q",
-        answer: "a",
         model: "deepseek-pro",
         inputTokens: 1,
         outputTokens: 1,
-        store,
       }),
-    ).resolves.toMatchObject({ artifactId: "art_exchange" });
+    ).resolves.toBeUndefined();
+    expect(record).toHaveBeenCalledOnce();
   });
 });

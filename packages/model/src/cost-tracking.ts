@@ -91,6 +91,7 @@ export interface CostCallContext {
 export function resolveCostScope(
   context: Pick<
     CostCallContext,
+    | "workspaceId"
     | "runId"
     | "scopeKind"
     | "scopeId"
