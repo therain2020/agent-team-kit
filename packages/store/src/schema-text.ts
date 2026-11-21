@@ -887,6 +887,57 @@ CREATE TABLE IF NOT EXISTS source_health (
   PRIMARY KEY (workspace_id, source_id)
 );
 
+CREATE TABLE IF NOT EXISTS interest_profiles (
+  profile_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  version INTEGER NOT NULL,
+  topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+  entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+  exclusions JSONB NOT NULL DEFAULT '[]'::jsonb,
+  thresholds JSONB NOT NULL DEFAULT '{}'::jsonb,
+  daily_budget_cny_micro BIGINT NOT NULL DEFAULT 0,
+  updated_by TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (workspace_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_interest_profiles_version
+  ON interest_profiles(workspace_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS interest_profile_audits (
+  audit_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  before JSONB,
+  after JSONB NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_interest_profile_audits_ws
+  ON interest_profile_audits(workspace_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS information_signal_audits (
+  event_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_version INTEGER NOT NULL,
+  model TEXT NOT NULL DEFAULT 'heuristic',
+  relevance DOUBLE PRECISION NOT NULL,
+  novelty DOUBLE PRECISION NOT NULL,
+  urgency DOUBLE PRECISION NOT NULL,
+  risk DOUBLE PRECISION NOT NULL,
+  confidence DOUBLE PRECISION NOT NULL,
+  passes BOOLEAN NOT NULL DEFAULT false,
+  flags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+  scored_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_information_signal_audits_ws
+  ON information_signal_audits(workspace_id, scored_at DESC);
+
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
@@ -1880,6 +1931,57 @@ CREATE TABLE IF NOT EXISTS source_health (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, source_id)
 );
+
+CREATE TABLE IF NOT EXISTS interest_profiles (
+  profile_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  version INTEGER NOT NULL,
+  topics TEXT NOT NULL DEFAULT '[]',
+  entities TEXT NOT NULL DEFAULT '[]',
+  exclusions TEXT NOT NULL DEFAULT '[]',
+  thresholds TEXT NOT NULL DEFAULT '{}',
+  daily_budget_cny_micro INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_interest_profiles_version
+  ON interest_profiles(workspace_id, version DESC);
+
+CREATE TABLE IF NOT EXISTS interest_profile_audits (
+  audit_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  before TEXT,
+  after TEXT NOT NULL,
+  occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_interest_profile_audits_ws
+  ON interest_profile_audits(workspace_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS information_signal_audits (
+  event_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT 'default',
+  profile_version INTEGER NOT NULL,
+  model TEXT NOT NULL DEFAULT 'heuristic',
+  relevance REAL NOT NULL,
+  novelty REAL NOT NULL,
+  urgency REAL NOT NULL,
+  risk REAL NOT NULL,
+  confidence REAL NOT NULL,
+  passes INTEGER NOT NULL DEFAULT 0,
+  flags TEXT NOT NULL DEFAULT '[]',
+  reasons TEXT NOT NULL DEFAULT '[]',
+  scored_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_information_signal_audits_ws
+  ON information_signal_audits(workspace_id, scored_at DESC);
 
 CREATE TABLE IF NOT EXISTS incidents (
   incident_id TEXT PRIMARY KEY,
