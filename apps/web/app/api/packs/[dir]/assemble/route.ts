@@ -16,6 +16,10 @@ import { NextResponse } from "next/server";
  * Deterministic component assembly for the Studio pipeline composer (plan 88
  * §3.1 / M3b, feeds 94 C-6c). No AI: the caller names the components and the
  * server binds them into the pack atomically and records them in the lockfile.
+ *
+ * `dryRun: true` validates the same request end to end and returns the plan
+ * without writing, so the review step can re-check operator edits before the
+ * single approval click.
  */
 export async function POST(
   request: Request,
@@ -69,6 +73,7 @@ export async function POST(
         packDir,
         components,
         allowCommand: body.allowCommand === true,
+        dryRun: body.dryRun === true,
       },
       workshopComponentLibrary(getComponentsRoot()),
     );

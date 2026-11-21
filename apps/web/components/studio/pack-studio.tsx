@@ -11,18 +11,41 @@ import type {
   StudioWorkflow,
 } from "@/lib/pack-studio";
 import {
+  type PipelineComponentOption,
+  type PipelineDraftValues,
+  type PipelineEditValidation,
+  type PipelineIssue,
+  addPipelineBinding,
+  addPipelineComponent,
+  applyPipelineBindings,
+  assignPipelineStageAgent,
+  movePipelineBinding,
+  movePipelineComponent,
+  pipelineAssemblyComponents,
+  pipelineComponentKey,
+  pipelineOptionKey,
+  removePipelineBinding,
+  removePipelineComponent,
+  replacePipelineComponent,
+  updatePipelineBinding,
+  validatePipelineDraftEdits,
+} from "@/lib/pipeline-drafts";
+import {
   type PolicyApproval,
   type WorkflowStageDraft,
   draftStageToYaml,
 } from "@/lib/studio-drafts";
 import { cn } from "@/lib/utils";
 import {
+  ArrowDown,
+  ArrowUp,
   Bot,
   CheckCircle2,
   Factory,
   FileCode2,
   FolderTree,
   Lock,
+  Plus,
   RefreshCw,
   Rocket,
   Save,
@@ -40,6 +63,7 @@ import {
   cloneElement,
   isValidElement,
   useId,
+  useMemo,
   useState,
 } from "react";
 import { toast } from "sonner";
@@ -111,38 +135,13 @@ interface WorkflowDraftResult {
   model: "live" | "heuristic";
 }
 
-interface PipelineComponentRef {
-  kind: "agent" | "workflow" | "toolpack" | "skillpack";
-  id: string;
-  version: string;
-  source: {
-    repo: string;
-    commit: string;
-    ref?: string;
-    sha256: string;
-  };
-}
-
-interface PipelineComponentDraft {
-  ref: PipelineComponentRef;
-  description: string;
-}
-
-interface PipelineBindingDraft {
-  node: string;
-  component: PipelineComponentRef;
-}
-
-interface PipelineIssue {
-  code: string;
-  path: string;
-  message: string;
-}
-
 interface PipelineAssemblyPreview {
   ok: boolean;
   preview?: boolean;
-  bindings?: Array<{ node: string; component: PipelineComponentRef }>;
+  bindings?: Array<{
+    node: string;
+    component: PipelineDraftValues["components"][number]["ref"];
+  }>;
   written?: string[];
   warnings?: string[];
   noop?: boolean;
@@ -151,20 +150,30 @@ interface PipelineAssemblyPreview {
 }
 
 interface PipelineDraftResult {
-  values: {
-    id: string;
-    name: string;
-    description: string;
-    stages: WorkflowStageDraft[];
-    components: PipelineComponentDraft[];
-    bindings: PipelineBindingDraft[];
-    issues: PipelineIssue[];
-  };
+  values: PipelineDraftValues;
   rationale: string;
   warnings: string[];
   model: "live" | "heuristic";
   assembly?: PipelineAssemblyPreview;
 }
+
+interface PipelineInventoryResponse {
+  components?: PipelineComponentOption[];
+  invalid?: Array<{ kind: string; id: string; issues: string[] }>;
+  error?: string;
+}
+
+interface AssemblyCheckPayload {
+  bindings?: PipelineAssemblyPreview["bindings"];
+  written?: string[];
+  warnings?: string[];
+  noop?: boolean;
+  issues?: PipelineIssue[];
+  error?: string;
+}
+
+/** Target value prefix for binding a stage to an existing team agent. */
+const TEAM_AGENT_PREFIX = "team:";
 
 export function PackStudio({
   data,
@@ -214,6 +223,15 @@ export function PackStudio({
     useState<PipelineDraftResult | null>(null);
   const [pipelineDraftBusy, setPipelineDraftBusy] = useState(false);
   const [pipelineApproving, setPipelineApproving] = useState(false);
+  const [pipelineLibrary, setPipelineLibrary] = useState<
+    PipelineComponentOption[]
+  >([]);
+  const [pipelineLibraryError, setPipelineLibraryError] = useState<
+    string | null
+  >(null);
+  const [pipelineCheck, setPipelineCheck] =
+    useState<PipelineAssemblyPreview | null>(null);
+  const [pipelineChecking, setPipelineChecking] = useState(false);
   const [managerModel, setManagerModel] = useState("deepseek-pro");
   const [managerDescription, setManagerDescription] = useState("");
   const [managerInstructions, setManagerInstructions] = useState("");
@@ -227,6 +245,21 @@ export function PackStudio({
 
   const currentWorkflow = data.workflows.find(
     (workflow) => workflow.file === workflowFile,
+  );
+
+  const pipelineTeamAgents = useMemo(
+    () => agents.map((agent) => agent.id),
+    [agents],
+  );
+  const pipelineEditValidation = useMemo<PipelineEditValidation>(
+    () =>
+      pipelineDraft
+        ? validatePipelineDraftEdits(pipelineDraft.values, {
+            library: pipelineLibrary,
+            teamAgents: pipelineTeamAgents,
+          })
+        : { issues: [], warnings: [] },
+    [pipelineDraft, pipelineLibrary, pipelineTeamAgents],
   );
 
   function selectAgent(id: string) {
@@ -690,16 +723,21 @@ export function PackStudio({
     setPipelineDraftBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/compose", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          kind: "pipeline",
-          intent: pipelineIntent.trim(),
-          packDir: data.dirName,
-          currentStages: currentStagesOf(currentWorkflow),
+      const [response, inventoryResponse] = await Promise.all([
+        fetch("/api/compose", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            kind: "pipeline",
+            intent: pipelineIntent.trim(),
+            packDir: data.dirName,
+            currentStages: currentStagesOf(currentWorkflow),
+          }),
         }),
-      });
+        fetch(
+          `/api/packs/${encodeURIComponent(data.dirName)}/components`,
+        ).catch(() => null),
+      ]);
       const payload = (await response.json()) as {
         values?: PipelineDraftResult["values"];
         rationale?: string;
@@ -711,6 +749,16 @@ export function PackStudio({
       if (!response.ok || !payload.values?.stages) {
         throw new Error(payload.error ?? "failed to draft pipeline");
       }
+      // The review step edits against the same inventory the composer saw;
+      // a library failure disables add/replace but never blocks the draft.
+      const inventoryPayload = inventoryResponse?.ok
+        ? ((await inventoryResponse.json()) as PipelineInventoryResponse)
+        : null;
+      setPipelineLibrary(inventoryPayload?.components ?? []);
+      setPipelineLibraryError(
+        inventoryPayload ? null : t("pipelineLibraryUnavailable"),
+      );
+      setPipelineCheck(null);
       setPipelineDraft({
         values: {
           id: payload.values.id ?? "",
@@ -735,6 +783,168 @@ export function PackStudio({
     }
   }
 
+  /**
+   * Review edits stay in component state: every transform is pure, and this
+   * helper only replaces `values` and clears the now-stale server check. No
+   * request is issued, so nothing can be written before approval.
+   */
+  function patchPipelineValues(
+    transform: (values: PipelineDraftValues) => PipelineDraftValues,
+  ) {
+    setPipelineDraft((current) => {
+      if (!current) {
+        return current;
+      }
+      const values = transform(current.values);
+      if (values === current.values) {
+        return current;
+      }
+      // The compose preview described the old selection; drop it so approval
+      // cannot lean on a stale assembly plan.
+      return { ...current, values, assembly: undefined };
+    });
+    setPipelineCheck(null);
+  }
+
+  function addPipelineComponentOption(componentKey: string) {
+    const option = pipelineLibrary.find(
+      (candidate) => pipelineOptionKey(candidate) === componentKey,
+    );
+    if (option) {
+      patchPipelineValues((values) => addPipelineComponent(values, option));
+    }
+  }
+
+  function replacePipelineComponentAt(index: number, componentKey: string) {
+    const option = pipelineLibrary.find(
+      (candidate) => pipelineOptionKey(candidate) === componentKey,
+    );
+    if (option) {
+      patchPipelineValues((values) =>
+        replacePipelineComponent(values, index, option),
+      );
+    }
+  }
+
+  function removePipelineComponentAt(index: number) {
+    patchPipelineValues((values) => removePipelineComponent(values, index));
+  }
+
+  function movePipelineComponentAt(index: number, offset: number) {
+    patchPipelineValues((values) =>
+      movePipelineComponent(values, index, offset),
+    );
+  }
+
+  function bindPipelineStage(index: number, target: string) {
+    if (target.startsWith(TEAM_AGENT_PREFIX)) {
+      const agent = target.slice(TEAM_AGENT_PREFIX.length);
+      const binding = pipelineDraft?.values.bindings[index];
+      if (binding) {
+        patchPipelineValues((values) =>
+          assignPipelineStageAgent(values, binding.node, agent),
+        );
+      }
+      return;
+    }
+    patchPipelineValues((values) =>
+      updatePipelineBinding(values, index, { componentKey: target }),
+    );
+  }
+
+  function rebindPipelineStage(index: number, node: string) {
+    patchPipelineValues((values) =>
+      updatePipelineBinding(values, index, { node }),
+    );
+  }
+
+  function addPipelineBindingRow() {
+    if (!pipelineDraft) {
+      return;
+    }
+    const bound = new Set(pipelineDraft.values.bindings.map((row) => row.node));
+    const stage = pipelineDraft.values.stages.find(
+      (candidate) =>
+        !bound.has(candidate.id) &&
+        (candidate.type === "agent" || candidate.type === "workflow"),
+    );
+    if (!stage) {
+      return;
+    }
+    const component = pipelineDraft.values.components.find(
+      (candidate) => candidate.ref.kind === stage.type,
+    );
+    if (!component) {
+      return;
+    }
+    patchPipelineValues((values) =>
+      addPipelineBinding(values, stage.id, pipelineComponentKey(component.ref)),
+    );
+  }
+
+  function removePipelineBindingAt(index: number) {
+    patchPipelineValues((values) => removePipelineBinding(values, index));
+  }
+
+  function movePipelineBindingAt(index: number, offset: number) {
+    patchPipelineValues((values) => movePipelineBinding(values, index, offset));
+  }
+
+  async function checkPipelineAssembly() {
+    if (!pipelineDraft) {
+      return;
+    }
+    const components = pipelineAssemblyComponents(pipelineDraft.values);
+    setPipelineChecking(true);
+    try {
+      if (components.length === 0) {
+        setPipelineCheck({
+          ok: true,
+          preview: true,
+          bindings: [],
+          written: [],
+          noop: true,
+        });
+        return;
+      }
+      const response = await fetch(
+        `/api/packs/${encodeURIComponent(data.dirName)}/assemble`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ components, dryRun: true }),
+        },
+      );
+      const payload = (await response.json()) as AssemblyCheckPayload;
+      if (!response.ok) {
+        setPipelineCheck({
+          ok: false,
+          preview: true,
+          issues: payload.issues ?? [],
+          warnings: payload.warnings ?? [],
+          error: payload.error ?? "assembly rejected",
+        });
+        return;
+      }
+      setPipelineCheck({
+        ok: true,
+        preview: true,
+        bindings: payload.bindings ?? [],
+        written: payload.written ?? [],
+        warnings: payload.warnings ?? [],
+        noop: payload.noop === true,
+      });
+    } catch (problem) {
+      setPipelineCheck({
+        ok: false,
+        preview: true,
+        error: problem instanceof Error ? problem.message : String(problem),
+      });
+    } finally {
+      setPipelineChecking(false);
+    }
+  }
+
   function applyPipelineStages() {
     if (!pipelineDraft || !currentWorkflow) {
       return;
@@ -743,7 +953,9 @@ export function PackStudio({
     setWorkflowRaw(
       stringify({
         ...doc,
-        stages: pipelineDraft.values.stages.map(draftStageToYaml),
+        stages: applyPipelineBindings(pipelineDraft.values).map(
+          draftStageToYaml,
+        ),
       }),
     );
     toast.success(t("pipelineDraftApplied"));
@@ -753,17 +965,21 @@ export function PackStudio({
     if (!pipelineDraft || !currentWorkflow) {
       return;
     }
-    if (pipelineDraft.assembly && !pipelineDraft.assembly.ok) {
+    if (pipelineEditValidation.issues.length > 0) {
+      toast.error(t("pipelineDraftBlockedByIssues"));
+      return;
+    }
+    if (
+      (pipelineDraft.assembly && !pipelineDraft.assembly.ok) ||
+      (pipelineCheck && !pipelineCheck.ok)
+    ) {
       toast.error(t("pipelineDraftBlocked"));
       return;
     }
     setPipelineApproving(true);
     setError(null);
     try {
-      const components = pipelineDraft.values.components.map((component) => ({
-        kind: component.ref.kind,
-        id: component.ref.id,
-      }));
+      const components = pipelineAssemblyComponents(pipelineDraft.values);
       if (components.length > 0) {
         const response = await fetch(
           `/api/packs/${encodeURIComponent(data.dirName)}/assemble`,
@@ -782,7 +998,9 @@ export function PackStudio({
       // stage binding resolves against the freshly bound components.
       const content = stringify({
         ...workflowDocBase(currentWorkflow.raw, currentWorkflow.id),
-        stages: pipelineDraft.values.stages.map(draftStageToYaml),
+        stages: applyPipelineBindings(pipelineDraft.values).map(
+          draftStageToYaml,
+        ),
       });
       const save = await fetch(
         `/api/packs/${encodeURIComponent(data.dirName)}/workflow`,
@@ -797,6 +1015,7 @@ export function PackStudio({
         throw new Error(savePayload.error ?? "save failed");
       }
       setWorkflowRaw(content);
+      setPipelineCheck(null);
       toast.success(t("pipelineDraftApproved"));
       router.refresh();
     } catch (problem) {
@@ -1518,6 +1737,23 @@ export function PackStudio({
                   <PipelineDraftPreview
                     draft={pipelineDraft}
                     approving={pipelineApproving}
+                    library={pipelineLibrary}
+                    libraryError={pipelineLibraryError}
+                    teamAgents={pipelineTeamAgents}
+                    issues={pipelineEditValidation.issues}
+                    warnings={pipelineEditValidation.warnings}
+                    check={pipelineCheck}
+                    checking={pipelineChecking}
+                    onAddComponent={addPipelineComponentOption}
+                    onReplaceComponent={replacePipelineComponentAt}
+                    onRemoveComponent={removePipelineComponentAt}
+                    onMoveComponent={movePipelineComponentAt}
+                    onBindTarget={bindPipelineStage}
+                    onRebindNode={rebindPipelineStage}
+                    onAddBinding={addPipelineBindingRow}
+                    onRemoveBinding={removePipelineBindingAt}
+                    onMoveBinding={movePipelineBindingAt}
+                    onCheck={() => void checkPipelineAssembly()}
                     onApply={applyPipelineStages}
                     onApprove={() => void approvePipelineAssembly()}
                   />
@@ -2072,17 +2308,65 @@ function WorkflowDraftPreview({
 function PipelineDraftPreview({
   draft,
   approving,
+  library,
+  libraryError,
+  teamAgents,
+  issues,
+  warnings,
+  check,
+  checking,
+  onAddComponent,
+  onReplaceComponent,
+  onRemoveComponent,
+  onMoveComponent,
+  onBindTarget,
+  onRebindNode,
+  onAddBinding,
+  onRemoveBinding,
+  onMoveBinding,
+  onCheck,
   onApply,
   onApprove,
 }: {
   draft: PipelineDraftResult;
   approving: boolean;
+  library: PipelineComponentOption[];
+  libraryError: string | null;
+  teamAgents: string[];
+  issues: PipelineIssue[];
+  warnings: string[];
+  check: PipelineAssemblyPreview | null;
+  checking: boolean;
+  onAddComponent: (componentKey: string) => void;
+  onReplaceComponent: (index: number, componentKey: string) => void;
+  onRemoveComponent: (index: number) => void;
+  onMoveComponent: (index: number, offset: number) => void;
+  onBindTarget: (index: number, target: string) => void;
+  onRebindNode: (index: number, node: string) => void;
+  onAddBinding: () => void;
+  onRemoveBinding: (index: number) => void;
+  onMoveBinding: (index: number, offset: number) => void;
+  onCheck: () => void;
   onApply: () => void;
   onApprove: () => void;
 }) {
   const t = useTranslations("studio");
-  const assembly = draft.assembly;
-  const blocked = assembly ? !assembly.ok : false;
+  const assembly = check ?? draft.assembly ?? null;
+  const blocked = issues.length > 0 || (assembly ? !assembly.ok : false);
+  const { components, bindings, stages } = draft.values;
+  const assembledKeys = new Set(
+    components.map((component) => pipelineComponentKey(component.ref)),
+  );
+  const libraryOptions = library;
+  const addable = libraryOptions.filter(
+    (option) => !assembledKeys.has(pipelineOptionKey(option)),
+  );
+  const bindableComponents = components.filter(
+    (component) =>
+      component.ref.kind === "agent" || component.ref.kind === "workflow",
+  );
+  const nodeOptions = [...stages.map((stage) => stage.id)];
+
   return (
     <div className="space-y-2 rounded-md border border-border bg-zinc-950/50 p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -2092,12 +2376,10 @@ function PipelineDraftPreview({
             : t("agentDraftHeuristic")}
         </Badge>
         <span className="text-[10px] text-zinc-500">
-          {t("pipelineDraftStages", { count: draft.values.stages.length })}
+          {t("pipelineDraftStages", { count: stages.length })}
         </span>
         <span className="text-[10px] text-zinc-500">
-          {t("pipelineDraftComponents", {
-            count: draft.values.components.length,
-          })}
+          {t("pipelineDraftComponents", { count: components.length })}
         </span>
       </div>
       {draft.rationale ? (
@@ -2111,59 +2393,267 @@ function PipelineDraftPreview({
         </ul>
       ) : null}
       <div className="space-y-1">
-        {draft.values.components.length === 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-medium text-zinc-400">
+            {t("pipelineComponentsTitle")}
+          </span>
+          {addable.length > 0 ? (
+            <select
+              value=""
+              aria-label={t("pipelineAddComponent")}
+              onChange={(event) => {
+                if (event.target.value) {
+                  onAddComponent(event.target.value);
+                }
+              }}
+              className="ml-auto h-7 max-w-[16rem] rounded-md border border-border bg-zinc-950 px-1.5 font-mono text-[10px] text-zinc-300"
+            >
+              <option value="">{t("pipelineAddComponent")}</option>
+              {addable.map((option) => (
+                <option
+                  key={pipelineOptionKey(option)}
+                  value={pipelineOptionKey(option)}
+                >
+                  {option.kind}/{option.id} v{option.version}
+                </option>
+              ))}
+            </select>
+          ) : null}
+        </div>
+        {libraryError ? (
+          <p className="text-[10px] text-amber-300">{libraryError}</p>
+        ) : null}
+        {components.length === 0 ? (
           <p className="text-[10px] text-zinc-600">
             {t("pipelineDraftNoComponents")}
           </p>
         ) : (
-          draft.values.components.map((component) => (
-            <div
-              key={`${component.ref.kind}/${component.ref.id}`}
-              className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border px-2.5 py-1.5 text-[10px]"
-            >
-              <span className="rounded border border-border px-1 uppercase text-zinc-500">
-                {component.ref.kind}
-              </span>
-              <span className="font-mono text-zinc-300">
-                {component.ref.id}
-              </span>
-              <span className="font-mono text-zinc-500">
-                v{component.ref.version}
-              </span>
-              <span className="ml-auto truncate font-mono text-zinc-600">
-                {t("pipelineDraftSource")}: {component.ref.source.repo}@
-                {component.ref.source.commit.slice(0, 7)}
-              </span>
-              {component.description ? (
-                <span className="w-full text-zinc-600">
-                  {component.description}
+          components.map((component, index) => {
+            const componentKey = pipelineComponentKey(component.ref);
+            const option = libraryOptions.find(
+              (candidate) => pipelineOptionKey(candidate) === componentKey,
+            );
+            return (
+              <div
+                key={componentKey}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-border px-2.5 py-1.5 text-[10px]"
+              >
+                <select
+                  value={componentKey}
+                  aria-label={t("pipelineChooseComponent")}
+                  onChange={(event) =>
+                    onReplaceComponent(index, event.target.value)
+                  }
+                  disabled={libraryOptions.length === 0}
+                  className="h-7 max-w-[16rem] rounded-md border border-border bg-zinc-950 px-1.5 font-mono text-[10px] text-zinc-300 disabled:opacity-60"
+                >
+                  {option ? null : (
+                    <option value={componentKey}>
+                      {componentKey} ({t("pipelineComponentMissing")})
+                    </option>
+                  )}
+                  {libraryOptions.map((candidate) => {
+                    const key = pipelineOptionKey(candidate);
+                    return (
+                      <option key={key} value={key}>
+                        {candidate.kind}/{candidate.id} v{candidate.version}
+                      </option>
+                    );
+                  })}
+                </select>
+                <span className="font-mono text-zinc-500">
+                  v{component.ref.version}
                 </span>
-              ) : null}
-            </div>
-          ))
+                {option?.lockedVersion ? (
+                  <span className="rounded border border-amber-500/40 px-1 text-amber-300">
+                    {t("pipelineLockedVersion", {
+                      version: option.lockedVersion,
+                    })}
+                  </span>
+                ) : null}
+                <span className="truncate font-mono text-zinc-600">
+                  {t("pipelineDraftSource")}: {component.ref.source.repo}@
+                  {component.ref.source.commit.slice(0, 7)}
+                </span>
+                <span className="ml-auto flex items-center gap-1">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => onMoveComponent(index, -1)}
+                    disabled={index === 0}
+                    aria-label={t("pipelineMoveUp")}
+                  >
+                    <ArrowUp className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => onMoveComponent(index, 1)}
+                    disabled={index === components.length - 1}
+                    aria-label={t("pipelineMoveDown")}
+                  >
+                    <ArrowDown className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => onRemoveComponent(index)}
+                    aria-label={t("pipelineRemove")}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </span>
+                {component.description ? (
+                  <span className="w-full text-zinc-600">
+                    {component.description}
+                  </span>
+                ) : null}
+              </div>
+            );
+          })
         )}
       </div>
       <div className="space-y-1">
-        {draft.values.bindings.length === 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] font-medium text-zinc-400">
+            {t("pipelineBindingsTitle")}
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={onAddBinding}
+            disabled={bindableComponents.length === 0}
+          >
+            <Plus className="size-3.5" />
+            {t("pipelineAddBinding")}
+          </Button>
+        </div>
+        {bindings.length === 0 ? (
           <p className="text-[10px] text-zinc-600">
             {t("pipelineDraftNoBindings")}
           </p>
         ) : (
-          draft.values.bindings.map((binding) => (
-            <div
-              key={`${binding.node}:${binding.component.kind}/${binding.component.id}`}
-              className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 px-2.5 py-1 text-[10px] text-zinc-500"
-            >
-              <span className="font-mono text-zinc-300">{binding.node}</span>
-              <span>→</span>
-              <span className="font-mono text-zinc-400">
-                {binding.component.kind}/{binding.component.id}@
-                {binding.component.version}
-              </span>
-            </div>
-          ))
+          bindings.map((binding, index) => {
+            const stage = stages.find(
+              (candidate) => candidate.id === binding.node,
+            );
+            const componentKey = pipelineComponentKey(binding.component);
+            const targetKnown = assembledKeys.has(componentKey);
+            return (
+              <div
+                key={`${binding.node}:${componentKey}:${binding.component.version}`}
+                className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 px-2.5 py-1 text-[10px] text-zinc-500"
+              >
+                <select
+                  value={binding.node}
+                  aria-label={t("pipelineBindingNode")}
+                  onChange={(event) => onRebindNode(index, event.target.value)}
+                  className="h-7 rounded-md border border-border bg-zinc-950 px-1.5 font-mono text-[10px] text-zinc-300"
+                >
+                  {nodeOptions.includes(binding.node) ? null : (
+                    <option value={binding.node}>{binding.node} (?)</option>
+                  )}
+                  {nodeOptions.map((node) => (
+                    <option key={node} value={node}>
+                      {node}
+                    </option>
+                  ))}
+                </select>
+                <span>→</span>
+                <select
+                  value={componentKey}
+                  aria-label={t("pipelineBindingTarget")}
+                  onChange={(event) => onBindTarget(index, event.target.value)}
+                  className="h-7 max-w-[16rem] rounded-md border border-border bg-zinc-950 px-1.5 font-mono text-[10px] text-zinc-300"
+                >
+                  {targetKnown ? null : (
+                    <option value={componentKey}>
+                      {componentKey} ({t("pipelineComponentMissing")})
+                    </option>
+                  )}
+                  <optgroup label={t("pipelineComponentsTitle")}>
+                    {bindableComponents.map((component) => {
+                      const key = pipelineComponentKey(component.ref);
+                      return (
+                        <option key={key} value={key}>
+                          {component.ref.kind}/{component.ref.id} v
+                          {component.ref.version}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                  {stage?.type === "agent" && teamAgents.length > 0 ? (
+                    <optgroup label={t("pipelineTeamAgent")}>
+                      {teamAgents.map((agent) => (
+                        <option
+                          key={agent}
+                          value={`${TEAM_AGENT_PREFIX}${agent}`}
+                        >
+                          {agent}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                </select>
+                <span className="font-mono text-zinc-600">
+                  v{binding.component.version}
+                </span>
+                <span className="ml-auto flex items-center gap-1">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => onMoveBinding(index, -1)}
+                    disabled={index === 0}
+                    aria-label={t("pipelineMoveUp")}
+                  >
+                    <ArrowUp className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => onMoveBinding(index, 1)}
+                    disabled={index === bindings.length - 1}
+                    aria-label={t("pipelineMoveDown")}
+                  >
+                    <ArrowDown className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => onRemoveBinding(index)}
+                    aria-label={t("pipelineRemove")}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
+                </span>
+              </div>
+            );
+          })
         )}
       </div>
+      {issues.length > 0 ? (
+        <div className="space-y-1 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
+          <span className="font-medium">
+            {t("pipelineEditIssues", { count: issues.length })}
+          </span>
+          <ul className="space-y-1">
+            {issues.map((issue) => (
+              <li key={`${issue.code}:${issue.path}:${issue.message}`}>
+                · {issue.path}: {issue.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {warnings.length > 0 ? (
+        <ul className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+          <li className="font-medium">{t("pipelineEditWarnings")}</li>
+          {warnings.map((warning) => (
+            <li key={warning}>· {warning}</li>
+          ))}
+        </ul>
+      ) : null}
       {draft.values.issues.length > 0 ? (
         <div className="space-y-1 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
           <span className="font-medium">
@@ -2182,15 +2672,15 @@ function PipelineDraftPreview({
         <div
           className={cn(
             "space-y-1 rounded-md border px-3 py-2 text-[11px]",
-            blocked
+            !assembly.ok
               ? "border-red-500/30 bg-red-500/5 text-red-200"
               : "border-emerald-500/30 bg-emerald-500/5 text-emerald-200",
           )}
         >
           <span>
-            {blocked
-              ? t("pipelineDraftAssemblyBlocked")
-              : t("pipelineDraftAssemblyOk")}
+            {assembly.ok
+              ? t("pipelineDraftAssemblyOk")
+              : t("pipelineDraftAssemblyBlocked")}
           </span>
           {assembly.written && assembly.written.length > 0 ? (
             <span className="block text-[10px] text-zinc-400">
@@ -2210,8 +2700,21 @@ function PipelineDraftPreview({
             </ul>
           ) : null}
         </div>
-      ) : null}
+      ) : (
+        <p className="text-[10px] text-zinc-500">
+          {t("pipelineValidateStale")}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onCheck}
+          disabled={checking || approving}
+        >
+          <ShieldCheck className="size-3.5" />
+          {checking ? t("pipelineValidating") : t("pipelineValidate")}
+        </Button>
         <Button size="sm" variant="outline" onClick={onApply}>
           {t("pipelineDraftApply")}
         </Button>
