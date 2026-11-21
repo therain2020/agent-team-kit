@@ -574,7 +574,11 @@
     "stationBuild": "Build",
     "stationQa": "QA",
     "stationGatekeeper": "Gatekeeper",
-    "stationDeliver": "Deliver"
+    "stationDeliver": "Deliver",
+    "pendingLabel": "pending",
+    "backOffice": "Back to office",
+    "producer": "Produced by",
+    "viewOffice": "View office"
   },
   "approvals": {
     "title": "Approvals",
@@ -585,6 +589,8 @@
     "runSelected": "Selected the first approval for run {runId}.",
     "runEmptyTitle": "No approval waiting for this run",
     "runEmptyHint": "Run {runId} has no queued approval right now. It may have been decided or the run may have finished.",
+    "requestEmptyTitle": "This approval is no longer waiting",
+    "requestEmptyHint": "Request {requestId} is not in the queue. It may have been decided already.",
     "showAll": "Show all approvals"
   },
   "inbox": {
@@ -1703,9 +1709,9 @@
     "customize": "Customize",
     "newMission": "New mission",
     "startMission": "Start mission",
-    "handleApproval": "Handle approval",
+    "goToFactory": "Go to factory",
     "panelLabel": "Agent {agent} actions",
-    "panelShortcuts": "Panel focused: M mission · R run · B approval",
+    "panelShortcuts": "Panel focused: M mission · R run · B factory",
     "autopilot": "Autopilot",
     "roleBuilder": "Builder",
     "roleSeller": "Seller",
@@ -1747,7 +1753,14 @@
     "flowCost": "{cost}",
     "flowDelta": "+{tokens} tok · +{cost}",
     "openStageDetail": "Stage detail",
-    "rerunIntent": "Re-run the {workflow} stage with the same goal and acceptance."
+    "rerunIntent": "Re-run the {workflow} stage with the same goal and acceptance.",
+    "factoryDoor": "Factory door",
+    "pendingApprovals": "pending",
+    "flowCostLabel": "cost",
+    "linkEmptyTitle": "Nothing at this address",
+    "linkEmptyPack": "Pack “{pack}” is not in this workspace.",
+    "linkEmptyAgent": "Agent “{agent}” is not in this office.",
+    "linkClear": "Open the office"
   },
   "stageDetail": {
     "title": "Stage detail",

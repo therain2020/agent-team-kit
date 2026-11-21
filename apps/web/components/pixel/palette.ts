@@ -40,3 +40,16 @@ export function agentPalette(seed: number): AgentPalette {
   const index = Math.abs(Math.trunc(seed)) % AGENT_PALETTES.length;
   return AGENT_PALETTES[index] ?? FALLBACK_PALETTE;
 }
+
+/**
+ * Stable sprite seed for an agent id. The office station and a factory
+ * workpiece resolve the same producer to the same sprite, so the same person
+ * never appears twice with different colors (97 §3.5).
+ */
+export function agentSeed(agentId: string): number {
+  let hash = 0;
+  for (let index = 0; index < agentId.length; index += 1) {
+    hash = (hash * 31 + agentId.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}

@@ -574,7 +574,11 @@
     "stationBuild": "构建",
     "stationQa": "质检",
     "stationGatekeeper": "闸门",
-    "stationDeliver": "交付"
+    "stationDeliver": "交付",
+    "pendingLabel": "待审批",
+    "backOffice": "回办公室",
+    "producer": "产出者",
+    "viewOffice": "查看办公室"
   },
   "approvals": {
     "title": "审批",
@@ -585,6 +589,8 @@
     "runSelected": "已预选运行 {runId} 的首件审批。",
     "runEmptyTitle": "该运行当前没有待审批工件",
     "runEmptyHint": "运行 {runId} 目前没有排队中的审批，可能已决策或已结束。",
+    "requestEmptyTitle": "该审批已不在队列中",
+    "requestEmptyHint": "请求 {requestId} 不在队列里，可能已被处理。",
     "showAll": "查看全部审批"
   },
   "inbox": {
@@ -1703,9 +1709,9 @@
     "customize": "定制",
     "newMission": "新任务",
     "startMission": "发起任务",
-    "handleApproval": "处理审批",
+    "goToFactory": "去工厂处理",
     "panelLabel": "{agent} 工位操作",
-    "panelShortcuts": "面板聚焦时：M 发起任务 · R 打开运行 · B 处理审批",
+    "panelShortcuts": "面板聚焦时：M 发起任务 · R 打开运行 · B 去工厂",
     "autopilot": "自主运行",
     "roleBuilder": "Builder",
     "roleSeller": "Seller",
@@ -1747,7 +1753,14 @@
     "flowCost": "{cost}",
     "flowDelta": "+{tokens} tok · +{cost}",
     "openStageDetail": "环节详情",
-    "rerunIntent": "重跑 {workflow} 环节：沿用同样的目标与验收，再执行一遍。"
+    "rerunIntent": "重跑 {workflow} 环节：沿用同样的目标与验收，再执行一遍。",
+    "factoryDoor": "工厂门",
+    "pendingApprovals": "待审批",
+    "flowCostLabel": "成本",
+    "linkEmptyTitle": "这个地址没有可展示的内容",
+    "linkEmptyPack": "当前工作区没有模具“{pack}”。",
+    "linkEmptyAgent": "当前办公室没有角色“{agent}”。",
+    "linkClear": "打开办公室"
   },
   "stageDetail": {
     "title": "环节详情",

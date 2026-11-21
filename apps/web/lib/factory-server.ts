@@ -8,12 +8,19 @@ import {
   type FactoryEvidenceRef,
   type FactoryHistoryEntry,
   type FactoryItem,
+  type FactoryLink,
   type FactorySnapshot,
+  factoryLinkFrom,
   stationForApproval,
   stationsFor,
 } from "./factory";
 import { loadApprovalWhy } from "./inbox";
-import { type ArtifactView, loadArtifactContent, loadRunDetail } from "./runs";
+import {
+  type ArtifactView,
+  loadArtifactContent,
+  loadPausedRuns,
+  loadRunDetail,
+} from "./runs";
 import { ensureStoreSchema, getStore } from "./store";
 
 /** Same default workspace the approval tower reads budgets from. */
@@ -23,30 +30,43 @@ const MAX_DETAIL_ARTIFACTS = 40;
 const MAX_DIFF_PARTS = 500;
 const MAX_DIFF_CHARS = 40_000;
 
+type PausedEntry = Awaited<ReturnType<typeof loadPausedRuns>>[number];
+
+/** One paused run → one approval workpiece; runs without an approval are skipped. */
+function pausedToItem(entry: PausedEntry): FactoryItem | null {
+  const approval = entry.approval;
+  if (!approval) {
+    return null;
+  }
+  const requestType = approval.requestType;
+  return {
+    kind: "approval",
+    requestId: approval.requestId,
+    runId: entry.run.runId,
+    workflowId: entry.run.workflowId,
+    stageId: approval.stageId,
+    stageName: approval.stageName,
+    requestType,
+    stationId: stationForApproval(requestType),
+    riskClass: approval.riskClass ?? "medium",
+    summary: approval.summary ?? "",
+    costCny: entry.costCny,
+    updatedAt: entry.run.updatedAt,
+    expiresAt: approval.expiresAt,
+    requestedBy: approval.requestedBy,
+    ...(entry.producerAgentId
+      ? { producerAgentId: entry.producerAgentId }
+      : {}),
+  };
+}
+
 export async function loadFactorySnapshot(): Promise<FactorySnapshot> {
   const data = await loadInboxData();
   const items: FactoryItem[] = [
-    ...data.paused
-      .filter((entry) => entry.approval)
-      .map((entry) => {
-        const requestType = entry.approval?.requestType;
-        return {
-          kind: "approval" as const,
-          requestId: entry.approval?.requestId,
-          runId: entry.run.runId,
-          workflowId: entry.run.workflowId,
-          stageId: entry.approval?.stageId,
-          stageName: entry.approval?.stageName,
-          requestType,
-          stationId: stationForApproval(requestType),
-          riskClass: entry.approval?.riskClass ?? "medium",
-          summary: entry.approval?.summary ?? "",
-          costCny: entry.costCny,
-          updatedAt: entry.run.updatedAt,
-          expiresAt: entry.approval?.expiresAt,
-          requestedBy: entry.approval?.requestedBy,
-        };
-      }),
+    ...data.paused.flatMap((entry) => {
+      const item = pausedToItem(entry);
+      return item ? [item] : [];
+    }),
     ...data.failed.map((entry) => ({
       kind: "failed" as const,
       runId: entry.run.runId,
@@ -64,6 +84,24 @@ export async function loadFactorySnapshot(): Promise<FactorySnapshot> {
     stations: stationsFor(items),
     generatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Door plate payload for the office (97 §3.5). It reads the same paused-run
+ * projection as the factory snapshot but skips the failed-run enrichment, so
+ * the office first paint only pays for the workpieces it actually shows.
+ */
+export async function loadFactoryLink(): Promise<FactoryLink> {
+  const paused = await loadPausedRuns();
+  const items = paused.flatMap((entry) => {
+    const item = pausedToItem(entry);
+    return item ? [item] : [];
+  });
+  return factoryLinkFrom({
+    items,
+    stations: stationsFor(items),
+    generatedAt: new Date().toISOString(),
+  });
 }
 
 export async function loadFactoryDetail(
