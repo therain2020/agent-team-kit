@@ -69,11 +69,26 @@ the unified machine. Wiring is opt-in and behavior-neutral:
 $env:KIT_CHANGE_PIPELINE = "shadow"   # or "on"; unset = off
 ```
 
-- Default `off`: CLI output, records and tests are unchanged.
+- Default `off`: CLI output, records and tests are unchanged — except that a
+  **high-risk** iteration task is always recorded and its approval requested.
+  Without the proposal a required approval would have no subject, so the G4
+  gate (98 §5.2) could never be judged. The deterministic proposal id keeps
+  this idempotent when the switch is later enabled.
 - `shadow`: iteration reports and evolution cycles additionally write proposals.
   Storage/validation failures are logged and never change the loop result.
 - `on`: reserved for future enforcement (promotion bridge); currently identical
   to `shadow`.
+
+## High-risk approval link
+
+A high-risk proposal is queued on the shared approvals inbox
+(`ChangeApprovalService.request`, `approvals.change_id`,
+`approvals.risk_class = high`). The decided approval is written back to
+`change_proposals.approval_ref` by `settle()`, which is what
+`assertPromotionAllowed` requires. The collector reads both directions: the
+decided `approval_ref` and the request-time `approvals.change_id` link, so a
+queued request is visible without weakening the promotion guard (a pending
+approval never satisfies `approvalRef`).
 
 ## Evolution auto-promotion (`cycle.promote`)
 

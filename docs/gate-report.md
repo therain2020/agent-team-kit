@@ -92,7 +92,7 @@ To close a GAP, produce the missing record and re-run the report:
 | `G2.signals-*` | Let information reactions run (`reactToInformationEvent` writes `reaction.outcome` lines automatically) |
 | `G2.*` | Record reaction samples (see below) and keep noise cost under 20% |
 | `G3.*` | Run draft → dry-run → accept for an agent/workflow/pipeline/source |
-| `G4.*` | Apply a low/medium iteration change; block forbidden paths |
+| `G4.*` | Apply a low/medium iteration change; block forbidden paths; link every applied high-risk change to an approved high-risk approval |
 | `G5.*` | Record actor and reason for every manual intervention; label approval risk |
 | `G5.approval-risk-recorded` | Store the risk class on approval rows so they can count as high-risk approvals |
 | `G6.*` | Run `bun run drill:rollback --execute` (code + instruction rollback RTO) or `bun run recovery:drill --execute --rpo-minutes <n>` (quarterly recovery/RPO) |
@@ -148,6 +148,34 @@ linked by `trigger_run_id`, an artifact id, a recorded decision and an LKG or
 rollback reference. A missing link is reported as a GAP; the report does not
 assert a 60-second query latency it cannot measure.
 
+The same chain is exposed per reaction by `traceReactions` (CLI:
+`kit reaction trace --event <id>`) and by the observer timeline. Both read the
+existing refs only: `iteration_tasks`/`iteration_runs` artifact columns or
+`runs → manifests → artifacts` for pack runs, `approvals` (run- or
+change-scoped) plus terminal `change_proposal_transitions`, and the
+`ChangeProposal.revertRef`/`revert`, active `last_known_good` pins and audited
+`observer.rollback` actions. A segment with no real ref is left empty and the
+chain reports `chainComplete: false`; nothing is inferred.
+
+## High-risk approval link (G4)
+
+`G4.high-risk-approved` requires every **applied** high-risk code change to
+carry an approval that is both decided (`status = approved`) and labelled
+`risk_class = high`. The link is read from the real records:
+
+- the iteration task's `ChangeProposal` (`source_ref = {kind: iteration, id,
+  taskId}`), then
+- the proposal's decided `approval_ref`, or — while the request is still queued
+  — the request-time reverse link `approvals.change_id`.
+
+A high-risk change parked for approval (apply skipped) does not by itself fail
+the check, but the evidence line records its link state. A high-risk change
+with no proposal or no approval stays a GAP rather than being assumed safe.
+Change-scoped proposals are recorded for every iteration task when
+`KIT_CHANGE_PIPELINE` is enabled; a high-risk task also gets its proposal and
+approval request recorded when the pipeline is off, so the approval evidence
+does not depend on the shadow-mirror switch.
+
 ## Known limits
 
 - Approval rows record the guarded action's risk class (`approvals.risk_class`)
@@ -157,8 +185,10 @@ assert a 60-second query latency it cannot measure.
   stay unlabelled and are a GAP (`G5.approval-risk-recorded`) rather than a
   guessed high-risk confirmation; automated events such as
   `ops.side_effect.blocked` are never counted as human confirmations.
-- High-risk code changes have no recorded approval link yet, so any applied
-  high-risk change is a GAP (`G4.high-risk-approved`).
+- High-risk code changes are linked to their ChangeProposal and approval; an
+  applied high-risk change without an approved, high-labelled link is still a
+  GAP (`G4.high-risk-approved`). A queued request is visible but does not
+  satisfy the check.
 - Zero-config (S12) reads `<home>/cold-start-tthw.json`, written by the
   bootstrap flow: the clock starts on the first `kit up` / `kit bootstrap` /
   `kit demo` (or the welcome console) and stops at the furthest milestone

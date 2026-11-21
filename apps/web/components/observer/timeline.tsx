@@ -7,9 +7,11 @@ import { getLocale, getTranslations } from "next-intl/server";
 import Link from "next/link";
 
 /**
- * Read-only information → reaction → job → artifact timeline (98 §3.5). The
- * reaction cell is the TriggerRun that linked back to the event; job and
- * artifact stay drill-down links into the existing job hub.
+ * Read-only information → reaction → job → artifact → decision → rollback
+ * timeline (98 §3.5, §5.2 G7). The reaction cell is the TriggerRun that linked
+ * back to the event; job and artifact stay drill-down links into the existing
+ * job hub, and the chain row renders the artifact ids, decision references and
+ * rollback reference joined from the existing planes.
  */
 export async function ObserverTimeline({
   entries,
@@ -135,6 +137,45 @@ export async function ObserverTimeline({
               )}
             </div>
           </div>
+
+          {entry.reaction?.jobId ? (
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/60 pt-2 text-[10px] text-zinc-500">
+              <span className="truncate font-mono text-zinc-400">
+                {t("artifactStage")}:{" "}
+                {entry.reaction.artifacts.length > 0
+                  ? entry.reaction.artifacts
+                      .slice(0, 2)
+                      .map((item) => item.artifactId)
+                      .join(" · ")
+                  : "—"}
+              </span>
+              <span className="truncate font-mono text-zinc-400">
+                {t("decisionStage")}:{" "}
+                {entry.reaction.decisions.length > 0
+                  ? entry.reaction.decisions
+                      .slice(0, 2)
+                      .map((item) => `${item.ref} (${item.status})`)
+                      .join(" · ")
+                  : "—"}
+              </span>
+              <span className="truncate font-mono text-zinc-400">
+                {t("rollbackStage")}:{" "}
+                {entry.reaction.rollbacks.length > 0
+                  ? entry.reaction.rollbacks
+                      .slice(0, 2)
+                      .map((item) => item.ref)
+                      .join(" · ")
+                  : "—"}
+              </span>
+              <Badge
+                variant={entry.reaction.chainComplete ? "success" : "outline"}
+              >
+                {entry.reaction.chainComplete
+                  ? t("chainComplete")
+                  : t("chainIncomplete")}
+              </Badge>
+            </div>
+          ) : null}
         </li>
       ))}
     </ol>

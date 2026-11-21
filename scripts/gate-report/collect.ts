@@ -377,6 +377,32 @@ async function collectStore(
         ORDER BY decision_at, approval_id
       `,
     );
+    // G4 reads the real approval chain (98 §5.2): a code change links through
+    // its ChangeProposal sourceRef, and the approval links back either through
+    // the proposal's decided approval_ref or the request-time approvals.change_id
+    // row. Nothing is synthesized; an unlinked change stays a GAP.
+    const proposalRows = await run<ChangeProposalRow>(
+      "change_proposals",
+      () =>
+        db.sql<ChangeProposalRow[]>`
+        SELECT proposal_id, state, risk, approval_ref, source_ref
+        FROM change_proposals
+        ORDER BY created_at DESC, proposal_id DESC
+        LIMIT 1000
+      `,
+    );
+    const changeApprovalRows = await run<ChangeApprovalRow>(
+      "approvals(change)",
+      () =>
+        db.sql<ChangeApprovalRow[]>`
+        SELECT approval_id, change_id, status, risk_class, decision_by,
+               decision_at
+        FROM approvals
+        WHERE change_id IS NOT NULL
+        ORDER BY created_at DESC, approval_id DESC
+        LIMIT 2000
+      `,
+    );
     const killRows = await run<KillRow>(
       "kill_switches",
       () =>
@@ -516,19 +542,29 @@ async function collectStore(
         detail: stringOr(row.summary, row.kind),
       }));
 
-    const codeChanges: CodeChangeEvidence[] = changeRows.map((row) => ({
-      iterationId: String(row.iteration_id),
-      taskId: String(row.task_id),
-      risk: stringOr(row.risk, "unknown"),
-      status: stringOr(row.task_status ?? row.run_status, "unknown"),
-      applyStatus: stringOrNull(row.apply_status),
-      commitSha: stringOrNull(row.commit_sha),
-      originKind: stringOrNull(row.origin_kind),
-      triggerRunId: stringOrNull(row.trigger_run_id),
-      startedAt: iso(row.started_at),
-      resultArtifactId: stringOrNull(row.result_artifact_id),
-      source: "store" as const,
-    }));
+    const approvalLinks = changeApprovalLinks(proposalRows, changeApprovalRows);
+    const codeChanges: CodeChangeEvidence[] = changeRows.map((row) => {
+      const link = approvalLinks.get(
+        changeApprovalKey(String(row.iteration_id), String(row.task_id)),
+      );
+      return {
+        iterationId: String(row.iteration_id),
+        taskId: String(row.task_id),
+        risk: stringOr(row.risk, "unknown"),
+        status: stringOr(row.task_status ?? row.run_status, "unknown"),
+        applyStatus: stringOrNull(row.apply_status),
+        commitSha: stringOrNull(row.commit_sha),
+        originKind: stringOrNull(row.origin_kind),
+        triggerRunId: stringOrNull(row.trigger_run_id),
+        startedAt: iso(row.started_at),
+        resultArtifactId: stringOrNull(row.result_artifact_id),
+        source: "store" as const,
+        approvalRef: link?.approvalRef ?? null,
+        approvalStatus: link?.approvalStatus ?? null,
+        approvalRisk: link?.approvalRisk ?? null,
+        approvalBy: link?.approvalBy ?? null,
+      };
+    });
 
     const manualTasks = [
       ...triggerRows
@@ -1380,6 +1416,10 @@ function signalToChange(signal: {
     startedAt: signal.at,
     resultArtifactId: null,
     source: "signals",
+    approvalRef: null,
+    approvalStatus: null,
+    approvalRisk: null,
+    approvalBy: null,
   };
 }
 
@@ -1404,6 +1444,93 @@ function dedupeInterventions(
 
 function changeKey(change: CodeChangeEvidence): string {
   return `${change.iterationId}:${change.taskId}`;
+}
+
+interface ChangeApprovalLink {
+  approvalRef: string;
+  approvalStatus: string;
+  approvalRisk: "low" | "medium" | "high" | null;
+  approvalBy: string | null;
+}
+
+function changeApprovalKey(iterationId: string, taskId: string): string {
+  return `${iterationId}:${taskId}`;
+}
+
+/**
+ * Joins ChangeProposals to their iteration task and to the approval that
+ * guards them. A decided proposal carries `approval_ref`; while the request is
+ * still queued the reverse `approvals.change_id` link is the only evidence, so
+ * both directions are read. The decided (approved) row wins when both exist.
+ */
+function changeApprovalLinks(
+  proposals: ChangeProposalRow[],
+  approvals: ChangeApprovalRow[],
+): Map<string, ChangeApprovalLink> {
+  const byId = new Map<string, ChangeApprovalRow>();
+  const byChange = new Map<string, ChangeApprovalRow>();
+  for (const row of approvals) {
+    byId.set(row.approval_id, row);
+    if (!row.change_id) {
+      continue;
+    }
+    const existing = byChange.get(row.change_id);
+    if (
+      !existing ||
+      (existing.status !== "approved" && row.status === "approved")
+    ) {
+      byChange.set(row.change_id, row);
+    }
+  }
+
+  const links = new Map<string, ChangeApprovalLink>();
+  for (const proposal of proposals) {
+    const source = parseObjectOrNull(proposal.source_ref);
+    if (!source || source.kind !== "iteration") {
+      continue;
+    }
+    const iterationId =
+      typeof source.id === "string" && source.id ? source.id : null;
+    const taskId =
+      typeof source.taskId === "string" && source.taskId ? source.taskId : null;
+    if (!iterationId || !taskId) {
+      continue;
+    }
+    const approval =
+      (proposal.approval_ref ? byId.get(proposal.approval_ref) : undefined) ??
+      byChange.get(proposal.proposal_id);
+    if (!approval) {
+      continue;
+    }
+    const key = changeApprovalKey(iterationId, taskId);
+    if (links.has(key)) {
+      continue;
+    }
+    links.set(key, {
+      approvalRef: approval.approval_id,
+      approvalStatus: approval.status,
+      approvalRisk: riskClassOrNull(approval.risk_class),
+      approvalBy: stringOrNull(approval.decision_by),
+    });
+  }
+  return links;
+}
+
+function parseObjectOrNull(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 function activityEvidence(row: ActivityRow): ActivityEvidence {
@@ -1553,6 +1680,21 @@ interface ApprovalRow {
   decision_reason: string | null;
   /** Null on rows written before risk classes were recorded. */
   risk_class: string | null;
+}
+interface ChangeProposalRow {
+  proposal_id: string;
+  state: string;
+  risk: string;
+  approval_ref: string | null;
+  source_ref: unknown;
+}
+interface ChangeApprovalRow {
+  approval_id: string;
+  change_id: string | null;
+  status: string;
+  risk_class: string | null;
+  decision_by: string | null;
+  decision_at: string | Date | null;
 }
 interface KillRow {
   switch_id: string;

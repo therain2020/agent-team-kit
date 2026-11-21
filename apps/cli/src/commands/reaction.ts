@@ -340,6 +340,9 @@ export function registerReaction(program: Command): void {
             console.log(
               `${row.ruleId ?? "?"}  ${row.status.padEnd(8)}  job=${row.jobId ?? "-"}  triggerRun=${row.triggerRunId}  ${row.launchedAt}`,
             );
+            console.log(
+              `  artifacts=${row.artifacts.map((item) => item.artifactId).join(",") || "-"}  decisions=${row.decisions.map((item) => item.ref).join(",") || "-"}  rollback=${row.rollbacks.map((item) => item.ref).join(",") || "-"}  chain=${row.chainComplete ? "complete" : "incomplete"}`,
+            );
           }
         });
       } catch (error) {

@@ -121,6 +121,17 @@ export interface CodeChangeEvidence {
   startedAt: string;
   resultArtifactId: string | null;
   source: "store" | "signals";
+  /**
+   * Approval that cleared this change (85 hard contract 3, 98 §5.2 G4). Either
+   * the proposal's decided `approval_ref` or the request-time link read from
+   * `approvals.change_id`. Null when no approval was recorded.
+   */
+  approvalRef: string | null;
+  /** Status of the linked approval (`approved`, `queued`, …). */
+  approvalStatus: string | null;
+  /** Risk class recorded on the approval; null stays unlabelled evidence. */
+  approvalRisk: "low" | "medium" | "high" | null;
+  approvalBy: string | null;
 }
 
 export type InterventionCategory =
@@ -649,8 +660,14 @@ function gateCodeManufacture(bundle: EvidenceBundle): GateDraft {
   const applied = changes.filter(
     (change) => isLowOrMedium(change.risk) && isApplied(change),
   );
-  const highRiskApplied = changes.filter(
-    (change) => change.risk === "high" && isApplied(change),
+  const highRisk = changes.filter((change) => change.risk === "high");
+  const highRiskApplied = highRisk.filter(isApplied);
+  // G4 only counts an approval link as real evidence when the row was decided
+  // and carries the high risk class; a parked or unlabelled approval stays a
+  // GAP instead of being read as a high-risk confirmation.
+  const highRiskApproved = highRiskApplied.filter(isApprovedHighRiskLink);
+  const highRiskUnlinked = highRiskApplied.filter(
+    (change) => !isApprovedHighRiskLink(change),
   );
   const forbidden = bundle.forbiddenBlocks.filter((block) =>
     inside(bundle.window, block.at),
@@ -671,10 +688,10 @@ function gateCodeManufacture(bundle: EvidenceBundle): GateDraft {
   check(
     gate,
     "high-risk-approved",
-    highRiskApplied.length === 0,
+    highRiskUnlinked.length === 0,
     highRiskApplied.length === 0
-      ? "no high-risk change was applied"
-      : `${highRiskApplied.length} high-risk change(s) applied but the approval link is not recorded`,
+      ? `no high-risk change was applied (${highRisk.length} high-risk change(s) in window)`
+      : `${highRiskUnlinked.length}/${highRiskApplied.length} applied high-risk change(s) lack an approved high-risk link; ${highRiskApproved.length} approved`,
   );
 
   gate.evidence.push(
@@ -684,12 +701,20 @@ function gateCodeManufacture(bundle: EvidenceBundle): GateDraft {
         (change) =>
           `code:${change.iterationId}/${change.taskId} risk=${change.risk} source=${change.source} commit=${change.commitSha ?? "none"}`,
       ),
+    ...highRisk
+      .slice(0, 10)
+      .map(
+        (change) =>
+          `code:${change.iterationId}/${change.taskId} risk=high applied=${isApplied(change)} approval=${change.approvalRef ?? "none"} status=${change.approvalStatus ?? "none"} riskClass=${change.approvalRisk ?? "none"}`,
+      ),
     `security:forbidden_blocks n=${forbidden.length}`,
   );
   gate.metrics = {
     changes: changes.length,
     lowMediumApplied: applied.length,
+    highRiskChanges: highRisk.length,
     highRiskApplied: highRiskApplied.length,
+    highRiskApproved: highRiskApproved.length,
     forbiddenBlocks: forbidden.length,
   };
   return gate;
@@ -1180,6 +1205,15 @@ function isApplied(change: CodeChangeEvidence): boolean {
     status === "merged" ||
     status === "committed" ||
     (change.commitSha ?? "") !== ""
+  );
+}
+
+/** An applied high-risk change counts only with a decided, labelled approval. */
+function isApprovedHighRiskLink(change: CodeChangeEvidence): boolean {
+  return (
+    change.approvalRef !== null &&
+    change.approvalStatus === "approved" &&
+    change.approvalRisk === "high"
   );
 }
 
