@@ -1,12 +1,10 @@
+import {
+  type PriceTable,
+  computeCostMicro,
+  loadPriceTable,
+  resolveModelPrice,
+} from "@kit/model";
 import type { LoadedPack } from "./load-pack";
-
-const PRICES: Record<
-  string,
-  { inputCnyPer1k: number; outputCnyPer1k: number }
-> = {
-  "deepseek-flash": { inputCnyPer1k: 0.001, outputCnyPer1k: 0.002 },
-  "deepseek-pro": { inputCnyPer1k: 0.002, outputCnyPer1k: 0.008 },
-};
 
 const INPUT_TOKENS_PER_AGENT_STAGE = 1500;
 const OUTPUT_TOKENS_PER_AGENT_STAGE = 600;
@@ -38,8 +36,23 @@ export interface SimulationReport {
   note: string;
 }
 
-export function simulatePack(loaded: LoadedPack): SimulationReport {
+export interface SimulationOptions {
+  /**
+   * Versioned price table shared with actual cost attribution (60 §3.3). The
+   * defaults read `KIT_PRICE_TABLE_JSON`, so a repriced deployment estimates
+   * with exactly the version that would charge the run.
+   */
+  priceTable?: PriceTable;
+  at?: Date;
+}
+
+export function simulatePack(
+  loaded: LoadedPack,
+  options: SimulationOptions = {},
+): SimulationReport {
   const warnings = [...loaded.warnings];
+  const priceTable = options.priceTable ?? loadPriceTable();
+  const at = options.at ?? new Date();
 
   const workflows = loaded.workflows.map((workflow) => {
     const stages = workflow.stages.map((stage): SimulationStage => {
@@ -60,19 +73,19 @@ export function simulatePack(loaded: LoadedPack): SimulationReport {
       const agentId = stage.agent ?? "";
       const agent = loaded.agents.get(agentId);
       const model = agent?.frontmatter.model ?? "unknown";
-      const price = PRICES[model];
+      const price = resolveModelPrice(priceTable, model, at);
 
-      if (!price) {
+      if (!price.tracked) {
         warnings.push(
-          `no price entry for model "${model}" (agent ${agentId}); cost treated as 0`,
+          `no price entry for model "${model}" (agent ${agentId}) in price table ${price.priceVersion}; cost treated as 0`,
         );
       }
 
-      const inputPrice = price?.inputCnyPer1k ?? 0;
-      const outputPrice = price?.outputCnyPer1k ?? 0;
-      const cost =
-        (INPUT_TOKENS_PER_AGENT_STAGE / 1000) * inputPrice +
-        (OUTPUT_TOKENS_PER_AGENT_STAGE / 1000) * outputPrice;
+      const costMicro = computeCostMicro(
+        price,
+        INPUT_TOKENS_PER_AGENT_STAGE,
+        OUTPUT_TOKENS_PER_AGENT_STAGE,
+      );
 
       return {
         id: stage.id,
@@ -81,7 +94,7 @@ export function simulatePack(loaded: LoadedPack): SimulationReport {
         model,
         estimatedInputTokens: INPUT_TOKENS_PER_AGENT_STAGE,
         estimatedOutputTokens: OUTPUT_TOKENS_PER_AGENT_STAGE,
-        estimatedCostCny: round(cost),
+        estimatedCostCny: round(costMicro / 1_000_000),
         ...(stage.gate ? { gate: stage.gate } : {}),
       };
     });

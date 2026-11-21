@@ -1,4 +1,5 @@
 export * from "./canary";
+export * from "./cost-attribution";
 export * from "./cycle";
 export * from "./divergence";
 export * from "./drift";

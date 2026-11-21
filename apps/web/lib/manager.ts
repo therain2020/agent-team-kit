@@ -4,6 +4,7 @@ import { buildManagerBrief } from "@kit/manager";
 import { calculateCostCny } from "@kit/model";
 import type { UIMessage } from "ai";
 import { recordManagerUsage } from "./manager-budget";
+import { recordManagerReplyCost } from "./manager-cost";
 import { loadArtifactContent, loadRunDetail } from "./runs";
 import { getStore } from "./store";
 
@@ -154,6 +155,8 @@ export async function publishManagerExchange(input: {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  /** Manager session being charged; defaults to the run id. */
+  managerSessionId?: string;
   store?: Store;
 }): Promise<{ artifactId: string; costCny: number }> {
   const store = input.store ?? (await getStore());
@@ -218,6 +221,10 @@ export async function publishManagerExchange(input: {
     costCny,
     store,
   });
+
+  // The chat reply also earns a per-call ledger record; without it, manager
+  // spend only exists on the artifact and session totals (60 §3.3).
+  await recordManagerReplyCost(store, input);
 
   return { artifactId: published.artifact.artifactId, costCny };
 }

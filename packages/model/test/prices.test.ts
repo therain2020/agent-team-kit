@@ -7,7 +7,9 @@ import {
   StubModelGateway,
   calculateCostCny,
   computeCostMicro,
+  findSupersededPriceVersions,
   loadPriceTable,
+  resolveCostScope,
   resolveModelPrice,
 } from "../src/index";
 
@@ -110,6 +112,78 @@ describe("price table", () => {
   });
 });
 
+describe("price table change detection", () => {
+  const versions = [
+    {
+      version: "2026-11-01",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+    },
+    {
+      version: "2026-12-01",
+      effectiveAt: "2026-12-01T00:00:00.000Z",
+    },
+  ];
+
+  it("reports an old version once a newer one takes effect", () => {
+    const changes = findSupersededPriceVersions(
+      versions,
+      "2026-12-02T00:00:00.000Z",
+    );
+    expect(changes).toEqual([
+      {
+        previousVersion: "2026-11-01",
+        previousEffectiveAt: "2026-11-01T00:00:00.000Z",
+        currentVersion: "2026-12-01",
+        currentEffectiveAt: "2026-12-01T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("ignores versions that are still in effect or not yet active", () => {
+    expect(
+      findSupersededPriceVersions(versions, "2026-11-20T00:00:00.000Z"),
+    ).toEqual([]);
+    // Before the first version, nothing has taken effect at all.
+    expect(
+      findSupersededPriceVersions(versions, "2026-10-01T00:00:00.000Z"),
+    ).toEqual([]);
+  });
+});
+
+describe("cost scope", () => {
+  it("keeps run-scoped attribution unchanged", () => {
+    expect(
+      resolveCostScope({ workspaceId: "default", runId: "run_1" }),
+    ).toEqual({ kind: "run", id: "run_1", runId: "run_1" });
+  });
+
+  it("derives non-run scopes from aggregate keys", () => {
+    expect(
+      resolveCostScope({ workspaceId: "default", jobId: "job_1" }),
+    ).toEqual({ kind: "job", id: "job_1", runId: "job:job_1" });
+    expect(
+      resolveCostScope({ workspaceId: "default", changeId: "cyc_1" }),
+    ).toEqual({ kind: "evolution", id: "cyc_1", runId: "evolution:cyc_1" });
+    expect(
+      resolveCostScope({ workspaceId: "default", managerSessionId: "run_2" }),
+    ).toEqual({ kind: "manager", id: "run_2", runId: "manager:run_2" });
+  });
+
+  it("prefers an explicit scope and rejects unattributed calls", () => {
+    expect(
+      resolveCostScope({
+        workspaceId: "default",
+        scopeKind: "manager",
+        scopeId: "sess_1",
+        runId: "run_1",
+      }),
+    ).toEqual({ kind: "manager", id: "sess_1", runId: "run_1" });
+    expect(() => resolveCostScope({ workspaceId: "default" })).toThrow(
+      /requires a runId/,
+    );
+  });
+});
+
 describe("CostTrackingGateway", () => {
   const baseGateway: ModelGateway = {
     complete: vi.fn(async () => ({
@@ -185,6 +259,28 @@ describe("CostTrackingGateway", () => {
     });
     expect(records[1]?.modelId).toBe("deepseek-pro");
     expect(records[0]?.callId).not.toBe(records[1]?.callId);
+  });
+
+  it("records a non-run call under its aggregate scope", async () => {
+    const records: CostCallRecord[] = [];
+    const gateway = new CostTrackingGateway(baseGateway, {
+      context: { workspaceId: "default", jobId: "job_1", source: "compose" },
+      sink: { record: (record) => records.push(record) },
+    });
+    await gateway.complete({
+      model: "deepseek-flash",
+      instructions: "",
+      input: "",
+    });
+    expect(records[0]).toMatchObject({
+      runId: "job:job_1",
+      scopeKind: "job",
+      scopeId: "job_1",
+      jobId: "job_1",
+      changeId: null,
+      managerSessionId: null,
+      source: "compose",
+    });
   });
 
   it("records stub completions as untracked, never as spend", async () => {

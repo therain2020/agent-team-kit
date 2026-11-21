@@ -30,6 +30,24 @@ export interface PriceTable {
   entries: ModelPriceEntry[];
 }
 
+/** Minimal version identity used to detect a superseded price table. */
+export interface PriceTableVersionRef {
+  version: string;
+  effectiveAt: string;
+}
+
+/**
+ * An old price version whose validity ended when `currentVersion` took effect.
+ * Historical records keep the version they were charged at; the notice only
+ * tells operators that estimates and budgets should be recalculated.
+ */
+export interface PriceTableChange {
+  previousVersion: string;
+  previousEffectiveAt: string;
+  currentVersion: string;
+  currentEffectiveAt: string;
+}
+
 export interface ResolvedModelPrice {
   tracked: boolean;
   modelId: string;
@@ -187,6 +205,56 @@ export function resolveModelPrice(
     effectiveAt: entry.effectiveAt,
     untrackedReason: null,
   };
+}
+
+/**
+ * Find every registered price version whose validity has ended because a
+ * newer version became effective. The active version is the newest table whose
+ * `effectiveAt` is not in the future; versions not yet effective are ignored
+ * (they have not superseded anything). Both repricing detection and the
+ * startup estimate read the same versioned table, so a notice always explains
+ * the prices the estimates would use.
+ */
+export function findSupersededPriceVersions(
+  versions: readonly PriceTableVersionRef[],
+  at: Date | string = new Date(),
+): PriceTableChange[] {
+  const atIso = toIso(at);
+  const ordered = versions
+    .map((version) => ({
+      version: version.version.trim(),
+      effectiveAt: toIso(version.effectiveAt),
+    }))
+    .filter((version) => version.version.length > 0)
+    .sort((a, b) =>
+      a.effectiveAt === b.effectiveAt
+        ? a.version.localeCompare(b.version)
+        : a.effectiveAt.localeCompare(b.effectiveAt),
+    );
+  const effective = ordered.filter((version) => version.effectiveAt <= atIso);
+  const current = effective.at(-1);
+  if (!current) {
+    return [];
+  }
+  const changes: PriceTableChange[] = [];
+  const seen = new Set<string>();
+  for (const previous of effective) {
+    if (
+      previous.version === current.version ||
+      previous.effectiveAt > current.effectiveAt ||
+      seen.has(previous.version)
+    ) {
+      continue;
+    }
+    seen.add(previous.version);
+    changes.push({
+      previousVersion: previous.version,
+      previousEffectiveAt: previous.effectiveAt,
+      currentVersion: current.version,
+      currentEffectiveAt: current.effectiveAt,
+    });
+  }
+  return changes;
 }
 
 /** Cost in micro-CNY for a call, computed from the stamped unit prices. */

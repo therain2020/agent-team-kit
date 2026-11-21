@@ -269,6 +269,96 @@ describe("cost ledger (sqlite)", () => {
     expect(report.untrackedCalls).toBe(1);
   });
 
+  it("attributes non-run calls to their aggregate object", async () => {
+    const store = await sqliteStore();
+    await store.costLedger.record(
+      record({
+        callId: "job-1:call-0",
+        runId: "job:job_1",
+        scopeKind: "job",
+        scopeId: "job_1",
+        jobId: "job_1",
+        stageId: null,
+        agentId: null,
+        source: "compose",
+      }),
+    );
+    await store.costLedger.record(
+      record({
+        callId: "evo-1:call-0",
+        runId: "evolution:cyc_1",
+        scopeKind: "evolution",
+        scopeId: "cyc_1",
+        changeId: "cyc_1",
+        stageId: null,
+        agentId: null,
+        source: "evolution:score",
+      }),
+    );
+    await store.costLedger.record(
+      record({
+        callId: "run-1:call-0",
+        runId: "run_1",
+        source: "model",
+      }),
+    );
+
+    const byJob = await store.costLedger.listByScope({
+      workspaceId: "default",
+      scopeKind: "job",
+      scopeId: "job_1",
+    });
+    expect(byJob).toHaveLength(1);
+    expect(byJob[0]?.jobId).toBe("job_1");
+    expect(byJob[0]?.runId).toBe("job:job_1");
+
+    const byChange = await store.costLedger.listByScope({
+      workspaceId: "default",
+      scopeKind: "evolution",
+      scopeId: "cyc_1",
+    });
+    expect(byChange[0]?.changeId).toBe("cyc_1");
+
+    const nonRun = await store.costLedger.scopeCost({
+      workspaceId: "default",
+      since: "2026-11-01T00:00:00.000Z",
+      until: "2026-12-01T00:00:00.000Z",
+      excludeRun: true,
+    });
+    expect(nonRun.map((row) => row.scopeKind).sort()).toEqual([
+      "evolution",
+      "job",
+    ]);
+  });
+
+  it("lists every registered price version for change detection", async () => {
+    const store = await sqliteStore();
+    const entry = {
+      modelId: "deepseek-flash",
+      provider: "deepseek",
+      currency: "CNY",
+      inputPer1k: 0.001,
+      outputPer1k: 0.002,
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+    };
+    await store.costLedger.registerPriceTable({
+      version: "2026-12-01",
+      effectiveAt: "2026-12-01T00:00:00.000Z",
+      entries: [entry],
+    });
+    await store.costLedger.registerPriceTable({
+      version: "2026-11-01",
+      effectiveAt: "2026-11-01T00:00:00.000Z",
+      entries: [entry],
+    });
+    const tables = await store.costLedger.listPriceTables();
+    expect(tables.map((table) => table.version)).toEqual([
+      "2026-11-01",
+      "2026-12-01",
+    ]);
+    expect(tables[0]?.entries).toHaveLength(1);
+  });
+
   it("stores price table versions for audit", async () => {
     const store = await sqliteStore();
     const table = {

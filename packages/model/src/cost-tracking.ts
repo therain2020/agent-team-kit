@@ -15,6 +15,18 @@ import {
 } from "./prices";
 
 /**
+ * What a charged call belongs to. Run-scoped calls are the default; compose,
+ * evolution and manager calls happen outside a run and carry the id of their
+ * aggregate object instead (60 §3.3).
+ */
+export type CostScopeKind = "run" | "job" | "evolution" | "manager";
+
+export interface CostScope {
+  kind: CostScopeKind;
+  id: string;
+}
+
+/**
  * One charged call, ready to append to the cost ledger. `unitPrice*Micro` are
  * micro-CNY per 1,000 tokens stamped from the price table version that priced
  * the call, so the record stays reproducible after a repricing.
@@ -22,7 +34,17 @@ import {
 export interface CostCallRecord {
   callId: string;
   workspaceId: string;
+  /**
+   * Correlation key. It is the real run id for run-scoped calls and the
+   * namespaced `kind:id` scope key otherwise, so the legacy column stays
+   * unique without pretending a non-run call belongs to a run.
+   */
   runId: string;
+  scopeKind: CostScopeKind;
+  scopeId: string;
+  jobId: string | null;
+  changeId: string | null;
+  managerSessionId: string | null;
   stageId: string | null;
   agentId: string | null;
   /** `model` for a completion, `tool:<name>` for an executed tool call. */
@@ -48,11 +70,67 @@ export interface CostLedgerSink {
 
 export interface CostCallContext {
   workspaceId: string;
-  runId: string;
+  /** Set for run-scoped calls; absent for job/evolution/manager calls. */
+  runId?: string | null;
+  scopeKind?: CostScopeKind;
+  /** Explicit aggregate id; defaults to runId or the matching aggregate field. */
+  scopeId?: string | null;
+  jobId?: string | null;
+  changeId?: string | null;
+  managerSessionId?: string | null;
   stageId?: string | null;
   agentId?: string | null;
   /** Overrides the `model` source label, e.g. `judge` or `revision`. */
   source?: string;
+}
+
+/**
+ * Resolve the attribution scope of a context exactly once. A call without any
+ * run or aggregate key is a wiring bug, not a billable event, so it throws.
+ */
+export function resolveCostScope(
+  context: Pick<
+    CostCallContext,
+    | "workspaceId"
+    | "runId"
+    | "scopeKind"
+    | "scopeId"
+    | "jobId"
+    | "changeId"
+    | "managerSessionId"
+  >,
+): CostScope & { runId: string } {
+  const runId = trimmed(context.runId);
+  const jobId = trimmed(context.jobId);
+  const changeId = trimmed(context.changeId);
+  const managerSessionId = trimmed(context.managerSessionId);
+  const kind =
+    context.scopeKind ??
+    (runId
+      ? "run"
+      : jobId
+        ? "job"
+        : changeId
+          ? "evolution"
+          : managerSessionId
+            ? "manager"
+            : null);
+  if (!kind) {
+    throw new Error(
+      "cost attribution requires a runId, scopeKind or aggregate id",
+    );
+  }
+  const id =
+    trimmed(context.scopeId) ?? runId ?? jobId ?? changeId ?? managerSessionId;
+  if (!id) {
+    throw new Error(`cost attribution scope ${kind} requires an id`);
+  }
+  return { kind, id, runId: runId ?? `${kind}:${id}` };
+}
+
+function trimmed(value: string | null | undefined): string | null {
+  const text = value?.trim();
+  return text ? text : null;
 }
 
 export interface CostTrackingOptions {
@@ -128,11 +206,15 @@ function resolveUsage(
  */
 export class CostTrackingGateway implements ModelGateway {
   private callIndex = 0;
+  private readonly scope: CostScope & { runId: string };
 
   constructor(
     private readonly inner: ModelGateway,
     private readonly options: CostTrackingOptions,
-  ) {}
+  ) {
+    // Fail at wiring time when attribution is missing, not after a paid call.
+    this.scope = resolveCostScope(options.context);
+  }
 
   async complete(
     request: ModelRequest,
@@ -164,11 +246,16 @@ export class CostTrackingGateway implements ModelGateway {
       table,
       now,
     );
-    const callId = `${this.options.callIdPrefix ?? this.options.context.runId}:call-${this.callIndex++}`;
+    const callId = `${this.options.callIdPrefix ?? this.scope.runId}:call-${this.callIndex++}`;
     const record: CostCallRecord = {
       callId,
       workspaceId: this.options.context.workspaceId,
-      runId: this.options.context.runId,
+      runId: this.scope.runId,
+      scopeKind: this.scope.kind,
+      scopeId: this.scope.id,
+      jobId: trimmed(this.options.context.jobId),
+      changeId: trimmed(this.options.context.changeId),
+      managerSessionId: trimmed(this.options.context.managerSessionId),
       stageId: this.options.context.stageId ?? null,
       agentId: this.options.context.agentId ?? null,
       source: this.options.context.source ?? "model",

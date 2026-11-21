@@ -1,6 +1,7 @@
 import { newId } from "@kit/core";
 import { createModelGateway } from "@kit/model";
 import type { initStore } from "@kit/store";
+import { attributedManagerGateway } from "./cost-attribution";
 
 type Store = Awaited<ReturnType<typeof initStore>>;
 
@@ -180,7 +181,12 @@ export async function askManager(
     }
   }
 
-  const gateway = createModelGateway();
+  const gateway = attributedManagerGateway(createModelGateway(), {
+    sink: store.costLedger,
+    workspaceId: brief.run.workspaceId,
+    managerSessionId: runId,
+    runId,
+  });
   const response = await gateway.complete({
     model: "deepseek-pro",
     instructions:

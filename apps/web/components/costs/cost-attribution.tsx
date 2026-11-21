@@ -41,6 +41,78 @@ export function CostAttribution({ overview }: { overview: CostOverview }) {
         />
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("priceTitle")}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-xs text-zinc-300">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+              {t("priceVersion")}
+            </span>
+            <Badge variant="success">{overview.priceVersion}</Badge>
+          </div>
+          {overview.priceChanges.length === 0 ? (
+            <p className="text-zinc-500">{t("priceStable")}</p>
+          ) : (
+            <ul className="space-y-1">
+              {overview.priceChanges.map((change) => (
+                <li
+                  key={`${change.previousVersion}:${change.currentVersion}`}
+                  className="flex flex-wrap items-center gap-2 border-t border-zinc-800/60 py-1.5"
+                >
+                  <Badge variant="warning">{t("priceReminder")}</Badge>
+                  <span className="font-mono">
+                    {change.previousVersion} → {change.currentVersion}
+                  </span>
+                  <span className="text-zinc-500">
+                    {change.currentEffectiveAt.slice(0, 10)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("nonRunTitle")}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <p className="text-[11px] text-zinc-500">{t("nonRunHint")}</p>
+          {overview.nonRun.length === 0 ? (
+            <p className="text-xs text-zinc-500">{t("empty")}</p>
+          ) : (
+            <table className="min-w-full text-left text-xs">
+              <thead className="text-[11px] uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="py-2 pr-4">{t("scopeKind")}</th>
+                  <th className="py-2 pr-4">{t("scopeId")}</th>
+                  <th className="py-2 pr-4">{t("cost")}</th>
+                  <th className="py-2 pr-4">{t("calls")}</th>
+                  <th className="py-2">{t("untracked")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {overview.nonRun.map((row) => (
+                  <tr
+                    key={`${row.scopeKind}:${row.scopeId}`}
+                    className="border-t border-zinc-800/60 text-zinc-300"
+                  >
+                    <td className="py-2 pr-4">{row.scopeKind}</td>
+                    <td className="py-2 pr-4 font-mono">{row.scopeId}</td>
+                    <td className="py-2 pr-4">{formatCny(row.costCny)}</td>
+                    <td className="py-2 pr-4">{row.calls}</td>
+                    <td className="py-2">{row.untrackedCalls}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+
       {overview.anomalies.length > 0 ? (
         <Card>
           <CardHeader>

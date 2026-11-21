@@ -1,11 +1,16 @@
 import { microToCny } from "@kit/core";
+import { findSupersededPriceVersions, loadPriceTable } from "@kit/model";
+import { type AlertInput, emitAlert } from "@kit/ops";
 import type {
   ArtifactCostReport,
   CostAnomaly,
   DailyCostRow,
+  PriceTableSnapshot,
   ProviderBill,
 } from "@kit/store";
 import { ensureStoreSchema, getStore } from "./store";
+
+type Store = ReturnType<typeof getStore>;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -41,6 +46,20 @@ export interface ReconciliationView {
   ok: boolean;
 }
 
+export interface PriceChangeView {
+  previousVersion: string;
+  currentVersion: string;
+  currentEffectiveAt: string;
+}
+
+export interface NonRunCostView {
+  scopeKind: string;
+  scopeId: string;
+  costCny: number;
+  calls: number;
+  untrackedCalls: number;
+}
+
 export interface CostOverview {
   workspaceId: string;
   windowDays: number;
@@ -67,6 +86,12 @@ export interface CostOverview {
     amountCny: number;
     source: string;
   }>;
+  /** Versioned table the startup estimates and live calls price from. */
+  priceVersion: string;
+  /** Old versions whose validity ended; also raised as P2 alerts. */
+  priceChanges: PriceChangeView[];
+  /** Compose, evolution and manager spend that has no run scope. */
+  nonRun: NonRunCostView[];
 }
 
 function startOfUtcDay(date: Date): Date {
@@ -90,11 +115,19 @@ export async function loadCostOverview(
     startOfUtcDay(now).getTime() - (windowDays - 1) * DAY_MS,
   );
 
-  const [daily, unitCost, anomalies, bills] = await Promise.all([
+  const price = await syncPriceTable(store, workspaceId, now);
+  const [daily, unitCost, anomalies, bills, nonRun] = await Promise.all([
     store.costLedger.dailyCost({ workspaceId, since, until: now }),
     store.costLedger.artifactUnitCost({ workspaceId, since, until: now }),
     store.costLedger.anomalies({ workspaceId, until: now }),
     store.costLedger.listProviderBills({ workspaceId, limit: 12 }),
+    store.costLedger.scopeCost({
+      workspaceId,
+      since,
+      until: now,
+      excludeRun: true,
+      limit: 20,
+    }),
   ]);
   const reconciliation = await store.costLedger.reconcile({
     workspaceId,
@@ -150,7 +183,79 @@ export async function loadCostOverview(
       amountCny: microToCny(bill.amountCnyMicro),
       source: bill.source,
     })),
+    priceVersion: price.version,
+    priceChanges: price.changes,
+    nonRun: nonRun.map((row) => ({
+      scopeKind: row.scopeKind,
+      scopeId: row.scopeId ?? "—",
+      costCny: microToCny(row.costCnyMicro),
+      calls: row.calls,
+      untrackedCalls: row.untrackedCalls,
+    })),
   };
+}
+
+/**
+ * Register the active price table (so historical versions stay auditable) and
+ * raise a P2 reminder for every version whose validity ended. Deduplicated per
+ * workspace and version pair by the alert store.
+ */
+async function syncPriceTable(
+  store: Store,
+  workspaceId: string,
+  now: Date,
+): Promise<{ version: string; changes: PriceChangeView[] }> {
+  const table = loadPriceTable();
+  const existing = await store.costLedger.getPriceTable(table.version);
+  if (
+    !existing ||
+    existing.effectiveAt !== table.effectiveAt ||
+    !sameEntries(existing, table)
+  ) {
+    await store.costLedger.registerPriceTable(table, now);
+  }
+  const tables = await store.costLedger.listPriceTables();
+  const changes = findSupersededPriceVersions(tables, now);
+  for (const change of changes) {
+    const alert: AlertInput = {
+      workspaceId,
+      tier: "P2",
+      kind: "cost.price_table.changed",
+      title: `Price table ${change.previousVersion} → ${change.currentVersion}`,
+      body: `Price table ${change.previousVersion} is no longer in effect since ${change.currentVersion} took over at ${change.currentEffectiveAt}. Historical records keep their charged prices; recalculate budgets and startup estimates.`,
+      dedupeKey: `cost.price_table.changed:${workspaceId}:${change.previousVersion}:${change.currentVersion}`,
+      source: "web",
+      meta: {
+        previousVersion: change.previousVersion,
+        previousEffectiveAt: change.previousEffectiveAt,
+        currentVersion: change.currentVersion,
+        currentEffectiveAt: change.currentEffectiveAt,
+      },
+    };
+    try {
+      await emitAlert(store, alert);
+    } catch (error) {
+      // A reminder failure must not take down the ops view.
+      console.error(
+        `[cost] price table alert failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return {
+    version: table.version,
+    changes: changes.map((change) => ({
+      previousVersion: change.previousVersion,
+      currentVersion: change.currentVersion,
+      currentEffectiveAt: change.currentEffectiveAt,
+    })),
+  };
+}
+
+function sameEntries(
+  stored: PriceTableSnapshot,
+  table: { entries: PriceTableSnapshot["entries"] },
+): boolean {
+  return JSON.stringify(stored.entries) === JSON.stringify(table.entries);
 }
 
 function toUnitCostView(report: ArtifactCostReport): CostOverview["unitCost"] {

@@ -1528,7 +1528,15 @@
     "variance": "Variance",
     "status": "Status",
     "withinTolerance": "Within 2%",
-    "outOfTolerance": "Over 2%"
+    "outOfTolerance": "Over 2%",
+    "priceTitle": "Price table version",
+    "priceVersion": "Active version",
+    "priceStable": "No superseded price version detected.",
+    "priceReminder": "Repriced",
+    "nonRunTitle": "Non-run cost sources",
+    "nonRunHint": "Compose drafts, evolution cycles and manager replies are charged to their own aggregate, not to a run.",
+    "scopeKind": "Scope",
+    "scopeId": "Object"
   },
   "autopilot": {
     "title": "Autopilot",

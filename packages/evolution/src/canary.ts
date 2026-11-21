@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { newId } from "@kit/core";
+import type { EvolutionCallAttribution } from "./cost-attribution";
 import { type EvolutionRecord, type VariantMeta, scoreVariant } from "./evolve";
 import type { EvolutionRepository } from "./repository";
 
@@ -116,6 +117,8 @@ export interface EvaluateCanaryOptions extends CanaryOptions {
   actor?: string;
   evalDir?: string;
   thresholds?: CanaryThresholds;
+  /** Charges canary scoring to the owning evolution cycle. */
+  cost?: EvolutionCallAttribution;
 }
 
 export interface RollbackCanaryOptions extends CanaryOptions {
@@ -265,6 +268,7 @@ export async function evaluateCanary(
           archive: options.archive,
           ...(options.repo ? { repo: options.repo } : {}),
           ...(evalDir ? { evalDir } : {}),
+          ...(options.cost ? { cost: options.cost } : {}),
         },
       ),
     );
@@ -279,6 +283,7 @@ export async function evaluateCanary(
           archive: options.archive,
           ...(options.repo ? { repo: options.repo } : {}),
           ...(evalDir ? { evalDir } : {}),
+          ...(options.cost ? { cost: options.cost } : {}),
         },
       ),
     );
