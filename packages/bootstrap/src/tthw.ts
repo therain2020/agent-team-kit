@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { bootstrapHome } from "./paths";
+import { bootstrapHome, bootstrapProfilePath } from "./paths";
 
 /**
  * Zero-config time-to-first-value (TTHW) ledger (plan 91 §3.2/§5, 98 §5.2 S12).
@@ -121,6 +121,10 @@ export interface MarkColdStartStartedOptions {
  * Records the first zero-config invocation. Idempotent: an existing start is
  * never moved, and a ledger that already has a milestone but lost its start is
  * left alone so a fabricated near-zero TTHW cannot be produced.
+ *
+ * A home that is already configured (bootstrap profile or local database
+ * present) never starts the clock: measuring an established install would
+ * manufacture a fast TTHW for something that was not a zero-config run.
  */
 export async function markColdStartStarted(
   options: MarkColdStartStartedOptions = {},
@@ -129,7 +133,11 @@ export async function markColdStartStarted(
   const now = (options.now ?? new Date()).toISOString();
   const existing = readColdStartTthwSync(env);
   if (existing) {
-    if (existing.startedAt || Object.keys(existing.milestones).length > 0) {
+    if (
+      existing.startedAt ||
+      Object.keys(existing.milestones).length > 0 ||
+      !isUnconfiguredHome(env)
+    ) {
       return existing;
     }
     existing.startedAt = now;
@@ -139,11 +147,25 @@ export async function markColdStartStarted(
     await writeColdStartTthw(existing, env);
     return existing;
   }
+  if (!isUnconfiguredHome(env)) {
+    return emptyRecord(now, options.mode ?? null);
+  }
   const record = emptyRecord(now, options.mode ?? null);
   record.startedAt = now;
   computeTthw(record);
   await writeColdStartTthw(record, env);
   return record;
+}
+
+/** True when no bootstrap profile and no local SQLite database exist yet. */
+function isUnconfiguredHome(env: ColdStartTthwEnv): boolean {
+  if (existsSync(bootstrapProfilePath(env))) {
+    return false;
+  }
+  const localDb = env.KIT_LOCAL_DB
+    ? path.resolve(env.KIT_LOCAL_DB)
+    : path.join(bootstrapHome(env), "data", "kit.db");
+  return !existsSync(localDb);
 }
 
 export interface RecordColdStartMilestoneOptions {
