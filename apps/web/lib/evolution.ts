@@ -1,12 +1,25 @@
 import path from "node:path";
 import {
   type CanaryState,
+  type DivergenceGuardResult,
+  type DriftSummary,
+  type EvaluatorAgreement,
   type EvolutionCycleRecord,
   type EvolutionDecisionRecord,
   type EvolutionFreezeState,
+  type EvolutionGovernanceEvent,
   type EvolutionRecord,
+  type OutcomeObservation,
+  type OutcomeSummary,
   StoreEvolutionRepository,
   type VariantMeta,
+  buildDivergencePoints,
+  defaultGovernancePath,
+  divergenceGuard,
+  evaluatorAgreement,
+  loadGovernanceEvents,
+  readOutcomeObservations,
+  summarizeOutcomes,
 } from "@kit/evolution";
 import { getRepoRoot } from "./paths";
 import { ensureStoreSchema, getStore } from "./store";
@@ -27,10 +40,20 @@ export interface EvolutionData {
   variants: VariantView[];
   cycles: EvolutionCycleRecord[];
   decisions: EvolutionDecisionRecord[];
+  /** Outcome observations from acceptance/human review (70 §3.4). */
+  outcomes: OutcomeObservation[];
+  outcomeSummary: OutcomeSummary;
+  agreement: EvaluatorAgreement;
+  /** Score-up/outcome-down guard state over reviewed cycles. */
+  divergence: DivergenceGuardResult;
+  /** Drift findings from the most recent cycle that computed them. */
+  drift: DriftSummary | null;
+  governanceEvents: EvolutionGovernanceEvent[];
   archivePath: string;
   statePath: string;
   freezePath: string;
   cyclesPath: string;
+  governancePath: string;
   repoRoot: string;
 }
 
@@ -41,6 +64,7 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
   const repo = new StoreEvolutionRepository(getStore(), { variantsRoot });
   await repo.ensureReady();
 
+  const governanceFile = defaultGovernancePath(variantsRoot);
   const [storedState, freeze, records, cycles, storedVariants, decisions] =
     await Promise.all([
       repo.getState(),
@@ -50,6 +74,14 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
       repo.listVariants(),
       repo.listDecisions(20),
     ]);
+  const [outcomeFile, governanceEvents] = await Promise.all([
+    readOutcomeObservations(),
+    loadGovernanceEvents(governanceFile, 10),
+  ]);
+  const divergence = divergenceGuard(
+    buildDivergencePoints(cycles, outcomeFile.outcomes),
+  );
+  const drift = cycles.find((cycle) => cycle.drift)?.drift ?? null;
 
   const state = storedState?.state ?? null;
   const byVariant = new Map(
@@ -88,10 +120,17 @@ export async function loadEvolutionData(): Promise<EvolutionData> {
     variants,
     cycles,
     decisions,
+    outcomes: outcomeFile.outcomes,
+    outcomeSummary: summarizeOutcomes(outcomeFile.outcomes),
+    agreement: evaluatorAgreement(cycles, outcomeFile.outcomes),
+    divergence,
+    drift,
+    governanceEvents,
     archivePath: path.join(variantsRoot, "archive.jsonl"),
     statePath: path.join(variantsRoot, "state.json"),
     freezePath: path.join(variantsRoot, "freeze.json"),
     cyclesPath: path.join(variantsRoot, "cycles.jsonl"),
+    governancePath: governanceFile,
     repoRoot,
   };
 }

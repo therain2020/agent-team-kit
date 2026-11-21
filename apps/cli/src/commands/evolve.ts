@@ -4,26 +4,37 @@ import { recordShadowEvolutionCycle } from "@kit/change";
 import { CliError } from "@kit/core";
 import {
   DEFAULT_CONVERGENCE_WINDOW,
+  DEFAULT_DIVERGENCE_WINDOW,
   type EvolutionFreezeKind,
+  type OutcomeSource,
   StoreEvolutionRepository,
+  buildDivergencePoints,
   canaryStatus,
   compareVariants,
   convergenceGuard,
   defaultCyclesRoot,
+  defaultGovernancePath,
   defaultHiddenEvalsDir,
+  defaultOutcomesPath,
+  divergenceGuard,
   evaluateCanary,
+  evaluatorAgreement,
   evolutionCostReport,
   freezeEvolution,
   initVariant,
   loadEvolutionCycles,
   loadFreezeState,
+  loadGovernanceEvents,
   promoteVariant,
   proposeVariant,
+  readOutcomeObservations,
+  recordOutcome,
   rollbackCanary,
   runEvolutionCycle,
   scoreVariant,
   setCanaryTraffic,
   startCanary,
+  summarizeOutcomes,
   unfreezeEvolution,
   verifyEvalSnapshot,
 } from "@kit/evolution";
@@ -304,6 +315,27 @@ export function registerEvolve(program: Command): void {
       String(DEFAULT_CONVERGENCE_WINDOW),
     )
     .option(
+      "--divergence-window <n>",
+      "consecutive score-up/outcome-flat cycles before a Goodhart pause",
+      String(DEFAULT_DIVERGENCE_WINDOW),
+    )
+    .option(
+      "--outcomes-file <path>",
+      "outcome observations from acceptance or human review (default <signals root>/outcomes.jsonl)",
+    )
+    .option(
+      "--drift-file <path>",
+      "drift baseline file (default variants/drift-baseline.json)",
+    )
+    .option(
+      "--governance-file <path>",
+      "divergence/drift event log (default variants/governance.jsonl)",
+    )
+    .option(
+      "--model-pin <pin>",
+      "provider pin for model drift (default KIT_MODEL_PROVIDER_PIN)",
+    )
+    .option(
       "--freeze-file <path>",
       "freeze state file (default variants/freeze.json)",
     )
@@ -339,6 +371,11 @@ export function registerEvolve(program: Command): void {
           budget?: string;
           budgetTokens?: string;
           convergenceWindow: string;
+          divergenceWindow: string;
+          outcomesFile?: string;
+          driftFile?: string;
+          governanceFile?: string;
+          modelPin?: string;
           freezeFile?: string;
           signalsRoot?: string;
           cyclesRoot?: string;
@@ -360,6 +397,17 @@ export function registerEvolve(program: Command): void {
           );
           return;
         }
+        const divergenceWindow = Number(options.divergenceWindow);
+        if (!Number.isInteger(divergenceWindow) || divergenceWindow < 1) {
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              "divergence-window must be a positive integer",
+            ),
+          );
+          return;
+        }
         try {
           const record = await withEvolutionRepo(async (repo, store) => {
             const hiddenEvalsDir =
@@ -377,6 +425,17 @@ export function registerEvolve(program: Command): void {
                 ? { budgetTokens: Number(options.budgetTokens) }
                 : {}),
               convergenceWindow,
+              divergenceWindow,
+              ...(options.outcomesFile
+                ? { outcomesPath: options.outcomesFile }
+                : {}),
+              ...(options.driftFile
+                ? { driftBaselinePath: options.driftFile }
+                : {}),
+              ...(options.governanceFile
+                ? { governancePath: options.governanceFile }
+                : {}),
+              ...(options.modelPin ? { modelPin: options.modelPin } : {}),
               ...(options.freezeFile ? { freezePath: options.freezeFile } : {}),
               signalsRoot: options.signalsRoot,
               cyclesRoot: options.cyclesRoot,
@@ -522,7 +581,7 @@ export function registerEvolve(program: Command): void {
   evolve
     .command("status")
     .description(
-      "Show freeze state, convergence streak and evolution cost share",
+      "Show freeze state, convergence streak, Goodhart divergence, drift findings and evolution cost share",
     )
     .option("--days <n>", "cost window in days", "30")
     .option("--cycles <n>", "recent cycles to consider", "50")
@@ -556,6 +615,16 @@ export function registerEvolve(program: Command): void {
             ).toISOString();
             const productionCostCny = await repo.sumRunCostCny(since);
             const inWindow = cycles.filter((cycle) => cycle.createdAt >= since);
+            const outcomeFile = await readOutcomeObservations();
+            const divergence = divergenceGuard(
+              buildDivergencePoints(cycles, outcomeFile.outcomes),
+              { window: DEFAULT_DIVERGENCE_WINDOW },
+            );
+            const agreement = evaluatorAgreement(cycles, outcomeFile.outcomes);
+            const governanceEvents = await loadGovernanceEvents(
+              defaultGovernancePath(),
+              10,
+            );
             return {
               freeze,
               convergence: {
@@ -568,12 +637,132 @@ export function registerEvolve(program: Command): void {
                 since,
                 ...evolutionCostReport(inWindow, productionCostCny),
               },
+              outcome: {
+                file: outcomeFile.path,
+                corrupt: outcomeFile.corrupt,
+                duplicates: outcomeFile.duplicates,
+                summary: summarizeOutcomes(outcomeFile.outcomes),
+                agreement,
+                latest: outcomeFile.outcomes.slice(-5),
+              },
+              divergence,
+              drift: cycles.find((cycle) => cycle.drift)?.drift ?? null,
+              governanceEvents,
             };
           });
           emitResult(json, data);
         } catch (error) {
           reportError("status", error, json);
         }
+      },
+    );
+
+  const outcome = evolve
+    .command("outcome")
+    .description("Outcome metrics from artifact acceptance or human review");
+
+  outcome
+    .command("record")
+    .description("Record an acceptance/review outcome for a cycle or variant")
+    .option("--cycle <id>", "evolution cycle the outcome judges")
+    .option("--variant <id>", "variant whose output was reviewed")
+    .requiredOption("--score <n>", "outcome score between 0 and 1")
+    .option("--pass", "the artifact was accepted", false)
+    .option("--fail", "the artifact was rejected", false)
+    .option(
+      "--source <source>",
+      "artifact_acceptance | human_review",
+      "human_review",
+    )
+    .option("--ref <id>", "artifact, review or incident reference")
+    .option("--file <path>", "outcomes file", defaultOutcomesPath())
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: {
+        cycle?: string;
+        variant?: string;
+        score: string;
+        pass: boolean;
+        fail: boolean;
+        source: string;
+        ref?: string;
+        file: string;
+        json?: boolean;
+      }) => {
+        const json = wantsJson(options);
+        const score = Number(options.score);
+        if (!Number.isFinite(score) || score < 0 || score > 1) {
+          emitError(
+            json,
+            new CliError("usage", "score must be between 0 and 1"),
+          );
+          return;
+        }
+        if (options.pass === options.fail) {
+          emitError(
+            json,
+            new CliError("usage", "pass exactly one of --pass or --fail"),
+          );
+          return;
+        }
+        if (!options.cycle && !options.variant) {
+          emitError(
+            json,
+            new CliError("usage", "an outcome needs --cycle or --variant"),
+          );
+          return;
+        }
+        if (
+          options.source !== "artifact_acceptance" &&
+          options.source !== "human_review"
+        ) {
+          emitError(
+            json,
+            new CliError(
+              "usage",
+              "source must be artifact_acceptance or human_review",
+            ),
+          );
+          return;
+        }
+        try {
+          const recorded = await recordOutcome(
+            {
+              score,
+              pass: options.pass,
+              source: options.source as OutcomeSource,
+              ...(options.cycle ? { cycleId: options.cycle } : {}),
+              ...(options.variant ? { variantId: options.variant } : {}),
+              ...(options.ref ? { ref: options.ref } : {}),
+            },
+            options.file,
+          );
+          emitResult(json, recorded);
+        } catch (error) {
+          reportError("outcome record", error, json);
+        }
+      },
+    );
+
+  outcome
+    .command("list")
+    .description("List outcome observations and the agreement rate")
+    .option("--limit <n>", "number of observations", "20")
+    .option("--file <path>", "outcomes file", defaultOutcomesPath())
+    .option("--json", "machine-readable output", false)
+    .action(
+      async (options: { limit: string; file: string; json?: boolean }) => {
+        const json = wantsJson(options);
+        const limit = Math.max(1, Number(options.limit) || 20);
+        const file = await readOutcomeObservations(options.file);
+        const data = {
+          file: file.path,
+          corrupt: file.corrupt,
+          duplicates: file.duplicates,
+          summary: summarizeOutcomes(file.outcomes),
+          outcomes: file.outcomes.slice(-limit),
+        };
+        emitResult(json, data);
       },
     );
 

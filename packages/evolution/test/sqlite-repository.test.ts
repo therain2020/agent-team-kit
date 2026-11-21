@@ -139,6 +139,35 @@ describe("sqlite evolution repository", () => {
       decision: "rejected",
       rationale: "candidate regressed",
       autoApplied: false,
+      outcomeScore: 0.35,
+      outcomePass: false,
+      outcomeSource: "human_review",
+      outcomeRef: "review-1",
+      divergence: {
+        divergent: true,
+        severe: false,
+        streak: 2,
+        window: 2,
+        reviewed: 2,
+        scoreDelta: 0.1,
+        outcomeDelta: -0.2,
+        reasons: ["cyc_1: score +0.10 while outcome -0.20"],
+      },
+      drift: {
+        drifted: true,
+        reevaluateChampion: true,
+        findings: [
+          {
+            kind: "model_pin",
+            severity: "alert",
+            detail:
+              "model pin changed from deepseek-pro@2026-11 to deepseek-pro@2027-01",
+            requiresReevaluation: true,
+          },
+        ],
+        reasons: ["model pin changed"],
+        modelPin: "deepseek-pro@2027-01",
+      },
       createdAt: new Date().toISOString(),
     };
     await repo.appendCycle(cycle);
@@ -151,6 +180,13 @@ describe("sqlite evolution repository", () => {
     expect(cycles[0]?.signalSources).toEqual([
       "archive:variants/archive.jsonl",
     ]);
+    expect(cycles[0]?.outcomeScore).toBe(0.35);
+    expect(cycles[0]?.outcomePass).toBe(false);
+    expect(cycles[0]?.outcomeSource).toBe("human_review");
+    expect(cycles[0]?.outcomeRef).toBe("review-1");
+    expect(cycles[0]?.divergence?.streak).toBe(2);
+    expect(cycles[0]?.drift?.reevaluateChampion).toBe(true);
+    expect(cycles[0]?.drift?.findings[0]?.kind).toBe("model_pin");
 
     expect(
       await repo.setState({
