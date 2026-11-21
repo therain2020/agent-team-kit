@@ -43,6 +43,36 @@ Stage 可在 `team.yaml` 的 workflow stage 上声明 `failureMode: fail_open | 
 - 控制台顶部横幅：轮询 `/api/degradation`，显式展示当前降级/只读状态。
 - API：`GET /api/degradation`、`POST /api/degradation/enter`、`POST /api/degradation/exit`。
 
+## 降级演练（61 §3.2、§3.4、§5）
+
+`scripts/degradation-drill.ts` 独立演练租户级（workspace）与全局（global）降级。默认 dry-run，`--execute` 才会写记录：
+
+```powershell
+bun run drill:degradation                          # dry-run：打印两类演练计划
+bun run drill:degradation --execute                # 依次执行 workspace + global
+bun run drill:degradation --execute --scope workspace
+bun run drill:degradation --execute --scope global
+bun run drill:degradation --execute --workspace tenant-a --executed-by operator:alice
+```
+
+若目标 scope/workspace 已存在 active 降级，脚本拒绝覆盖线上状态并以非零退出码结束（默认 workspace 为 `drill-degradation`，不会误伤真实租户）。
+
+每次演练（两类互相独立）执行并校验：
+
+1. **进入**：`enterDegradedMode` 显式进入模式并写入 `degradation_state` 与 `enter` 审计；租户级进入 `degraded`，全局（安全事件）进入 `read_only`；`exitCriteria` 为 `minStableMinutes=0`、`requireQualityRecheck=true`。
+2. **隔离**：workspace 演练确认同 scope 其他 workspace 不受影响；global 演练确认模式覆盖任意 workspace，且只读会阻断新执行。
+3. **质量底线**：合规输出通过、含占位符（`TODO`/`{{`）的输出被拦截。
+4. **退出闸门**：不带质量复检的退出必须被拒绝；带通过复检的退出才被接受。
+5. **恢复校验**：`markExited` 后持久化记录为 `exited`、不再出现在 `listActive()`、`enter`/`exit` 审计齐全。
+6. **全局仅限安全事件**：global 演练先断言无 `securityEvent` 的进入抛 `DegradationContractError`（`global_requires_security_event`），再用 `securityEvent=true` 进入。
+
+记录复用既有持久化，不新增记录器：
+
+- `degradation_state` / `degradation_audit`：状态迁移与审计（控制台 `/degradation` 可见）。
+- `runbook_drills`：通过 `newRunbookDrill` + `store.drills` 记录，modeId 为触发依赖；若该 mode 无 active runbook，先用 `scripts/runbook-templates.ts` 的默认模板播种（与 `runbook:drill --seed-runbooks` 相同内容），因此演练后 `runbookCoverage` 会把该 mode 计入已覆盖。
+
+任一校验失败时脚本以非零退出码结束，并仍写入 `outcome=fail` 的 drill 记录（若已成功进入模式）。
+
 ## 验收对照（61 §5）
 
 - 降级期间对外输出 100% 过质量底线：交付前 `evaluateQualityFloor` 阻断并审计。
