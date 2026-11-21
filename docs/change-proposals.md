@@ -75,6 +75,45 @@ $env:KIT_CHANGE_PIPELINE = "shadow"   # or "on"; unset = off
 - `on`: reserved for future enforcement (promotion bridge); currently identical
   to `shadow`.
 
+## Rollback by change id
+
+Every proposal carries two related fields:
+
+- `revertRef` — the compact display pointer (`commit:<sha>`,
+  `variant:<name>`).
+- `revert` — the structured, executable record. `code` keeps
+  `commit`/`baseSha`/`backupDir`; `instruction` keeps the variant
+  `targetDir`/`backupDir` plus a `hash` over the backup files.
+
+The recovery kernel (`scripts/kitd.ps1`) reverts one change independently,
+without touching other changes:
+
+```powershell
+# Dry-run by default: prints the plan, writes no repository/state change.
+powershell -File scripts\kitd.ps1 rollback -Change chg_cy_ws_cyc_1
+
+# Apply the rollback.
+powershell -File scripts\kitd.ps1 rollback -Change chg_cy_ws_cyc_1 -Execute
+
+# Recent proposals plus the repo-external rollback audit.
+powershell -File scripts\kitd.ps1 list
+```
+
+`kitd.ps1` stays thin and calls `scripts/change-rollback.ts`, which:
+
+- refuses when the worktree is dirty and records the refusal;
+- for `code`, runs `git revert <commit>` for exactly the recorded commit,
+  which must be an ancestor of `HEAD` (another change's commit is refused);
+- for `instruction`, re-verifies the backup hash before restoring files;
+- acquires the same cross-process apply lock as the 86 single-writer queue;
+- transitions the proposal to `rolled_back`; and
+- appends one entry per attempt (dry-run, refusal, success, failure) to the
+  repo-external audit `~/.agent-team-kit/audit/change-rollback.jsonl` with
+  `changeId`, `actor`, substrate, and before/after state.
+
+The audit sink sits outside the repository, alongside the recovery kernel, so
+agent code cannot rewrite rollback history (D-48).
+
 ## Bypass guard
 
 `packages/change/test/pipeline-guard.test.ts` scans the monorepo and fails when

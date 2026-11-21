@@ -21,6 +21,7 @@ real work.
 - Create a team: `kit init my-team --template research` · [docs/pack-authoring.md](./docs/pack-authoring.md)
 - Docs: [docs/install.md](./docs/install.md) · Community: [CONTRIBUTING.md](./CONTRIBUTING.md) · [SUPPORT.md](./SUPPORT.md) · [ROADMAP.md](./ROADMAP.md)
 - 中文说明: [README.zh-CN.md](./README.zh-CN.md)
+- Roll back one self-change by id: `powershell -File scripts\kitd.ps1 rollback -Change <id>` (dry-run) then `-Execute` · [docs/change-proposals.md#rollback-by-change-id](./docs/change-proposals.md#rollback-by-change-id)
 
 The kit provides:
 - **Runtime Core** — events, orchestration, durable execution, artifact store, model/tool gateway.

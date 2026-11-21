@@ -1,0 +1,26 @@
+version: 1
+enabled: false
+timezone: Asia/Shanghai
+schedules: []
+iterations:
+  - id: self-build-nightly
+    cron: "0 3 * * *"
+    goal: "Find and fix one low/medium-risk problem in this repository's own code or docs"
+    acceptance: "Small verified change; high-risk changes stay pending approval; forbidden paths are never applied"
+    maxTasks: 2
+    maxRepair: 1
+    mode: DRY_RUN
+    applyMode: low-medium
+    coder: dsh
+approval:
+  autoApprove:
+    enabled: false
+    maxRisk: low
+    maxRunCostCny: 1
+    onTimeout: wait
+evolution:
+  enabled: false
+  cadence: weekly
+  agent: critic
+  autoApply: false
+  budgetCny: 2
