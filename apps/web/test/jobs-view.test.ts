@@ -28,6 +28,7 @@ function job(
     originKind,
     triggerId: null,
     triggerRunId: null,
+    reactionRuleId: null,
     createdAt: "2026-11-20T00:00:00.000Z",
     updatedAt: "2026-11-20T01:00:00.000Z",
     finishedAt: null,
