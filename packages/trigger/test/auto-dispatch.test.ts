@@ -390,7 +390,8 @@ describe("automatic information dispatch (98 G1)", () => {
       eventId: "inf_budget_b",
       ruleId: "rr_budget",
       decision: "budget-exhausted",
-      gate: "trigger-budget",
+      triggerRunId: null,
+      jobId: null,
     });
 
     const signals = (await readReactionSignals(signalPath(root))).signals;
@@ -399,6 +400,7 @@ describe("automatic information dispatch (98 G1)", () => {
     ).toMatchObject({
       outcome: "budget-exhausted",
       ruleId: "rr_budget",
+      gate: "trigger-budget",
       jobId: null,
     });
   }, 60_000);
