@@ -12,6 +12,7 @@ import { InformationService } from "./information-service";
 import { InterestProfileService } from "./interest-profile-service";
 import { LastKnownGoodService } from "./lkg-service";
 import { ensureSchema } from "./migrate";
+import { ReactionRuleService } from "./reaction-rule-service";
 import {
   PostgresArtifactStore,
   PostgresAutopilotStateStore,
@@ -122,6 +123,8 @@ export function createStore(config: StoreConfig = loadStoreConfig()) {
     information: new InformationService({ sql: handle.sql }),
     /** InterestProfile versions, profile audit and signal audit (98 I-2). */
     interestProfiles: new InterestProfileService({ sql: handle.sql }),
+    /** ReactionRule versions and audit (98 I-3, 96 T6). */
+    reactionRules: new ReactionRuleService({ sql: handle.sql }),
     approvals: new ApprovalService({
       sql: handle.sql,
       driver: handle.driver,

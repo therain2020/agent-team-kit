@@ -17,6 +17,7 @@ export * from "./locks";
 export * from "./migrate";
 export * from "./op-log";
 export * from "./projection";
+export * from "./reaction-rule-service";
 export * from "./repositories";
 export * from "./retention";
 export * from "./s3";

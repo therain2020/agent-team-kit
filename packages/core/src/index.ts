@@ -21,6 +21,7 @@ export * from "./lkg";
 export * from "./pack";
 export * from "./policy";
 export * from "./quota";
+export * from "./reaction";
 export * from "./rubric";
 export * from "./run";
 export * from "./run-mode";
