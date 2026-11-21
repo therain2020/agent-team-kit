@@ -201,6 +201,8 @@ export interface EvolutionChangeInput {
   cycle: EvolutionCycleLike;
   /** Overrides the revert record derived from `cycle.promote`. */
   revert?: ChangeRevertRef | null;
+  /** Overrides the evolution surface derived from `cycle.variantKind`. */
+  variantKind?: EvolutionCycleLike["variantKind"];
   /** Overrides the approval reference recorded on the proposal. */
   approvalRef?: string | null;
   actor?: string;
