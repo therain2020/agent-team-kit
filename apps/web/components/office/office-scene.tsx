@@ -41,10 +41,7 @@ import {
   missionRunIds,
 } from "@/lib/office-live";
 import type { OfficeView } from "@/lib/office-view";
-import {
-  type PixelAgentState,
-  pixelStateFromStatus,
-} from "@/lib/pixel-events";
+import { type PixelAgentState, pixelStateFromStatus } from "@/lib/pixel-events";
 import { useDocumentVisible } from "@/lib/use-document-visible";
 import { useThrottledPresence } from "@/lib/use-throttled-presence";
 import { useTicker } from "@/lib/use-ticker";

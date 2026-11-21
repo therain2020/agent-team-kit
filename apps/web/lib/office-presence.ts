@@ -152,7 +152,7 @@ export function reducePresence(
   }
 
   const agents = { ...snapshot.agents };
-  let runs = { ...snapshot.runs };
+  const runs = { ...snapshot.runs };
   let changed = false;
 
   if (event.runId) {

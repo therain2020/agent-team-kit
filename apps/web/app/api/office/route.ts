@@ -1,8 +1,8 @@
+import path from "node:path";
 import { type OfficeSnapshotPayload, loadOfficeData } from "@/lib/office";
 import { resolvePackDir } from "@/lib/paths";
 import { ensureStoreSchema, getStore } from "@/lib/store";
 import { NextResponse } from "next/server";
-import path from "node:path";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,8 +50,7 @@ export async function GET(request: Request) {
   } catch (error) {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error ? error.message : "failed to load office",
+        error: error instanceof Error ? error.message : "failed to load office",
       },
       { status: 500 },
     );
