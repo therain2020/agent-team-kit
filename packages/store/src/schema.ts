@@ -59,6 +59,7 @@ export const runs = pgTable("runs", {
   originKind: text("origin_kind"),
   triggerId: text("trigger_id"),
   triggerRunId: text("trigger_run_id"),
+  reactionRuleId: text("reaction_rule_id"),
   createdAt: timestamp("created_at", {
     withTimezone: true,
     mode: "string",
@@ -304,6 +305,7 @@ export const triggerRuns = pgTable(
     }).notNull(),
     estimateCny: numeric("estimate_cny").notNull().default("0"),
     payloadRef: text("payload_ref"),
+    reactionRuleId: text("reaction_rule_id"),
     lastError: text("last_error"),
     createdAt: timestamp("created_at", {
       withTimezone: true,

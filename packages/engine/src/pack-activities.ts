@@ -331,6 +331,9 @@ export async function preparePackRun(
     ...(input.origin?.triggerRunId
       ? { triggerRunId: input.origin.triggerRunId }
       : {}),
+    ...(input.origin?.reactionRuleId
+      ? { reactionRuleId: input.origin.reactionRuleId }
+      : {}),
     createdAt: now,
     updatedAt: now,
   });

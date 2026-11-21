@@ -1,3 +1,4 @@
+import { ReactionRulesDrawer } from "@/components/reactions/reaction-rules-drawer";
 import { ActivityDrawer } from "@/components/world/activity-drawer";
 import { AtlasOverlay } from "@/components/world/atlas-overlay";
 import { InformationDrawer } from "@/components/world/information-drawer";
@@ -88,6 +89,9 @@ export default async function WorldPage({
         ) : null}
         {tabParam === "information" ? (
           <InformationDrawer closeHref={closeHref} />
+        ) : null}
+        {tabParam === "reactions" ? (
+          <ReactionRulesDrawer closeHref={closeHref} />
         ) : null}
       </>
     );
