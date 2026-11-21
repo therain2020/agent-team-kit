@@ -3,7 +3,7 @@ import {
   type Quota,
   priorityClassFor,
   quotaUtilization,
-} from "@kit/core";
+} from "@kit/core/quota";
 
 /**
  * Pure capacity read-model helpers (60 §3.5, issue #21). Kept free of store and
