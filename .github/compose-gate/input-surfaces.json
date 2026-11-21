@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "description": "Machine-checked declaration of user input surfaces (plan 94 §2 rule 6, §6 C-0). Every dialog/wizard/form component or /api/compose caller under apps/web must be listed here. See docs/compose-gate.md.",
+  "surfaces": [
+    {
+      "id": "C-2",
+      "label": "Office new task",
+      "files": ["apps/web/components/office/new-mission-dialog.tsx"],
+      "status": "compose",
+      "composeKinds": ["mission"],
+      "fallback": "heuristic",
+      "review": "intent-draft-edit-approve"
+    },
+    {
+      "id": "C-3",
+      "label": "Pack run",
+      "files": ["apps/web/components/packs/run-pack-dialog.tsx"],
+      "status": "compose",
+      "composeKinds": ["packRun"],
+      "fallback": "heuristic",
+      "review": "intent-draft-edit-approve"
+    },
+    {
+      "id": "C-4",
+      "label": "Autopilot plan",
+      "files": ["apps/web/components/autopilot/autopilot-plan-dialog.tsx"],
+      "status": "compose",
+      "composeKinds": ["autopilot"],
+      "fallback": "heuristic",
+      "review": "intent-draft-edit-approve"
+    },
+    {
+      "id": "C-5",
+      "label": "Evolution cycle",
+      "files": ["apps/web/components/evolution/cycle-dialog.tsx"],
+      "status": "compose",
+      "composeKinds": ["evolutionCycle"],
+      "fallback": "heuristic",
+      "review": "intent-draft-edit-approve"
+    },
+    {
+      "id": "C-6a",
+      "label": "New pack wizard",
+      "files": ["apps/web/components/packs/new-pack-wizard.tsx"],
+      "status": "compose",
+      "composeKinds": ["pack"],
+      "fallback": "heuristic",
+      "review": "intent-draft-edit-approve"
+    },
+    {
+      "id": "C-6b/C-6c/C-6d",
+      "label": "Pack Studio drafts",
+      "files": ["apps/web/components/studio/pack-studio.tsx"],
+      "status": "compose",
+      "composeKinds": ["agent", "workflow", "pipeline", "approvalPolicy"],
+      "fallback": "heuristic",
+      "review": "intent-draft-edit-approve"
+    },
+    {
+      "id": "C-7",
+      "label": "Source market install and authored proposal",
+      "files": [
+        "apps/web/components/sources/sources-market.tsx",
+        "apps/web/components/sources/source-proposals.tsx"
+      ],
+      "status": "compose",
+      "composeKinds": ["source"],
+      "fallback": "heuristic",
+      "review": "intent-draft-edit-approve"
+    },
+    {
+      "id": "C-8",
+      "label": "Welcome bootstrap",
+      "files": ["apps/web/components/welcome/bootstrap-form.tsx"],
+      "status": "exempt",
+      "reason": "D-64 exception: the API base URL and key bootstrap is the one hand-filled configuration surface (plan 94 §4 C-8)."
+    },
+    {
+      "id": "OPS-POLICY",
+      "label": "Ops on-call policy",
+      "files": ["apps/web/components/ops/ops-policy-form.tsx"],
+      "status": "exempt",
+      "reason": "Safety control outside the plan 94 §4 migration list: it toggles alert tiers and channels, it does not draft pack configuration. Re-evaluate if it grows draft-style config."
+    }
+  ]
+}

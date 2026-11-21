@@ -113,6 +113,11 @@ bun run kit pack validate my-team
 - Keep the diff small; do not include formatting-only changes in a feature PR.
 - Do not commit secrets, `.env` files, local databases or generated artifacts.
 - For console changes, attach a screenshot or a short clip.
+- New or changed input surfaces (a `*-dialog|wizard|form.tsx` component or an
+  `/api/compose` caller) must be declared in
+  `.github/compose-gate/input-surfaces.json` with their compose kind,
+  `"fallback": "heuristic"` and `"review": "intent-draft-edit-approve"`; the
+  `compose-gate` CI job enforces it. See [docs/compose-gate.md](./docs/compose-gate.md).
 - Use the PR template checklist.
 
 ## Commit messages

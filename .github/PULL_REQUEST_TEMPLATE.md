@@ -14,12 +14,19 @@ Closes #
 
 ## Input surface (D-64)
 
-<!-- Every form, dialog or prompt follows D-64: intent → AI draft → edit → approve. Delete this section if the PR touches no user input surface. -->
+<!-- Every form, dialog or prompt follows D-64: intent → AI draft → edit → approve.
+     Machine check (`compose-gate` job): a changed `*-dialog|wizard|form.tsx`
+     component or any `/api/compose` caller under apps/web must be declared in
+     .github/compose-gate/input-surfaces.json, or the PR fails. See
+     docs/compose-gate.md. -->
 
 - [ ] This PR adds or changes no user input surface (otherwise complete the items below).
+- [ ] The surface is declared in `.github/compose-gate/input-surfaces.json` with its compose kind(s), `"fallback": "heuristic"` and `"review": "intent-draft-edit-approve"` (or `"status": "exempt"` with a reason).
 - [ ] The surface uses a compose kind and posts through `POST /api/compose`.
 - [ ] It has a deterministic fallback (`model: heuristic`) when the model is unavailable.
 - [ ] The flow is intent → draft → edit → approve, and nothing is written before approval.
+
+<!-- Local check: bun run compose:gate --base origin/develop -->
 
 ## Type
 

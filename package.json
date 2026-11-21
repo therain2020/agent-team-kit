@@ -44,6 +44,7 @@
     "recovery:drill": "tsx scripts/recovery-drill.ts",
     "drill:degradation": "tsx scripts/degradation-drill.ts",
     "cold-start:check": "tsx scripts/cold-start-check.ts",
+    "compose:gate": "bun run scripts/compose-gate.ts",
     "gates:report": "tsx scripts/gate-report.ts",
     "web:dev": "bun run --cwd apps/web dev",
     "web:build": "bun run --cwd apps/web build",
