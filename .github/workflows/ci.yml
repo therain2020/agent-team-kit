@@ -8,7 +8,7 @@ on:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -20,3 +20,6 @@ jobs:
       # Security invariant gate (70 §3.3/§5, 85 §3.6): failures block the PR.
       - run: bun run test:invariants
       - run: bun run test
+      # Console build gate (87 §6): typecheck cannot see webpack client/server
+      # boundary breaks, so a broken console bundle must fail CI (#222).
+      - run: bun run web:build

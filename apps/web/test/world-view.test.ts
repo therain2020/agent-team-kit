@@ -12,6 +12,7 @@ function run(
 ): WorldRunView {
   return {
     workspaceId: "default",
+    workflowId: "wf_1",
     status: "running",
     currentStage: null,
     progress: 0,

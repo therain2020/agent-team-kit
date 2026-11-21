@@ -7,7 +7,8 @@ import {
 
 /**
  * Pure capacity read-model helpers (60 §3.5, issue #21). Kept free of store and
- * Next imports so they can be unit tested directly.
+ * Next imports so they can be unit tested directly. Import the quota leaf, not
+ * the @kit/core barrel: this file sits in the client graph (#222).
  */
 
 export const CAPACITY_WINDOW_MS = 60_000;

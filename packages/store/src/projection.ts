@@ -33,6 +33,8 @@ export interface ProjectableActivityEvent {
 export interface RunProjection {
   runId: string;
   workspaceId: string;
+  /** Owning workflow; null for iteration runs, which have no `runs` row. */
+  workflowId: string | null;
   status: string;
   currentStage: string | null;
   progress: number;
@@ -74,6 +76,7 @@ export interface AgentStateQuery {
 interface RunProjectionRow {
   run_id: string;
   workspace_id: string;
+  workflow_id?: string | null;
   status: string;
   current_stage: string | null;
   progress: number | string;
@@ -180,7 +183,11 @@ export async function projectActivityEvent(
   }
 
   const existing = await sql<RunProjectionRow[]>`
-    SELECT * FROM run_projection WHERE run_id = ${runId} LIMIT 1
+    SELECT projection.*, runs.workflow_id
+    FROM run_projection AS projection
+    LEFT JOIN runs ON runs.run_id = projection.run_id
+    WHERE projection.run_id = ${runId}
+    LIMIT 1
   `;
   const previous = existing[0] ? mapRunProjection(existing[0]) : null;
 
@@ -316,11 +323,16 @@ export async function loadRunProjections(
   const runFilter = buildRunIdFilter(sql, query.runIds ?? []);
 
   const rows = await sql<RunProjectionRow[]>`
-    SELECT * FROM run_projection
-    WHERE workspace_id = ${query.workspaceId}
-      ${sinceFilter} ${runFilter}
-    ORDER BY updated_at DESC, run_id ASC
-    LIMIT ${limit}
+    SELECT projection.*, runs.workflow_id
+    FROM (
+      SELECT * FROM run_projection
+      WHERE workspace_id = ${query.workspaceId}
+        ${sinceFilter} ${runFilter}
+      ORDER BY updated_at DESC, run_id ASC
+      LIMIT ${limit}
+    ) AS projection
+    LEFT JOIN runs ON runs.run_id = projection.run_id
+    ORDER BY projection.updated_at DESC, projection.run_id ASC
   `;
   return rows.map(mapRunProjection);
 }
@@ -330,7 +342,11 @@ export async function getRunProjection(
   runId: string,
 ): Promise<RunProjection | null> {
   const rows = await sql<RunProjectionRow[]>`
-    SELECT * FROM run_projection WHERE run_id = ${runId} LIMIT 1
+    SELECT projection.*, runs.workflow_id
+    FROM run_projection AS projection
+    LEFT JOIN runs ON runs.run_id = projection.run_id
+    WHERE projection.run_id = ${runId}
+    LIMIT 1
   `;
   return rows[0] ? mapRunProjection(rows[0]) : null;
 }
@@ -660,6 +676,7 @@ function mapRunProjection(row: RunProjectionRow): RunProjection {
   return {
     runId: row.run_id,
     workspaceId: row.workspace_id,
+    workflowId: row.workflow_id ?? null,
     status: row.status,
     currentStage: row.current_stage,
     progress: clampProgress(Number(row.progress)),

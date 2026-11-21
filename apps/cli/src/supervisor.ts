@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
-import { FileLockTimeoutError, acquireFileLock } from "@kit/core";
+import { FileLockTimeoutError, acquireFileLock } from "@kit/core/fs-lock";
 import { resolveWebMode, webRunArgs } from "./web-mode";
 
 interface ChildSpec {

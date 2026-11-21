@@ -7,8 +7,10 @@
     ".": "./src/index.ts",
     "./avatar": "./src/avatar.ts",
     "./cron": "./src/cron.ts",
-    "./quota": "./src/quota.ts",
-    "./kill-switch": "./src/kill-switch.ts"
+    "./fs-lock": "./src/fs-lock.ts",
+    "./git-apply": "./src/git-apply.ts",
+    "./kill-switch": "./src/kill-switch.ts",
+    "./quota": "./src/quota.ts"
   },
   "dependencies": {
     "ulid": "^2.3.0",
