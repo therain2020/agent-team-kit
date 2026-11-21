@@ -8,6 +8,7 @@ import type { FireTriggerDeps } from "./dispatch";
 import {
   type ReactionDeps,
   type ReactionOutcome,
+  evaluateReactionRules,
   reactToInformationEvent,
 } from "./reaction";
 
@@ -201,6 +202,18 @@ export class InformationAutoDispatcher {
             eventId: event.eventId,
             reason: message,
           });
+          // A thrown dispatch (store hiccup, malformed pack) is a failure too:
+          // schedule the matching rules so backoff can recover the event.
+          for (const candidate of evaluateReactionRules(rules, event)) {
+            if (candidate.decision === "pending") {
+              await this.scheduleRetry(
+                event.eventId,
+                candidate.ruleId,
+                message,
+                now,
+              );
+            }
+          }
         }
       }
 
