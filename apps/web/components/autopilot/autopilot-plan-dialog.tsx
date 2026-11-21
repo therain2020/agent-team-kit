@@ -13,6 +13,15 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  type AutoApprove,
+  autoApproveCoveredOrigins,
+  autoApproveForSave,
+  normalizeAutoApprove,
+  requiresScopeAllConfirmation,
+  resolveAutoApproveScope,
+  withoutRunCost,
+} from "@/lib/auto-approve-scope";
 import type { AutopilotConfig } from "@kit/core";
 import { isCronExpression } from "@kit/core/cron";
 import {
@@ -28,9 +37,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 type Schedule = AutopilotConfig["schedules"][number];
-type AutoApprove = NonNullable<
-  NonNullable<AutopilotConfig["approval"]>["autoApprove"]
->;
 
 export function AutopilotPlanDialog({
   packDir,
@@ -57,15 +63,16 @@ export function AutopilotPlanDialog({
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [timezone, setTimezone] = useState("UTC");
   const [daemonEnabled, setDaemonEnabled] = useState(false);
-  const [autoApprove, setAutoApprove] = useState<AutoApprove>({
-    enabled: false,
-    maxRisk: "low",
-    onTimeout: "wait",
-  });
+  const [autoApprove, setAutoApprove] = useState<AutoApprove>(
+    normalizeAutoApprove(),
+  );
+  const [confirmScopeAll, setConfirmScopeAll] = useState(false);
   const [confirmRisk, setConfirmRisk] = useState(false);
   const [pending, setPending] = useState<"draft" | "save" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const autoApproveScope = resolveAutoApproveScope(autoApprove);
+  const scopeAllConfirmation = requiresScopeAllConfirmation(autoApproveScope);
   const risky =
     daemonEnabled ||
     autoApprove.enabled ||
@@ -84,6 +91,7 @@ export function AutopilotPlanDialog({
     setWarnings([]);
     setError(null);
     setConfirmRisk(false);
+    setConfirmScopeAll(false);
   }
 
   function adopt(values: AutopilotConfig) {
@@ -91,13 +99,9 @@ export function AutopilotPlanDialog({
     setSchedules(values.schedules ?? []);
     setTimezone(values.timezone || "UTC");
     setDaemonEnabled(values.enabled === true);
-    setAutoApprove(
-      values.approval?.autoApprove ?? {
-        enabled: false,
-        maxRisk: "low",
-        onTimeout: "wait",
-      },
-    );
+    setAutoApprove(normalizeAutoApprove(values.approval?.autoApprove));
+    // A fresh draft is a fresh approval: re-confirm `scope: all` explicitly.
+    setConfirmScopeAll(false);
   }
 
   async function generate() {
@@ -156,6 +160,10 @@ export function AutopilotPlanDialog({
       setError(t("noSchedules"));
       return;
     }
+    if (scopeAllConfirmation && !confirmScopeAll) {
+      setError(t("scopeAllWarning"));
+      return;
+    }
     setError(null);
     setPending("save");
     try {
@@ -164,7 +172,10 @@ export function AutopilotPlanDialog({
         timezone,
         enabled: daemonEnabled,
         schedules,
-        approval: { ...(draft.approval ?? {}), autoApprove },
+        approval: {
+          ...(draft.approval ?? {}),
+          autoApprove: autoApproveForSave(autoApprove),
+        },
       };
       const response = await fetch(
         `/api/packs/${encodeURIComponent(packDir)}/autopilot`,
@@ -459,11 +470,7 @@ export function AutopilotPlanDialog({
                     setAutoApprove((current) => {
                       const raw = event.target.value.trim();
                       if (raw === "") {
-                        return {
-                          enabled: current.enabled,
-                          maxRisk: current.maxRisk,
-                          onTimeout: current.onTimeout,
-                        };
+                        return withoutRunCost(current);
                       }
                       return { ...current, maxRunCostCny: Number(raw) };
                     })
@@ -508,6 +515,48 @@ export function AutopilotPlanDialog({
                   </span>
                 </span>
               </label>
+              <p className="pl-5 text-[10px] text-zinc-400">
+                {t("scopeSummary", {
+                  scope: t(
+                    autoApproveScope === "all" ? "scopeAll" : "scopeScheduled",
+                  ),
+                  origins: autoApproveCoveredOrigins(autoApproveScope)
+                    .map((kind) => t(`origin_${kind}`))
+                    .join(" · "),
+                })}
+              </p>
+              <label className="block space-y-1 pl-5 text-[10px] uppercase tracking-wider text-zinc-500">
+                {t("scope")}
+                <select
+                  value={autoApproveScope}
+                  onChange={(event) =>
+                    setAutoApprove((current) => ({
+                      ...current,
+                      scope: event.target.value === "all" ? "all" : "scheduled",
+                    }))
+                  }
+                  className="h-8 w-full rounded-md border border-border bg-zinc-950 px-1.5 text-[11px] normal-case text-zinc-200"
+                >
+                  <option value="scheduled">{t("scopeScheduled")}</option>
+                  <option value="all">{t("scopeAll")}</option>
+                </select>
+              </label>
+              {scopeAllConfirmation ? (
+                <div className="space-y-1 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-200">
+                  <p>{t("scopeAllWarning")}</p>
+                  <label className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={confirmScopeAll}
+                      onChange={(event) =>
+                        setConfirmScopeAll(event.target.checked)
+                      }
+                      className="mt-0.5 size-3.5 accent-amber-500"
+                    />
+                    <span>{t("scopeAllConfirm")}</span>
+                  </label>
+                </div>
+              ) : null}
               {autoApprove.enabled ? (
                 <label className="block space-y-1 pl-5 text-[10px] uppercase tracking-wider text-zinc-500">
                   {t("maxRisk")}
@@ -604,7 +653,8 @@ export function AutopilotPlanDialog({
                   cronInvalid ||
                   timezoneInvalid ||
                   schedules.length === 0 ||
-                  (risky && !confirmRisk)
+                  (risky && !confirmRisk) ||
+                  (scopeAllConfirmation && !confirmScopeAll)
                 }
               >
                 {pending === "save" ? t("saving") : t("approve")}

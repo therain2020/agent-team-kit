@@ -11,7 +11,7 @@ caches the search index and stores an install record per item.
 
 ```yaml
 apiVersion: agentteam/v1
-kind: workflow            # pack | workflow | agent | toolpack | skillpack
+kind: workflow            # pack | pipeline | source | template | agent | workflow | toolpack | skillpack
 id: workshop-demo
 name: Workshop Demo
 version: 1.0.0
@@ -46,19 +46,37 @@ CLI:
 bun run kit workshop search --query demo
 bun run kit workshop preview owner/repo --ref main
 bun run kit workshop install owner/repo --yes --accept-unsigned
+bun run kit components install owner/repo --yes --accept-unsigned
 ```
 
 Web console: open `/workshop`, search the topic, click **Preview**, review trust,
 permissions and the secret scan, then confirm and install.
 
 Preview and install pin the resolved commit SHA. Nothing is executed during
-preview; installation only copies the declared files into the workshop root
-(`KIT_WORKSHOP_ROOT`, default `./workshop`). Packs are additionally validated
-with the normal pack loader before the install is recorded.
+preview. The destination is chosen from `manifest.kind`; every asset lands in
+its own local library and is validated with that library's loader before the
+install is recorded:
 
-Each installed item gets `.workshop.json` containing the repo, commit,
-per-file SHA-256, manifest SHA-256, permissions, trust grade and the secret-scan
-result.
+| kind | Destination | Result |
+|---|---|---|
+| `pack` | `packs/<id>/` | Loadable, runnable, visible in `/packs` |
+| `pipeline` | `<host pack>/workflows/<id>.yaml` + `team.yaml` | Host workflow, registered as a pack workflow |
+| `template` | `templates/<id>/` | Appears in the `/packs/new` template picker |
+| `source` | `sources/<name>.yaml` + `<name>.meta.json` | Visible in `/sources`, testable |
+| `agent` / `workflow` / `toolpack` / `skillpack` | `components/<kind>/<id>/` | Visible in the component library, assemblable into any host pack |
+
+Pipeline installs require a host pack (`--host-pack <dir>`, or the host pack
+field in the console). Root overrides: `--packs-root`, `--sources-root`,
+`--templates-root`, `--components-root` (defaults `./packs`, `./sources`,
+`./templates`, `./components`; `KIT_SOURCES_ROOT`/`KIT_TEMPLATES_ROOT`/
+`KIT_COMPONENTS_ROOT` are also honoured).
+
+Each installed item gets a `.workshop.json` record (or the source
+`<name>.meta.json`) containing the repo, commit, per-file SHA-256, manifest
+SHA-256, permissions, trust grade and the secret-scan result. Directory
+targets are staged, validated and atomically swapped; file targets are written
+atomically and rolled back on failure. The legacy `workshop/` directory is only
+read for pre-M3 installs and can be imported into `packs/` from the console.
 
 ### Consent flags
 
@@ -153,8 +171,9 @@ Findings report the file, line and pattern label — never the matched value.
 | Total download | 5 MB |
 | File count | 200 |
 
-These limits apply to preview and install. Install writes only inside
-`<workshop root>/<id>` and rolls the directory back on any failure.
+These limits apply to preview and install. Install writes only inside the
+destination selected by `manifest.kind` and rolls the target back on any
+failure; a failed overwrite keeps the previous copy.
 
 ## 6. Publish a workshop item
 

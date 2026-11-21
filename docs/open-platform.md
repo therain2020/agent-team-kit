@@ -277,7 +277,9 @@ outcome for every evolution cycle.
 | `KIT_AUTOPILOT_INTERVAL_MS` | Daemon tick interval (default 30000) |
 | `KIT_SOURCES_ROOT` | Installed-source directory (default `./sources`) |
 | `KIT_SIGNALS_ROOT` | Iteration signal directory holding `iterations.jsonl` (default `~/.agent-team-kit/signals`) |
-| `KIT_WORKSHOP_ROOT` | Installed-workshop directory (default `./workshop`) |
+| `KIT_TEMPLATES_ROOT` | Template library for built-ins and installed templates (default `./templates`) |
+| `KIT_COMPONENTS_ROOT` | Component library for installed agent/workflow/toolpack/skillpack assets (default `./components`) |
+| `KIT_WORKSHOP_ROOT` | Legacy workshop directory, read for pre-M3 installs (default `./workshop`) |
 | `KIT_WORKSHOP_TRUSTED_KEYS` | Keyring path or inline JSON for workshop signature checks |
 | `KIT_TOOL_MAX_STEPS` / `KIT_TOOL_MAX_CALLS` | Tool loop caps |
 | `KIT_TOOLS_ALLOW_NETWORK` | Allow external tools (`1`) |

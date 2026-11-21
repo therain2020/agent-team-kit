@@ -1,10 +1,15 @@
+import { recordGateEvidenceSafely } from "@/lib/gate-evidence";
 import { sameOriginError } from "@/lib/http";
+import { resolvePackDir } from "@/lib/paths";
 import {
+  getWorkshopComponentsRoot,
   getWorkshopPacksRoot,
-  getWorkshopRoot,
+  getWorkshopSourcesRoot,
+  getWorkshopTemplatesRoot,
   loadInstalledWorkshop,
   searchWorkshopMarket,
 } from "@/lib/workshop";
+import { GATE_EVIDENCE_KIND } from "@kit/activity";
 import { installWorkshop } from "@kit/workshop";
 import { NextResponse } from "next/server";
 
@@ -41,6 +46,7 @@ export async function POST(request: Request) {
     acceptUnsigned?: unknown;
     acceptHighRisk?: unknown;
     overwrite?: unknown;
+    hostPack?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -57,18 +63,55 @@ export async function POST(request: Request) {
     );
   }
 
+  let hostPack: string | undefined;
+  if (body.hostPack !== undefined) {
+    if (typeof body.hostPack !== "string") {
+      return NextResponse.json(
+        { error: "hostPack must be a pack name" },
+        { status: 400 },
+      );
+    }
+    const resolved = resolvePackDir(body.hostPack);
+    if (!resolved) {
+      return NextResponse.json(
+        { error: `unknown pack: ${body.hostPack}` },
+        { status: 400 },
+      );
+    }
+    hostPack = resolved;
+  }
+
   try {
     const installed = await installWorkshop({
       repo: body.repo,
       ref: typeof body.ref === "string" ? body.ref : undefined,
       token: process.env.GITHUB_TOKEN,
-      root: getWorkshopRoot(),
       packsRoot: getWorkshopPacksRoot(),
+      sourcesRoot: getWorkshopSourcesRoot(),
+      templatesRoot: getWorkshopTemplatesRoot(),
+      componentsRoot: getWorkshopComponentsRoot(),
+      hostPack,
       overwrite: body.overwrite === true,
       acceptThirdParty: true,
       allowCode: body.allowCode === true,
       acceptUnsigned: body.acceptUnsigned === true,
       acceptHighRisk: body.acceptHighRisk === true,
+    });
+    // Workshop evidence (85 §5.2 S10): an asset was installed from the market
+    // into the local library. Best-effort audit only.
+    await recordGateEvidenceSafely({
+      agentId: "operator",
+      kind: GATE_EVIDENCE_KIND.workshopComponentInstalled,
+      status: "completed",
+      summary: `installed ${installed.manifest.kind} ${installed.manifest.id}@${installed.manifest.version} from ${installed.repo}`,
+      payload: {
+        repo: installed.repo,
+        commit: installed.commit,
+        kind: installed.manifest.kind,
+        id: installed.manifest.id,
+        version: installed.manifest.version,
+        scope: installed.scope,
+      },
     });
     return NextResponse.json(
       {
