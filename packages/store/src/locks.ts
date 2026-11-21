@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { FileLockTimeoutError, acquireFileLock } from "@kit/core";
+import { FileLockTimeoutError, acquireFileLock } from "@kit/core/fs-lock";
 import type { SqlClient } from "./db";
 
 /**

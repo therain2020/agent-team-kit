@@ -1,12 +1,11 @@
 import { createHash } from "node:crypto";
 import { commandOnPath, runProcess } from "@kit/coder";
+import type { IterationApplyMode, IterationRisk } from "@kit/core";
 import {
   type ApplyPatchResult,
-  type IterationApplyMode,
-  type IterationRisk,
   applyPatchToRepo,
   writeApplyPatch,
-} from "@kit/core";
+} from "@kit/core/git-apply";
 import type { Store } from "./progress";
 
 export type { IterationApplyMode, IterationRisk };
