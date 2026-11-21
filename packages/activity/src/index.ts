@@ -1,6 +1,7 @@
 import { type initStore, projectActivityEvent } from "@kit/store";
 import type { ActivityEvent, ActivityFilter, ActivityInput } from "./types";
 
+export * from "./observer";
 export * from "./types";
 
 type Store = Awaited<ReturnType<typeof initStore>>;

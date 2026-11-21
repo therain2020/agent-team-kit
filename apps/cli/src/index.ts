@@ -17,6 +17,7 @@ import { registerKillSwitch } from "./commands/kill-switch";
 import { registerManager } from "./commands/manager";
 import { registerManufacture } from "./commands/manufacture";
 import { registerModel } from "./commands/model";
+import { registerObserve } from "./commands/observe";
 import { registerPack } from "./commands/pack";
 import { registerPatch } from "./commands/patch";
 import { registerPublish } from "./commands/publish";
@@ -85,6 +86,7 @@ registerWatch(program);
 registerWorkshop(program);
 registerAutonomy(program);
 registerAgent(program);
+registerObserve(program);
 
 // Unhandled action rejections are classified into the shared error-code table.
 // `--json` may live after a subcommand, so inspect argv for the envelope shape.
