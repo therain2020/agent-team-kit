@@ -1,5 +1,7 @@
+import { recordGateEvidenceSafely } from "@/lib/gate-evidence";
 import { sameOriginError } from "@/lib/http";
 import { resolvePackDir } from "@/lib/paths";
+import { GATE_EVIDENCE_KIND } from "@kit/activity";
 import {
   type StageEdge,
   type StagePosition,
@@ -61,6 +63,13 @@ export async function POST(
       ...(typeof body.file === "string" ? { file: body.file } : {}),
       ...(typeof body.content === "string" ? { content: body.content } : {}),
     });
+    await recordGateEvidenceSafely({
+      agentId: "operator",
+      kind: GATE_EVIDENCE_KIND.workshopDagUpdated,
+      status: "created",
+      summary: `workflow ${workflow.id} created in the workshop editor`,
+      payload: { packDir, workflow: workflow.id },
+    });
     return NextResponse.json({ ok: true, workflow }, { status: 201 });
   } catch (error) {
     return NextResponse.json(
@@ -106,6 +115,13 @@ export async function PUT(
   try {
     if (typeof body.content === "string") {
       await writeWorkflowFile(packDir, body.file, body.content);
+      await recordGateEvidenceSafely({
+        agentId: "operator",
+        kind: GATE_EVIDENCE_KIND.workshopDagUpdated,
+        status: "updated",
+        summary: `workflow ${body.file} saved in the workshop editor`,
+        payload: { packDir, file: body.file },
+      });
       return NextResponse.json({ ok: true });
     }
     if (Array.isArray(body.edges)) {
@@ -114,6 +130,13 @@ export async function PUT(
         return NextResponse.json({ error: "invalid edges" }, { status: 400 });
       }
       const content = await setStageEdges(packDir, body.file, edges);
+      await recordGateEvidenceSafely({
+        agentId: "operator",
+        kind: GATE_EVIDENCE_KIND.workshopDagUpdated,
+        status: "updated",
+        summary: `workflow ${body.file} DAG edges updated (${edges.length})`,
+        payload: { packDir, file: body.file, edges: edges.length },
+      });
       return NextResponse.json({ ok: true, content });
     }
     const positions = parsePositions(body.positions);
