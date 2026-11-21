@@ -194,7 +194,7 @@ describe("evolution auto-promotion rollback", () => {
 
   it("refuses when unrelated paths outside the target are dirty", async () => {
     const store = await localStore();
-    const { root, targetDir, backupDir, original } = await createPackRepo();
+    const { root, targetDir, backupDir } = await createPackRepo();
     const hash = await hashVariantBackup(backupDir);
     const proposal = await recordEvolutionCycleProposal(store.changeProposals, {
       workspaceId: "ws",
