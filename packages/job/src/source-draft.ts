@@ -1,3 +1,4 @@
+import { stringify } from "yaml";
 import { type JobCostAttribution, composeGateway } from "./cost-attribution";
 import { JobError } from "./types";
 
@@ -54,6 +55,28 @@ export interface SourceCandidateSummary extends SourceCandidateInput {
   risk: SourceRiskSummary;
 }
 
+export interface SourceAuthoredIssue {
+  code: string;
+  path: string;
+  message: string;
+}
+
+/**
+ * Self-authored declarative `source.yaml` draft (98 I-5). The market may offer
+ * nothing installable, so the composer also proposes a declarative source built
+ * only from the intent: the endpoint must already appear in the intent and the
+ * observer edits the YAML before the proposal gate runs.
+ */
+export interface SourceAuthoredDraft {
+  name: string;
+  version: string;
+  description: string;
+  type: "rss" | "json" | "github";
+  endpoint: string;
+  yaml: string;
+  issues: SourceAuthoredIssue[];
+}
+
 export interface SourceDraftValues {
   /** Selected repo, or "" when the market returned no installable candidate. */
   repo: string;
@@ -61,6 +84,8 @@ export interface SourceDraftValues {
   risk: SourceRiskSummary | null;
   /** Every candidate the draft was chosen from, with deterministic risk. */
   candidates: SourceCandidateSummary[];
+  /** Declarative draft for observer review; never installed from here. */
+  authored: SourceAuthoredDraft;
 }
 
 const CREDENTIAL_HEADER =
@@ -346,6 +371,88 @@ export function selectSourceCandidate(
   return { repo, ...(reason ? { reason } : {}), warnings };
 }
 
+const SOURCE_URL = /https?:\/\/[^\s"'<>)。，、]+/i;
+const RESERVED_SOURCE_NAMES = new Set(["hn", "arxiv", "github"]);
+
+/**
+ * Deterministic declarative draft from a one-line intent (D-64). A URL in the
+ * intent becomes the endpoint; no URL means an `endpoint_required` issue and an
+ * empty `url` the observer must fill before the proposal gate can pass.
+ */
+export function draftAuthoredSource(
+  intent: string,
+  overrides: { endpoint?: string; name?: string; description?: string } = {},
+): SourceAuthoredDraft {
+  const trimmed = intent.trim();
+  const endpoint =
+    overrides.endpoint?.trim() ||
+    trimmed.match(SOURCE_URL)?.[0]?.replace(/[.,;:。，、]+$/, "") ||
+    "";
+  const haystack = `${endpoint} ${trimmed}`.toLowerCase();
+  const type: SourceAuthoredDraft["type"] = /\.json\b/.test(haystack)
+    ? "json"
+    : /\.xml\b|\brss\b|\batom\b|\bfeed\b/.test(haystack)
+      ? "rss"
+      : /\bapi\b|\bjson\b/.test(haystack)
+        ? "json"
+        : "rss";
+  const name = overrides.name?.trim() || sourceNameFor(trimmed, endpoint);
+  const description =
+    overrides.description?.trim() || trimmed.replace(/\s+/g, " ").slice(0, 200);
+  const yaml = stringify({
+    apiVersion: "agentteam/source/v1",
+    kind: "Source",
+    metadata: {
+      name,
+      version: "0.1.0",
+      ...(description ? { description } : {}),
+    },
+    spec: {
+      type,
+      request: { url: endpoint },
+    },
+  });
+  return {
+    name,
+    version: "0.1.0",
+    description,
+    type,
+    endpoint,
+    yaml,
+    issues: endpoint
+      ? []
+      : [
+          {
+            code: "endpoint_required",
+            path: "spec.request.url",
+            message:
+              "在意图中写明要抓取的 HTTPS 端点，或在保存提案前补全 spec.request.url",
+          },
+        ],
+  };
+}
+
+function sourceNameFor(intent: string, endpoint: string): string {
+  if (endpoint) {
+    try {
+      const host = new URL(endpoint).hostname
+        .toLowerCase()
+        .replace(/^www\./, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      if (host) {
+        return RESERVED_SOURCE_NAMES.has(host) ? `custom-${host}` : host;
+      }
+    } catch {
+      // Fall through to intent words.
+    }
+  }
+  const words = intent.toLowerCase().match(/[a-z0-9][a-z0-9-]*/g) ?? [];
+  const slug = words.join("-").slice(0, 40).replace(/-+$/g, "");
+  const base = slug || "custom-source";
+  return RESERVED_SOURCE_NAMES.has(base) ? `custom-${base}` : base;
+}
+
 export interface SourceComposeResult {
   kind: "source";
   values: SourceDraftValues;
@@ -366,15 +473,24 @@ export async function composeSource(
   }
   const summaries = summarizeSourceCandidates(candidates);
   const eligible = selectableCandidates(summaries);
+  const authored = draftAuthoredSource(trimmed);
   if (eligible.length === 0) {
     return {
       kind: "source",
-      values: { repo: "", reason: "", risk: null, candidates: summaries },
-      rationale: "信源市场没有找到可安装的候选，请换个说法或手动搜索。",
+      values: {
+        repo: "",
+        reason: "",
+        risk: null,
+        candidates: summaries,
+        authored,
+      },
+      rationale:
+        "信源市场没有找到可安装的候选；已按意图生成声明式 source.yaml 草案，补全端点并经门禁后才能安装。",
       warnings: [
         candidates.length === 0
           ? "搜索结果为空；未生成任何候选。"
           : "候选都缺少有效的 source.yaml，不能安装。",
+        ...authored.issues.map((issue) => issue.message),
       ],
       model: "heuristic",
     };
@@ -449,6 +565,7 @@ Rules:
       reason,
       risk: selected?.risk ?? null,
       candidates: summaries,
+      authored,
     },
     rationale,
     warnings: [...new Set(warnings)],

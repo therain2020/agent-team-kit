@@ -3,6 +3,7 @@ import {
   type SourceCandidateSummary,
   type SourceManifestFacts,
   credentialHeaderNames,
+  draftAuthoredSource,
   heuristicSourcePick,
   selectSourceCandidate,
   selectableCandidates,
@@ -10,6 +11,7 @@ import {
   summarizeSourceRisk,
 } from "@kit/job";
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 function manifestFacts(
   overrides: Partial<SourceManifestFacts> = {},
@@ -122,6 +124,42 @@ describe("source draft risk mapper", () => {
     expect(selectableCandidates(summaries).map((item) => item.repo)).toEqual([
       "acme/blog",
     ]);
+  });
+});
+
+describe("authored declarative draft (98 I-5)", () => {
+  it("drafts a valid source.yaml from an intent that names an endpoint", () => {
+    const authored = draftAuthoredSource(
+      "每天早上抓取 https://feeds.example.com/rss.xml 的 RSS",
+    );
+    expect(authored.endpoint).toBe("https://feeds.example.com/rss.xml");
+    expect(authored.type).toBe("rss");
+    expect(authored.name).toBe("feeds-example-com");
+    expect(authored.issues).toEqual([]);
+    const parsed = parseYaml(authored.yaml) as {
+      apiVersion?: string;
+      spec?: { request?: { url?: string } };
+    };
+    expect(parsed.apiVersion).toBe("agentteam/source/v1");
+    expect(parsed.spec?.request?.url).toBe("https://feeds.example.com/rss.xml");
+  });
+
+  it("flags a missing endpoint instead of inventing one", () => {
+    const authored = draftAuthoredSource("collect AI news");
+    expect(authored.endpoint).toBe("");
+    expect(authored.issues.map((issue) => issue.code)).toEqual([
+      "endpoint_required",
+    ]);
+    expect(authored.issues[0]?.path).toBe("spec.request.url");
+  });
+
+  it("accepts observer overrides for endpoint and name", () => {
+    const authored = draftAuthoredSource("collect AI news", {
+      endpoint: "https://example.com/feed.json",
+      name: "arxiv",
+    });
+    expect(authored.name).toBe("arxiv");
+    expect(authored.type).toBe("json");
   });
 });
 

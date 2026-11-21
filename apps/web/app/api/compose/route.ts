@@ -10,7 +10,6 @@ import { type ComponentRef, newId } from "@kit/core";
 import {
   type AgentDraftValues,
   type ComposeKind,
-  JobError,
   type PipelineDraftValues,
   type SourceCandidateInput,
   composeJob,
@@ -196,17 +195,18 @@ function absolutePackDir(input: string): string | null {
   return resolved.startsWith(prefix) ? resolved : null;
 }
 
+/**
+ * Market search is best-effort for source drafts: a GitHub outage must not
+ * block a self-authored declarative draft (98 I-5), so an empty list is handed
+ * to the composer and it still proposes `authored`.
+ */
 async function loadSourceCandidates(
   intent: string,
 ): Promise<SourceCandidateInput[]> {
   try {
     return toSourceCandidateInputs(await searchSourceMarketForIntent(intent));
-  } catch (error) {
-    throw new JobError(
-      "source_search_failed",
-      error instanceof Error ? error.message : "source market search failed",
-      502,
-    );
+  } catch {
+    return [];
   }
 }
 

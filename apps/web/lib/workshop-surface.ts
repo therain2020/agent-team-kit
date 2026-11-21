@@ -46,6 +46,10 @@ export async function loadWorkshopSurface(): Promise<WorkshopSurfaceData> {
       commit: source.meta.commit,
       trust: source.meta.trust,
       builtin: false,
+      ...(source.meta.budget ? { budget: source.meta.budget } : {}),
+      ...(source.meta.retiredAt
+        ? { retired: true, retiredAt: source.meta.retiredAt }
+        : {}),
     })),
     ...BUILTIN_SOURCES.map((name) => ({
       name,
