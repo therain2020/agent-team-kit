@@ -334,11 +334,11 @@ function install(
 describe("workshop install destination by manifest kind", () => {
   it("routes every kind to its own local library", () => {
     const options = {
-      packsRoot: path.join("kit-root", "packs"),
-      sourcesRoot: path.join("kit-root", "sources"),
-      templatesRoot: path.join("kit-root", "templates"),
-      componentsRoot: path.join("kit-root", "components"),
-      hostPack: path.join("kit-root", "packs", "host"),
+      packsRoot: path.resolve("kit-root", "packs"),
+      sourcesRoot: path.resolve("kit-root", "sources"),
+      templatesRoot: path.resolve("kit-root", "templates"),
+      componentsRoot: path.resolve("kit-root", "components"),
+      hostPack: path.resolve("kit-root", "packs", "host"),
     };
 
     const pack = resolveInstallTarget(
