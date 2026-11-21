@@ -7,6 +7,7 @@
       "@kit/activity": ["./packages/activity/src/index.ts"],
       "@kit/core/cron": ["./packages/core/src/cron.ts"],
       "@kit/bootstrap": ["./packages/bootstrap/src/index.ts"],
+      "@kit/change": ["./packages/change/src/index.ts"],
       "@kit/coder": ["./packages/coder/src/index.ts"],
       "@kit/engine": ["./packages/engine/src/index.ts"],
       "@kit/engine/*": ["./packages/engine/src/*.ts"],

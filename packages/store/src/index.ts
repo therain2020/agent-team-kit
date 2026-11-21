@@ -3,6 +3,7 @@ export * from "./artifact-integrity";
 export * from "./artifact-service";
 export * from "./blob";
 export * from "./budget-service";
+export * from "./change-service";
 export * from "./circuit-breaker-service";
 export * from "./config";
 export * from "./cost-ledger";
