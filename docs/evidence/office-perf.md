@@ -82,7 +82,9 @@ prints it to stdout, and appends a markdown table to
 - `verdict`, `pass`, `failures`, `warnings`.
 
 CI uploads the JSON as the `office-perf-<sha>` artifact (90-day retention),
-so a result is always attributable to the commit that produced it.
+so a result is always attributable to the commit that produced it. On pull
+requests the workflow passes `github.event.pull_request.head.sha` (the source
+commit) rather than the synthetic merge-commit SHA.
 
 ## Reproduce
 

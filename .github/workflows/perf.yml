@@ -50,13 +50,14 @@ jobs:
           BENCH_MODE: ${{ github.event_name == 'pull_request' && 'advisory' || (github.event_name == 'workflow_dispatch' && inputs.mode || 'gate') }}
           BENCH_SAMPLES: "20"
           BENCH_REPORT: .tmp/office-perf/office-perf.json
-          GITHUB_SHA: ${{ github.sha }}
+          # PR runs check out a synthetic merge commit; report the source commit.
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: bun run bench:office
       - name: Upload benchmark report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: office-perf-${{ github.sha }}
+          name: office-perf-${{ github.event.pull_request.head.sha || github.sha }}
           path: .tmp/office-perf/office-perf.json
           if-no-files-found: warn
           retention-days: 90
