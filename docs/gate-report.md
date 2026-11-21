@@ -40,7 +40,7 @@ so the same bundle produces the same report.
 |---|---|---|
 | `store-db` | `information_events`, `trigger_runs`, `iteration_runs/tasks`, `runs` + `artifacts`, `approvals`, `kill_switches`, `interest_profile_audits`, `activity_events`, `recovery_drills`, `last_known_good`, `incidents` | G1-G8 |
 | `kitd-audit` | `<home>/audit/kitd.jsonl` (snapshot/rollback/lkg/drill actions) | G5 |
-| `recovery-reports` | `<home>/audit/recovery-drill-*.json` (RTO and checks) | G6, G8 |
+| `recovery-reports` | `<home>/audit/{recovery,rollback}-drill-*.json` (RTO and checks; the report's `script` field names the drill) | G6, G8 |
 | `manufacture-proposals` | `<pack>/.manufacture/proposals/*.json` | G1, G3 |
 | `components-lock` | `<pack>/components.lock.json` | G3, G8 |
 | `installed-sources` | `<repo>/sources/*.meta.json` | G1 |
@@ -94,7 +94,7 @@ To close a GAP, produce the missing record and re-run the report:
 | `G4.*` | Apply a low/medium iteration change; block forbidden paths |
 | `G5.*` | Record actor and reason for every manual intervention; label approval risk |
 | `G5.approval-risk-recorded` | Store the risk class on approval rows so they can count as high-risk approvals |
-| `G6.*` | Run `bun run recovery:drill --execute --rpo-minutes <n>` |
+| `G6.*` | Run `bun run drill:rollback --execute` (code + instruction rollback RTO) or `bun run recovery:drill --execute --rpo-minutes <n>` (quarterly recovery/RPO) |
 | `G7.*` | Keep trigger run `jobId`/`payloadRef`, artifact ids and LKG refs intact |
 | `G8.S*` | See the check detail; most require probes not yet instrumented |
 
