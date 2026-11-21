@@ -4,7 +4,8 @@ name: perf
 #
 # Deliberately NOT a job on every PR: shared-runner timing is noisy, and a
 # blocked PR on a 50ms swing would make the gate meaningless. It runs on:
-#   - a weekly schedule (gate mode → fails on clear regressions, not on noise);
+#   - a weekly schedule and pushes to `develop` (gate mode → fails on clear
+#     regressions, not on noise; never blocks the PR that caused it);
 #   - manual dispatch (gate mode by default);
 #   - PRs that opt in with the `perf` label (advisory mode → publishes the
 #     report, never blocks the PR).
@@ -13,6 +14,9 @@ name: perf
 on:
   schedule:
     - cron: "0 3 * * 1"
+  # Integration signal after each merge; it never blocks the PR that caused it.
+  push:
+    branches: [develop]
   workflow_dispatch:
     inputs:
       mode:

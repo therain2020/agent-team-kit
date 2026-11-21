@@ -715,7 +715,7 @@ function collectAssetUrls(html: string): string[] {
     }
   }
   for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
-    const tag = match[0];
+    const tag = match[0] ?? "";
     if (!/rel="stylesheet"/i.test(tag)) {
       continue;
     }

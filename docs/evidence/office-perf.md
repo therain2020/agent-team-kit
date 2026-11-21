@@ -21,6 +21,8 @@ The gate is **not** a job on every PR. Shared-runner timing is noisy, and a
 workflow runs:
 
 - **weekly schedule** (`0 3 * * 1`) — gate mode;
+- **pushes to `develop`** — gate mode; the signal follows each merge without
+  ever blocking the merged PR;
 - **manual dispatch** — gate mode by default;
 - **PRs labelled `perf`** — advisory mode: the report is published and the
   step summary is written, but the job never fails the PR.
