@@ -365,7 +365,8 @@ async function collectStore(
       "approvals",
       () =>
         db.sql<ApprovalRow[]>`
-        SELECT approval_id, kind, status, decision_by, decision_at, decision_reason
+        SELECT approval_id, kind, status, decision_by, decision_at,
+               decision_reason, risk_class
         FROM approvals
         WHERE decision_at IS NOT NULL
           AND decision_at >= ${start} AND decision_at <= ${end}
@@ -480,7 +481,7 @@ async function collectStore(
         kind: `approval:${row.kind}`,
         category: "high-risk-approval" as const,
         reason: stringOrNull(row.decision_reason),
-        risk: null,
+        risk: riskClassOrNull(row.risk_class),
       })),
       ...auditRows
         .filter((row) => stringOr(row.actor, "") !== "ai")
@@ -1424,6 +1425,16 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+/**
+ * Approval risk class read from the store. Missing/unknown values stay null so
+ * the observer gate reports them as unlabelled evidence instead of guessing.
+ */
+function riskClassOrNull(value: unknown): "low" | "medium" | "high" | null {
+  return value === "low" || value === "medium" || value === "high"
+    ? value
+    : null;
+}
+
 function numberOrNull(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -1491,6 +1502,8 @@ interface ApprovalRow {
   decision_by: string | null;
   decision_at: string;
   decision_reason: string | null;
+  /** Null on rows written before risk classes were recorded. */
+  risk_class: string | null;
 }
 interface KillRow {
   switch_id: string;

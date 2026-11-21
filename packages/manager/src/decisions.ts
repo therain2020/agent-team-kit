@@ -364,6 +364,9 @@ export async function backfillApprovals(
       payloadRef: approval.artifactId,
       slaDueAt: approval.expiresAt || null,
       expiresAt: approval.expiresAt || null,
+      // The artifact is the request's source of truth and carries the risk
+      // class chosen by the approval policy; record it on the entity too.
+      riskClass: approval.riskClass,
     });
     result.created += 1;
   }

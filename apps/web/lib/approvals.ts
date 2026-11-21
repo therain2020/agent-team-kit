@@ -212,6 +212,7 @@ export async function loadPendingApprovals(
         runStatus: item.runStatus,
         substrate: item.substrate,
         changeId: item.changeId,
+        riskClass: item.riskClass,
       };
       return toApiApprovalItem(entity, payload);
     }),

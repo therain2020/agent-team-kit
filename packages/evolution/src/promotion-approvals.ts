@@ -5,6 +5,7 @@ import {
   type PromotionApproval,
   type VariantKind,
   isPromotionRole,
+  promotionRiskClass,
   requiredPromotionRoles,
 } from "./promotion";
 
@@ -39,6 +40,7 @@ export async function requestPromotionApprovals(
   const roles = requiredPromotionRoles(input.variantKind);
   const subjectRef = promotionSubjectRef(input.variantId, input.targetDir);
   const createdAt = input.now ?? new Date().toISOString();
+  const riskClass = promotionRiskClass(input.variantKind);
   const records: ApprovalRecord[] = [];
   for (const role of roles) {
     records.push(
@@ -51,6 +53,7 @@ export async function requestPromotionApprovals(
         requiredRole: role,
         subjectRef,
         payloadRef: subjectRef,
+        riskClass,
         createdAt,
       }),
     );
