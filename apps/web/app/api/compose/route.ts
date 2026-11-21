@@ -33,6 +33,7 @@ export async function POST(request: Request) {
     intent?: unknown;
     packDir?: unknown;
     agentId?: unknown;
+    workflowId?: unknown;
     current?: unknown;
     templateId?: unknown;
     currentStages?: unknown;
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         error:
-          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, workflow, pipeline, or source",
+          "kind must be mission, packRun, approvalPolicy, autopilot, evolutionCycle, agent, pack, workflow, pipeline, source, studio.member, or studio.workflow",
       },
       { status: 400 },
     );
@@ -93,6 +94,9 @@ export async function POST(request: Request) {
       packDir,
       repoRoot: getRepoRoot(),
       ...(typeof body.agentId === "string" ? { agentId: body.agentId } : {}),
+      ...(typeof body.workflowId === "string"
+        ? { workflowId: body.workflowId }
+        : {}),
       ...(typeof body.templateId === "string"
         ? { templateId: body.templateId }
         : {}),
@@ -220,7 +224,9 @@ function parseKind(value: unknown): ComposeKind | undefined {
     value === "pack" ||
     value === "workflow" ||
     value === "pipeline" ||
-    value === "source"
+    value === "source" ||
+    value === "studio.member" ||
+    value === "studio.workflow"
     ? value
     : undefined;
 }

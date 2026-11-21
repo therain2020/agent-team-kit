@@ -1,3 +1,5 @@
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
 import type { AutopilotConfig } from "@kit/core";
 import { type DraftStage, validateStageGraph } from "@kit/pack";
 import { describe, expect, it } from "vitest";
@@ -378,6 +380,147 @@ describe("stage graph validation", () => {
     expect(result.errors.join(" ")).toContain("cannot depend on itself");
   });
 });
+
+describe("studio member composer", () => {
+  it("drafts a new member from id + intent without writing files", async () => {
+    const packDir = path.resolve(repoRoot, "packs", "minimal");
+    const before = await snapshotDir(packDir);
+
+    const result = await composeJob({
+      kind: "studio.member",
+      intent: "审阅发布前的引用与数据",
+      packDir: "minimal",
+      repoRoot,
+      env,
+      agentId: "reviewer",
+    });
+
+    const values = result.values as AgentDraftValues;
+    expect(result.kind).toBe("studio.member");
+    // No key / KIT_MODEL_MODE=stub: the deterministic fallback is labelled.
+    expect(result.model).toBe("heuristic");
+    expect(values.role).toBe("specialist");
+    expect(values.model).toBe("deepseek-flash");
+    expect(values.description).toContain("reviewer");
+    expect(values.description).toContain("审阅发布前的引用与数据");
+    expect(values.instructions.length).toBeGreaterThan(0);
+    // Drafting is side-effect free: only the create API writes.
+    expect(await snapshotDir(packDir)).toEqual(before);
+  });
+
+  it("warns when the member id already exists", async () => {
+    const result = await composeJob({
+      kind: "studio.member",
+      intent: "重复的成员",
+      packDir: "minimal",
+      repoRoot,
+      env,
+      agentId: "echo",
+    });
+
+    expect(result.kind).toBe("studio.member");
+    expect(result.warnings.join(" ")).toContain("echo 已存在");
+  });
+
+  it("rejects reserved and malformed member ids", async () => {
+    await expect(
+      composeJob({
+        kind: "studio.member",
+        intent: "新的经理",
+        packDir: "minimal",
+        repoRoot,
+        env,
+        agentId: "manager",
+      }),
+    ).rejects.toMatchObject({ code: "member_id_reserved" });
+
+    await expect(
+      composeJob({
+        kind: "studio.member",
+        intent: "新的成员",
+        packDir: "minimal",
+        repoRoot,
+        env,
+        agentId: "Bad Id",
+      }),
+    ).rejects.toMatchObject({ code: "member_id_invalid" });
+
+    await expect(
+      composeJob({
+        kind: "studio.member",
+        intent: "新的成员",
+        packDir: "minimal",
+        repoRoot,
+        env,
+      }),
+    ).rejects.toMatchObject({ code: "member_id_required" });
+  });
+});
+
+describe("studio workflow composer", () => {
+  it("drafts a validated stage graph without writing files", async () => {
+    const packDir = path.resolve(repoRoot, "packs", "minimal");
+    const before = await snapshotDir(packDir);
+
+    const result = await composeJob({
+      kind: "studio.workflow",
+      intent: "先调研再发布",
+      packDir: "minimal",
+      repoRoot,
+      env,
+      workflowId: "intake",
+    });
+
+    const values = result.values as WorkflowDraftValues;
+    expect(result.kind).toBe("studio.workflow");
+    expect(result.model).toBe("heuristic");
+    expect(values.stages.length).toBeGreaterThan(0);
+    expect(values.stages[0]?.depends).toEqual([]);
+    expect(values.stages[0]?.goal).toBe("先调研再发布");
+    expect(validateStageGraph(values.stages, ["echo"]).ok).toBe(true);
+    expect(await snapshotDir(packDir)).toEqual(before);
+  });
+
+  it("rejects a taken or malformed workflow id", async () => {
+    await expect(
+      composeJob({
+        kind: "studio.workflow",
+        intent: "重复的流水线",
+        packDir: "minimal",
+        repoRoot,
+        env,
+        workflowId: "demo",
+      }),
+    ).rejects.toMatchObject({ code: "workflow_id_exists" });
+
+    await expect(
+      composeJob({
+        kind: "studio.workflow",
+        intent: "新流水线",
+        packDir: "minimal",
+        repoRoot,
+        env,
+        workflowId: "Bad Id",
+      }),
+    ).rejects.toMatchObject({ code: "workflow_id_invalid" });
+  });
+});
+
+async function snapshotDir(dir: string): Promise<Map<string, string>> {
+  const files = new Map<string, string>();
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const absolute = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      for (const [file, content] of await snapshotDir(absolute)) {
+        files.set(`${entry.name}/${file}`, content);
+      }
+    } else {
+      files.set(entry.name, await readFile(absolute, "utf8"));
+    }
+  }
+  return files;
+}
 
 describe("evolution composer", () => {
   it("picks a non-manager agent and a checkable hypothesis", async () => {

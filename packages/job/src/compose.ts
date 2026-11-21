@@ -38,7 +38,14 @@ export type ComposeKind =
   | "pack"
   | "workflow"
   | "pipeline"
-  | "source";
+  | "source"
+  /**
+   * Studio create flows (94 C-6b / C-9). `agent` and `workflow` edit an
+   * existing object; the `studio.*` kinds draft a brand-new one, so they reject
+   * invalid/reserved ids up front and never carry `current` values.
+   */
+  | "studio.member"
+  | "studio.workflow";
 
 export interface ComposeInput {
   kind: ComposeKind;
@@ -48,6 +55,11 @@ export interface ComposeInput {
   env?: Record<string, string | undefined>;
   /** Agent being edited; empty when drafting a brand-new member. */
   agentId?: string;
+  /**
+   * Id of the workflow a `studio.workflow` draft would create. Editing an
+   * existing workflow uses `workflow` + `currentStages` instead.
+   */
+  workflowId?: string;
   /** Current form values so drafts preserve unsaved edits. */
   current?: Partial<AgentDraftValues>;
   /** Template pre-selected by the user for a brand-new pack; optional. */
@@ -229,6 +241,9 @@ export interface ComposeResult {
 const DEFAULT_ACCEPTANCE =
   "Small verified changes; high-risk changes stay pending approval.";
 
+/** Ids of new Studio objects: members and workflows both use this slug form. */
+const ID_SLUG = /^[a-z][a-z0-9-]*$/;
+
 export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
   const result = await composeJobInner(input);
   return input.cost ? { ...result, jobId: input.cost.jobId } : result;
@@ -318,16 +333,9 @@ async function composeJobInner(input: ComposeInput): Promise<ComposeResult> {
   }
   if (input.kind === "agent") {
     const env = input.env ?? process.env;
+    const facts = await loadedPackFacts(loaded);
     const agentId = input.agentId?.trim() || null;
     const current = sanitizeAgentCurrent(input.current);
-    const catalog = await packCatalog(loaded.dir);
-    const packAgents = [...loaded.agents.entries()].map(([id, agent]) => ({
-      id,
-      role: agent.role,
-      model: agent.spec.model,
-      tools: agent.spec.tools,
-      skills: agent.spec.skills,
-    }));
     const isManager =
       agentId === "manager" ||
       current?.role === "manager" ||
@@ -336,16 +344,10 @@ async function composeJobInner(input: ComposeInput): Promise<ComposeResult> {
       intent,
       {
         pack: loaded.pack.metadata.name,
-        workflows: loaded.workflows.map((workflow) => ({
-          id: workflow.id,
-          stages: workflow.stages.map((stage) => stage.id),
-        })),
-        agents: packAgents,
-        tools: catalog.tools.map((tool) => tool.name),
-        skills: catalog.skills,
+        ...facts,
         models: agentModelWhitelist(
           env,
-          packAgents.map((agent) => agent.model),
+          facts.agents.map((agent) => agent.model),
         ),
         agentId,
         current,
@@ -357,31 +359,108 @@ async function composeJobInner(input: ComposeInput): Promise<ComposeResult> {
   }
   if (input.kind === "workflow") {
     const env = input.env ?? process.env;
-    const catalog = await packCatalog(loaded.dir);
-    const packAgents = [...loaded.agents.entries()].map(([id, agent]) => ({
-      id,
-      role: agent.role,
-      model: agent.spec.model,
-      tools: agent.spec.tools,
-      skills: agent.spec.skills,
-    }));
+    const facts = await loadedPackFacts(loaded);
     return composeWorkflow(
       intent,
       {
         pack: loaded.pack.metadata.name,
-        workflows: loaded.workflows.map((workflow) => ({
-          id: workflow.id,
-          stages: workflow.stages.map((stage) => stage.id),
-        })),
-        agents: packAgents,
-        tools: catalog.tools.map((tool) => tool.name),
-        skills: catalog.skills,
+        ...facts,
         gates: loaded.pack.evals?.rubrics ? [loaded.pack.evals.rubrics] : [],
         current: parseWorkflowDraftStages(input.currentStages),
       },
       env,
       input.cost,
     );
+  }
+  // Studio create flows: the object id is part of the first input, so an
+  // invalid, reserved or taken id is a hard error instead of a warning — the
+  // create API would reject it anyway and the operator should fix it now.
+  if (input.kind === "studio.member") {
+    const env = input.env ?? process.env;
+    const memberId = (input.agentId ?? "").trim();
+    if (!memberId) {
+      throw new JobError("member_id_required", "a member id is required", 400);
+    }
+    if (!ID_SLUG.test(memberId)) {
+      throw new JobError(
+        "member_id_invalid",
+        `member id ${memberId} must match ^[a-z][a-z0-9-]*$`,
+        400,
+      );
+    }
+    if (memberId === "manager") {
+      throw new JobError(
+        "member_id_reserved",
+        'member id "manager" is reserved; create the manager from the manager panel',
+        400,
+      );
+    }
+    const facts = await loadedPackFacts(loaded);
+    const result = await composeAgent(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        ...facts,
+        models: agentModelWhitelist(
+          env,
+          facts.agents.map((agent) => agent.model),
+        ),
+        agentId: memberId,
+        current: null,
+        isManager: false,
+      },
+      env,
+      input.cost,
+    );
+    const warnings = loaded.agents.has(memberId)
+      ? [
+          `成员 ${memberId} 已存在；请更换 id 或先删除现有成员。`,
+          ...result.warnings,
+        ]
+      : result.warnings;
+    return {
+      ...result,
+      kind: "studio.member",
+      warnings: [...new Set(warnings)],
+    };
+  }
+  if (input.kind === "studio.workflow") {
+    const env = input.env ?? process.env;
+    const workflowId = (input.workflowId ?? "").trim();
+    if (!workflowId) {
+      throw new JobError(
+        "workflow_id_required",
+        "a workflow id is required",
+        400,
+      );
+    }
+    if (!ID_SLUG.test(workflowId)) {
+      throw new JobError(
+        "workflow_id_invalid",
+        `workflow id ${workflowId} must match ^[a-z][a-z0-9-]*$`,
+        400,
+      );
+    }
+    if (loaded.workflows.some((workflow) => workflow.id === workflowId)) {
+      throw new JobError(
+        "workflow_id_exists",
+        `workflow ${workflowId} already exists`,
+        400,
+      );
+    }
+    const facts = await loadedPackFacts(loaded);
+    const result = await composeWorkflow(
+      intent,
+      {
+        pack: loaded.pack.metadata.name,
+        ...facts,
+        gates: loaded.pack.evals?.rubrics ? [loaded.pack.evals.rubrics] : [],
+        current: null,
+      },
+      env,
+      input.cost,
+    );
+    return { ...result, kind: "studio.workflow" };
   }
   if (input.kind === "pipeline") {
     return composePipelineDraft({
@@ -863,6 +942,36 @@ Rules:
   };
 }
 
+interface LoadedPackFacts {
+  workflows: Array<{ id: string; stages: string[] }>;
+  agents: AgentDraftFacts["agents"];
+  tools: string[];
+  skills: string[];
+}
+
+/**
+ * Read-only snapshot shared by the Studio edit/create composers, so the
+ * `agent` / `workflow` / `studio.*` kinds all draft against one fact shape.
+ */
+async function loadedPackFacts(loaded: LoadedPack): Promise<LoadedPackFacts> {
+  const catalog = await packCatalog(loaded.dir);
+  return {
+    workflows: loaded.workflows.map((workflow) => ({
+      id: workflow.id,
+      stages: workflow.stages.map((stage) => stage.id),
+    })),
+    agents: [...loaded.agents.entries()].map(([id, agent]) => ({
+      id,
+      role: agent.role,
+      model: agent.spec.model,
+      tools: agent.spec.tools,
+      skills: agent.spec.skills,
+    })),
+    tools: catalog.tools.map((tool) => tool.name),
+    skills: catalog.skills,
+  };
+}
+
 export interface AgentDraftFacts {
   pack: string;
   workflows: Array<{ id: string; stages: string[] }>;
@@ -895,6 +1004,9 @@ async function composeAgent(
     : "按成员 id 与意图推断职责，生成可编辑的成员草稿。";
   let model: ComposeResult["model"] = "heuristic";
 
+  // Stub mode still calls the stub gateway on purpose: the gateway bills an
+  // explicit untracked marker (cost 0) so a draft is never silently unbilled
+  // (60 §3.3). The stub output fails validation, so the result stays heuristic.
   try {
     const gateway = composeGateway({
       env,
@@ -1223,6 +1335,9 @@ async function composeWorkflow(
     : "按 Pack 的首个成员生成线性单阶段草稿。";
   let model: ComposeResult["model"] = "heuristic";
 
+  // Stub mode still calls the stub gateway on purpose: the gateway bills an
+  // explicit untracked marker (cost 0) so a draft is never silently unbilled
+  // (60 §3.3). The stub output fails validation, so the graph stays heuristic.
   try {
     const gateway = composeGateway({
       env,
