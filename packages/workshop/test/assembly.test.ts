@@ -151,6 +151,30 @@ describe("workshop component assembly (end to end)", () => {
     expect(listed.every((component) => component.bound)).toBe(true);
   });
 
+  it("plans an assembly without writing anything in dry-run mode", async () => {
+    const componentsRoot = await seedLibrary();
+    const packDir = await makePack();
+    const teamBefore = await readFile(path.join(packDir, "team.yaml"), "utf8");
+
+    const result = await assembleComponents(
+      {
+        packDir,
+        components: [{ kind: "agent", id: "echo" }],
+        dryRun: true,
+      },
+      workshopComponentLibrary(componentsRoot),
+    );
+
+    expect(result.preview).toBe(true);
+    expect(result.bindings).toHaveLength(1);
+    expect(result.written).toEqual(["agents/echo.md"]);
+    expect(existsSync(path.join(packDir, "agents", "echo.md"))).toBe(false);
+    expect(existsSync(path.join(packDir, "components.lock.json"))).toBe(false);
+    expect(await readFile(path.join(packDir, "team.yaml"), "utf8")).toBe(
+      teamBefore,
+    );
+  });
+
   it("rejects an out-of-bounds workflow and leaves no partial pack", async () => {
     const componentsRoot = await seedLibrary();
     await writeComponent(
