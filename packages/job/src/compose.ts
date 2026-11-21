@@ -1004,18 +1004,18 @@ async function composeAgent(
     : "按成员 id 与意图推断职责，生成可编辑的成员草稿。";
   let model: ComposeResult["model"] = "heuristic";
 
-  // No key or KIT_MODEL_MODE=stub: keep the heuristic draft and skip the call
-  // so the operator is not shown a misleading "AI unavailable" warning.
-  if (loadModelConfig(env).mode === "live") {
-    try {
-      const gateway = composeGateway({
-        env,
-        attribution: cost,
-        source: "compose:agent",
-      });
-      const response = await gateway.complete({
-        model: "deepseek-flash",
-        instructions: `You draft ONE teammate for a private agent team.
+  // Stub mode still calls the stub gateway on purpose: the gateway bills an
+  // explicit untracked marker (cost 0) so a draft is never silently unbilled
+  // (60 §3.3). The stub output fails validation, so the result stays heuristic.
+  try {
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:agent",
+    });
+    const response = await gateway.complete({
+      model: "deepseek-flash",
+      instructions: `You draft ONE teammate for a private agent team.
 Return JSON only:
 {"description":"<one sentence>","model":"<model id>","role":"builder|seller|specialist|manager","instructions":"<role prompt in Markdown>","tools":["<tool name>"],"skills":["<skill name>"],"rationale":"<one sentence>","warnings":["<optional>"]}
 Rules:
@@ -1024,50 +1024,49 @@ Rules:
 - tools and skills must come from the provided catalogs; never invent them.
 - preserve the existing values unless the intent asks to change them.
 - keep the description under 200 characters; do not invent facts.`,
-        input: JSON.stringify({
-          intent,
-          pack: facts.pack,
-          agentId: facts.agentId,
-          isManager: facts.isManager,
-          current: facts.current,
-          roles: [
-            "builder",
-            "seller",
-            "specialist",
-            ...(facts.isManager ? ["manager"] : []),
-          ],
-          models: facts.models,
-          tools: facts.tools,
-          skills: facts.skills,
-          agents: facts.agents,
-          workflows: facts.workflows,
-        }),
-      });
-      const parsed = parseJson(response.text);
-      if (parsed) {
-        const validated = validateAgentDraft(parsed, fallback, facts);
-        if (validated.accepted) {
-          values = validated.values;
-          rationale = validated.rationale ?? rationale;
-          warnings.push(...validated.warnings);
-          if (Array.isArray(parsed.warnings)) {
-            warnings.push(
-              ...parsed.warnings
-                .filter((item): item is string => typeof item === "string")
-                .map((item) => item.slice(0, 300))
-                .slice(0, 5),
-            );
-          }
-          model = "live";
-        } else {
-          warnings.push("AI 草稿未通过校验，已使用启发式草稿。");
+      input: JSON.stringify({
+        intent,
+        pack: facts.pack,
+        agentId: facts.agentId,
+        isManager: facts.isManager,
+        current: facts.current,
+        roles: [
+          "builder",
+          "seller",
+          "specialist",
+          ...(facts.isManager ? ["manager"] : []),
+        ],
+        models: facts.models,
+        tools: facts.tools,
+        skills: facts.skills,
+        agents: facts.agents,
+        workflows: facts.workflows,
+      }),
+    });
+    const parsed = parseJson(response.text);
+    if (parsed) {
+      const validated = validateAgentDraft(parsed, fallback, facts);
+      if (validated.accepted) {
+        values = validated.values;
+        rationale = validated.rationale ?? rationale;
+        warnings.push(...validated.warnings);
+        if (Array.isArray(parsed.warnings)) {
+          warnings.push(
+            ...parsed.warnings
+              .filter((item): item is string => typeof item === "string")
+              .map((item) => item.slice(0, 300))
+              .slice(0, 5),
+          );
         }
+        model = "live";
       } else {
-        warnings.push("AI 草稿无法解析，已使用启发式草稿。");
+        warnings.push("AI 草稿未通过校验，已使用启发式草稿。");
       }
-    } catch {
-      warnings.push("AI 草稿不可用，已使用启发式草稿。");
+    } else {
+      warnings.push("AI 草稿无法解析，已使用启发式草稿。");
     }
+  } catch {
+    warnings.push("AI 草稿不可用，已使用启发式草稿。");
   }
 
   return {
@@ -1336,18 +1335,18 @@ async function composeWorkflow(
     : "按 Pack 的首个成员生成线性单阶段草稿。";
   let model: ComposeResult["model"] = "heuristic";
 
-  // No key or KIT_MODEL_MODE=stub: keep the heuristic stage graph and skip the
-  // call so the operator is not shown a misleading "AI unavailable" warning.
-  if (loadModelConfig(env).mode === "live") {
-    try {
-      const gateway = composeGateway({
-        env,
-        attribution: cost,
-        source: "compose:workflow",
-      });
-      const response = await gateway.complete({
-        model: "deepseek-flash",
-        instructions: `You draft a multi-stage workflow graph for a private agent team.
+  // Stub mode still calls the stub gateway on purpose: the gateway bills an
+  // explicit untracked marker (cost 0) so a draft is never silently unbilled
+  // (60 §3.3). The stub output fails validation, so the graph stays heuristic.
+  try {
+    const gateway = composeGateway({
+      env,
+      attribution: cost,
+      source: "compose:workflow",
+    });
+    const response = await gateway.complete({
+      model: "deepseek-flash",
+      instructions: `You draft a multi-stage workflow graph for a private agent team.
 Return JSON only:
 {"stages":[{"id":"<slug>","type":"agent|coder|workflow","agent":"<agent id>","goal":"<one sentence>","acceptance":"<checkable criterion>","inputs":["<artifact>"],"outputs":["<artifact>"],"timeout":"15m","depends":["<earlier stage id>"],"gate":"<optional eval file>","approval":{"mode":"required|auto|never","position":"before|after","riskClass":"low|medium|high","ttl":"72h"}}],"rationale":"<one sentence>","warnings":["<optional>"]}
 Rules:
@@ -1359,35 +1358,34 @@ Rules:
 - human approval (mode required) only on delivery/publication stages; never auto-approve high risk.
 - gate must reference a provided eval file (optionally with #rubric); omit it when none fits.
 - do not invent agents, gates, tools or facts.`,
-        input: JSON.stringify({
-          intent,
-          pack: facts.pack,
-          workflows: facts.workflows,
-          agents: facts.agents,
-          tools: facts.tools,
-          skills: facts.skills,
-          gates: facts.gates,
-          current: facts.current,
-        }),
-      });
-      const parsed = parseJson(response.text);
-      if (parsed) {
-        const validated = validateWorkflowDraft(parsed, fallback, facts);
-        if (validated.accepted) {
-          values = validated.values;
-          rationale = validated.rationale ?? rationale;
-          warnings.push(...validated.warnings);
-          model = "live";
-        } else {
-          warnings.push(...validated.warnings);
-          warnings.push("AI 阶段图未通过校验，已使用默认阶段图。");
-        }
+      input: JSON.stringify({
+        intent,
+        pack: facts.pack,
+        workflows: facts.workflows,
+        agents: facts.agents,
+        tools: facts.tools,
+        skills: facts.skills,
+        gates: facts.gates,
+        current: facts.current,
+      }),
+    });
+    const parsed = parseJson(response.text);
+    if (parsed) {
+      const validated = validateWorkflowDraft(parsed, fallback, facts);
+      if (validated.accepted) {
+        values = validated.values;
+        rationale = validated.rationale ?? rationale;
+        warnings.push(...validated.warnings);
+        model = "live";
       } else {
-        warnings.push("AI 草稿无法解析，已使用默认阶段图。");
+        warnings.push(...validated.warnings);
+        warnings.push("AI 阶段图未通过校验，已使用默认阶段图。");
       }
-    } catch {
-      warnings.push("AI 草稿不可用，已使用默认阶段图。");
+    } else {
+      warnings.push("AI 草稿无法解析，已使用默认阶段图。");
     }
+  } catch {
+    warnings.push("AI 草稿不可用，已使用默认阶段图。");
   }
 
   return {
