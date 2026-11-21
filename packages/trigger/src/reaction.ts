@@ -16,6 +16,13 @@ import {
   triggerBudgetSkip,
 } from "./dispatch";
 import {
+  type ReactionSignalOutcome,
+  type ReactionSignalRecord,
+  appendReactionSignal,
+  defaultReactionsPath,
+  reactionSignalId,
+} from "./reaction-signal";
+import {
   type EventRoute,
   type Trigger,
   type TriggerResult,
@@ -73,12 +80,20 @@ export interface ReactionOutcome {
   existing: number;
   skipped: number;
   failed: number;
+  /**
+   * Set when appending the automatic reaction signal failed. The dispatch has
+   * already happened by then, so this is reported, not thrown (the op-log row
+   * in the store remains the durable record; 98 §5.2 G2 then stays a GAP).
+   */
+  signalError?: string;
 }
 
 export interface ReactionDeps extends FireTriggerDeps {
   rules: readonly ReactionRule[];
   maxReactions?: number;
   fireTriggerFn?: typeof fireTrigger;
+  /** Override for the `reactions.jsonl` signal file (defaults to signals root). */
+  reactionsPath?: string;
 }
 
 export interface ReactionEventView {
@@ -277,6 +292,15 @@ export async function reactToInformationEvent(
   const dispatch = deps.fireTriggerFn ?? fireTrigger;
   const candidates = evaluateReactionRules(deps.rules, event);
   const view = reactionEventView(event);
+  const signalErrors: { message: string | null } = { message: null };
+  const record = (
+    input: Omit<RecordReactionInput, "workspaceId" | "eventId" | "now">,
+  ): Promise<void> =>
+    recordReaction(
+      deps,
+      { ...input, workspaceId, eventId: event.eventId, now },
+      signalErrors,
+    );
   let firedCount = 0;
 
   for (const candidate of candidates) {
@@ -289,8 +313,17 @@ export async function reactToInformationEvent(
       continue;
     }
     if (firedCount >= maxReactions) {
+      const reason = `hard cap reached (${maxReactions} per event)`;
       candidate.decision = "cap-reached";
-      candidate.reason = `hard cap reached (${maxReactions} per event)`;
+      candidate.reason = reason;
+      await record({
+        rule,
+        decision: "cap-reached",
+        triggerRunId: null,
+        jobId: null,
+        gate: null,
+        reason,
+      });
       continue;
     }
 
@@ -309,14 +342,13 @@ export async function reactToInformationEvent(
       if (blocked) {
         candidate.decision = "budget-exhausted";
         candidate.reason = blocked;
-        await recordReaction(deps, {
-          workspaceId,
-          eventId: event.eventId,
+        await record({
           rule,
-          decision: candidate.decision,
+          decision: "budget-exhausted",
+          triggerRunId: null,
           jobId: null,
+          gate: "trigger-budget",
           reason: blocked,
-          now,
         });
         continue;
       }
@@ -347,14 +379,13 @@ export async function reactToInformationEvent(
     if (candidate.decision === "fired" || candidate.decision === "existing") {
       firedCount += 1;
     }
-    await recordReaction(deps, {
-      workspaceId,
-      eventId: event.eventId,
+    await record({
       rule,
       decision: candidate.decision,
+      triggerRunId: result.triggerRunId,
       jobId: result.jobId,
+      gate: result.gate,
       reason: result.reason,
-      now,
     });
   }
 
@@ -374,6 +405,7 @@ export async function reactToInformationEvent(
         item.decision === "cap-reached",
     ).length,
     failed: candidates.filter((item) => item.decision === "failed").length,
+    ...(signalErrors.message ? { signalError: signalErrors.message } : {}),
   };
 }
 
@@ -457,18 +489,30 @@ function decisionFor(result: TriggerResult): ReactionDecision {
   return "skipped";
 }
 
+interface RecordReactionInput {
+  workspaceId: string;
+  eventId: string;
+  rule: ReactionRule;
+  decision: ReactionDecision;
+  triggerRunId: string | null;
+  jobId: string | null;
+  gate: string | null;
+  reason: string | null;
+  now: Date;
+}
+
+/**
+ * The single reaction completion point (98 §3.3): one terminal decision →
+ * one idempotent op-log row → one automatic reaction signal. Both writes are
+ * keyed (op `idempotencyKey`, signal `signalId`), so replaying an event never
+ * duplicates the audit trail or the signal file.
+ */
 async function recordReaction(
-  deps: Pick<FireTriggerDeps, "store">,
-  input: {
-    workspaceId: string;
-    eventId: string;
-    rule: ReactionRule;
-    decision: ReactionDecision;
-    jobId: string | null;
-    reason: string | null;
-    now: Date;
-  },
+  deps: Pick<ReactionDeps, "store" | "env" | "reactionsPath">,
+  input: RecordReactionInput,
+  signalErrors: { message: string | null },
 ): Promise<void> {
+  const createdAt = input.now.toISOString();
   await appendOp(deps.store, {
     workspaceId: input.workspaceId,
     entityKind: "reaction",
@@ -482,11 +526,67 @@ async function recordReaction(
       ruleId: input.rule.ruleId,
       ruleVersion: input.rule.version,
       decision: input.decision,
+      triggerRunId: input.triggerRunId,
       jobId: input.jobId,
       reason: input.reason,
     },
-    createdAt: input.now.toISOString(),
+    createdAt,
   }).catch(() => undefined);
+
+  const outcome = signalOutcomeFor(input.decision);
+  if (!outcome) {
+    return;
+  }
+  const signal: ReactionSignalRecord = {
+    kind: "reaction.outcome",
+    signalId: reactionSignalId({
+      workspaceId: input.workspaceId,
+      eventId: input.eventId,
+      ruleId: input.rule.ruleId,
+      triggerRunId: input.triggerRunId,
+      outcome,
+    }),
+    at: createdAt,
+    workspaceId: input.workspaceId,
+    eventId: input.eventId,
+    ruleId: input.rule.ruleId,
+    ruleVersion: input.rule.version,
+    triggerRunId: input.triggerRunId,
+    jobId: input.jobId,
+    outcome,
+    gate: input.gate,
+    reason: input.reason,
+    dedupeKey: reactionDedupeKey(input.eventId, input.rule.ruleId),
+  };
+  const file =
+    deps.reactionsPath ?? defaultReactionsPath(deps.env ?? process.env);
+  try {
+    await appendReactionSignal(signal, { file });
+  } catch (error) {
+    if (!signalErrors.message) {
+      signalErrors.message =
+        error instanceof Error ? error.message : String(error);
+    }
+  }
+}
+
+/** Terminal decisions are the only ones that reach the signal file. */
+function signalOutcomeFor(
+  decision: ReactionDecision,
+): ReactionSignalOutcome | null {
+  switch (decision) {
+    case "fired":
+    case "existing":
+    case "failed":
+    case "skipped":
+    case "budget-exhausted":
+    case "cap-reached":
+      return decision;
+    case "pending":
+    case "not-matched":
+    case "disabled":
+      return null;
+  }
 }
 
 function eventTypeMatches(pattern: string, eventType: string): boolean {

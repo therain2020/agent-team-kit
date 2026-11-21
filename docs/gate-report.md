@@ -25,7 +25,7 @@ bun run gates:report -- --strict    # exit 1 when any gate is a GAP
 | `--packs <dir>` | `<repo>/packs` | Pack roots scanned for `.manufacture/` records |
 | `--signals <dir>` | `<home>/signals` | `iterations.jsonl`, `outcomes.jsonl`, `reactions.jsonl` |
 | `--sources <dir>` | `<repo>/sources` | Installed source manifests (`*.meta.json`) |
-| `--reactions <file>` | `<signals>/reactions.jsonl` | Observer reaction sampling log |
+| `--reactions <file>` | `<signals>/reactions.jsonl` | Automatic reaction signals + observer sampling log |
 | `--supervisor-state <file>` | `<repo>/.tmp/supervisor/state.json` | `kit up` supervisor state |
 | `--days <n>` | `7` | Window length; the gate requires 7 |
 | `--now <iso>` | current time | Window end; use it to replay a fixed report |
@@ -46,7 +46,7 @@ so the same bundle produces the same report.
 | `installed-sources` | `<repo>/sources/*.meta.json` | G1 |
 | `signals-iterations` | `<home>/signals/iterations.jsonl` | G4, G8 |
 | `signals-outcomes` | `<home>/signals/outcomes.jsonl` | G8 |
-| `reaction-samples` | `<home>/signals/reactions.jsonl` | G2 |
+| `reaction-samples` | `<home>/signals/reactions.jsonl` (automatic `reaction.outcome` signals, written by the reaction dispatcher, plus human usefulness samples) | G2 |
 | `supervisor-state` | `.tmp/supervisor/state.json` | G8 |
 | `cold-start-package` | `templates/cold-start` checks | G8 |
 
@@ -59,7 +59,7 @@ the GAP: the report never substitutes a default or an estimate.
 | Gate | 98 §5.2 | Key evidence |
 |---|---|---|
 | G1 信息闭环常驻 | 1 | 7 UTC days with information events, information trigger runs, zero manual tasks, one accepted AI source proposal |
-| G2 反应有效 | 2 | Reaction samples linked to trigger runs; ≥ 80% useful; noise cost ≤ 20% |
+| G2 反应有效 | 2 | Automatic reaction signals linked to information trigger runs; human samples ≥ 80% useful; noise cost ≤ 20% |
 | G3 资产自制造 | 3 | Accepted manufacture proposal with model draft, written files and provenance sha256 |
 | G4 代码自制造 | 4 | Low/medium change applied; zero forbidden blocks; no unlinked high-risk apply |
 | G5 观察者边界 | 5 | Interventions with actor and reason; routine ≤ approvals + release/budget |
@@ -89,6 +89,7 @@ To close a GAP, produce the missing record and re-run the report:
 | `G1.continuity` | Let passive collection run daily for 7 days; check `information_events` |
 | `G1.no-manual-tasks` | Use scheduled/information triggers instead of manual tasks |
 | `G1.ai-adopted-source` | Accept a source proposal produced by the AI (I-5) |
+| `G2.signals-*` | Let information reactions run (`reactToInformationEvent` writes `reaction.outcome` lines automatically) |
 | `G2.*` | Record reaction samples (see below) and keep noise cost under 20% |
 | `G3.*` | Run draft → dry-run → accept for an agent/workflow/pipeline/source |
 | `G4.*` | Apply a low/medium iteration change; block forbidden paths |
@@ -100,8 +101,28 @@ To close a GAP, produce the missing record and re-run the report:
 
 ## Reaction sampling
 
-Reaction usefulness is a human judgement, so it must be recorded explicitly at
-`<home>/signals/reactions.jsonl` (one JSON object per line):
+`<home>/signals/reactions.jsonl` holds two record kinds, one JSON object per
+line, distinguished by `kind`.
+
+**Automatic signals** are written by the reaction dispatcher
+(`packages/trigger`) at the single reaction completion point, once per
+terminal decision — `fired`/`existing`/`failed`/`skipped`/
+`budget-exhausted`/`cap-reached` (#259). Nothing needs to be placed by hand:
+
+```json
+{"kind":"reaction.outcome","signalId":"rsg_4f1c…","at":"2026-11-20T09:30:00.000Z","workspaceId":"default","eventId":"inf_01","ruleId":"rr_01","ruleVersion":1,"triggerRunId":"trg_01","jobId":"job_01","outcome":"fired","gate":"write-back","reason":null,"dedupeKey":"inf_01:rr_01"}
+```
+
+- `signalId` is deterministic over workspace, event, rule, trigger run and
+  outcome family; a replayed event (`existing`) resolves to the same id as
+  the original `fired` and is not appended twice. A failed launch keeps its
+  own id so a later successful retry stays visible.
+- G2 checks that at least one launched signal exists (`signals-observed`) and
+  that every launched signal resolves to an information trigger run
+  (`signals-linked`). Missing signals stay a GAP; nothing is synthesized.
+
+**Human samples** carry the usefulness judgement, which cannot be derived.
+They use the sample shape (no `kind`):
 
 ```json
 {"at":"2026-11-20T09:30:00Z","eventId":"inf_01","triggerRunId":"trg_01","useful":true,"costCny":0.42,"note":"led to a merged fix"}
@@ -110,12 +131,14 @@ Reaction usefulness is a human judgement, so it must be recorded explicitly at
 
 Rules enforced by the report:
 
-- `at`, `eventId` and `useful` are required; `triggerRunId` must link to an
-  information trigger run in the same window.
+- `at`, `eventId` and `useful` are required on samples; `triggerRunId` must
+  link to an information trigger run in the same window.
 - `costCny` is required on every sample, otherwise the noise-cost ratio is a
   GAP rather than an invented number.
-- Duplicate `(at, eventId, triggerRunId)` rows are collapsed on first
-  occurrence so appending the log twice cannot move the ratio.
+- Duplicate `(at, eventId, triggerRunId)` sample rows are collapsed on first
+  occurrence so appending the log twice cannot move the ratio; duplicate
+  signal ids are collapsed the same way.
+- Lines that are neither a valid signal nor a valid sample count as corrupt.
 
 ## Traceability
 

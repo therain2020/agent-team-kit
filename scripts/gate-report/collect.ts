@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { readIterationSignals, readOutcomeObservations } from "@kit/evolution";
 import { createDb, loadStoreConfig } from "@kit/store";
+import { isReactionSignalRecord } from "@kit/trigger";
 import { checkColdStartPackage } from "../cold-start-check";
 import {
   type ActivityEvidence,
@@ -18,6 +19,7 @@ import {
   type InterventionEvidence,
   type ManufactureProposalEvidence,
   type ReactionSampleEvidence,
+  type ReactionSignalEvidence,
   type RecoveryDrillEvidence,
   type SupervisorEvidence,
   type TriggerRunEvidence,
@@ -211,6 +213,7 @@ export async function collectEvidence(
     triggerRuns: store.triggerRuns,
     manualTasks: store.manualTasks,
     reactionSamples: reactions.samples,
+    reactionSignals: reactions.signals,
     manufactureProposals: manufacture.proposals,
     codeChanges: [...changes.values()].sort(
       (left, right) =>
@@ -1008,26 +1011,53 @@ async function collectInstalledSources(sourcesRoot: string): Promise<{
   }
 }
 
+/**
+ * One reactions file, two record kinds: automatic `reaction.outcome` signals
+ * written by the reaction dispatcher (#259) and human usefulness samples
+ * (docs/gate-report.md#reaction-sampling). `kind` distinguishes them; the
+ * automatic signals are the system-produced evidence G2 now reads, while
+ * `useful`/`costCny` stay a human judgement and are never synthesized.
+ */
 async function collectReactionSamples(file: string): Promise<{
   samples: ReactionSampleEvidence[];
+  signals: ReactionSignalEvidence[];
   source: EvidenceSourceStatus;
 }> {
   const read = await readJsonl(file);
   const samples: ReactionSampleEvidence[] = [];
-  const seen = new Set<string>();
+  const signals: ReactionSignalEvidence[] = [];
+  const seenSamples = new Set<string>();
+  const seenSignals = new Set<string>();
   let corrupt = read.corrupt;
   for (const record of read.records) {
+    if (isReactionSignalRecord(record)) {
+      // A crashed append can leave the same signal twice; collapse by id.
+      if (seenSignals.has(record.signalId)) {
+        continue;
+      }
+      seenSignals.add(record.signalId);
+      signals.push({
+        at: record.at,
+        eventId: record.eventId,
+        ruleId: record.ruleId,
+        triggerRunId: record.triggerRunId,
+        jobId: record.jobId,
+        outcome: record.outcome,
+        dedupeKey: record.dedupeKey,
+      });
+      continue;
+    }
     const sample = parseReaction(record);
     if (!sample) {
       corrupt += 1;
       continue;
     }
     const key = `${sample.at}|${sample.eventId}|${sample.triggerRunId ?? ""}`;
-    if (seen.has(key)) {
+    if (seenSamples.has(key)) {
       corrupt += 1;
       continue;
     }
-    seen.add(key);
+    seenSamples.add(key);
     samples.push(sample);
   }
   samples.sort(
@@ -1036,14 +1066,23 @@ async function collectReactionSamples(file: string): Promise<{
       left.eventId.localeCompare(right.eventId) ||
       (left.triggerRunId ?? "").localeCompare(right.triggerRunId ?? ""),
   );
+  signals.sort(
+    (left, right) =>
+      left.at.localeCompare(right.at) ||
+      left.eventId.localeCompare(right.eventId) ||
+      left.ruleId.localeCompare(right.ruleId),
+  );
+  const detail = sourceDetail({ ...read, corrupt });
+  const counts = `${signals.length} automatic signal(s), ${samples.length} sample(s)`;
   return {
     samples,
+    signals,
     source: {
       id: "reaction-samples",
       path: file,
       status: read.status,
-      records: samples.length,
-      detail: sourceDetail({ ...read, corrupt }),
+      records: samples.length + signals.length,
+      detail: detail ? `${counts}; ${detail}` : counts,
     },
   };
 }

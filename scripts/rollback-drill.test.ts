@@ -56,6 +56,7 @@ function g6Bundle(report: RollbackDrillReport): EvidenceBundle {
     triggerRuns: [],
     manualTasks: [],
     reactionSamples: [],
+    reactionSignals: [],
     manufactureProposals: [],
     codeChanges: [],
     runs: [],
