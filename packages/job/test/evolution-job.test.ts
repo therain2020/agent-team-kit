@@ -66,7 +66,11 @@ describe("evolution job", () => {
           variantsRoot: path.join(dir, "variants"),
           cyclesRoot: path.join(dir, "cycles"),
         },
-        origin: { kind: "schedule", triggerId: "tech-radar:evolution" },
+        origin: {
+          kind: "schedule",
+          triggerId: "tech-radar:evolution",
+          actor: "trigger-dispatch",
+        },
       },
       { repoRoot: process.cwd() },
     );
