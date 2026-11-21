@@ -136,6 +136,124 @@ describe("collectEvidence production sources", () => {
     expect(checks.get("S12.zero-config")).toBe(false);
   });
 
+  it("reads automatic reaction signals produced by the reaction dispatcher", async () => {
+    const home = await tempDir("kit-collect-reactions-home-");
+    const repoRoot = await tempDir("kit-collect-reactions-repo-");
+    const dbPath = path.join(home, "data", "kit.db");
+    await mkdir(path.dirname(dbPath), { recursive: true });
+    const store = await initStore(
+      loadStoreConfig({
+        KIT_RUNTIME_MODE: "local",
+        KIT_HOME: home,
+        KIT_BLOB_ROOT: path.join(home, "blobs"),
+      }),
+    );
+    await store.triggerRuns.create({
+      triggerRunId: "trg-auto",
+      workspaceId: "default",
+      triggerId: "information:rule-auto",
+      kind: "information",
+      routeId: "reaction:rule-auto",
+      jobKind: "packRun",
+      dedupeKey: "inf_auto:rule-auto",
+      jobId: "job-auto",
+      status: "started",
+      launchedAt: "2026-11-19T10:00:00.000Z",
+      estimateCny: 0,
+      payloadRef: "information:inf_auto",
+      reactionRuleId: "rule-auto",
+      lastError: null,
+      createdAt: "2026-11-19T10:00:00.000Z",
+      updatedAt: "2026-11-19T10:00:00.000Z",
+    });
+    await store.close();
+
+    const signalsDir = path.join(home, "signals");
+    await mkdir(signalsDir, { recursive: true });
+    const signal = {
+      kind: "reaction.outcome",
+      signalId: "rsg_auto0000000001",
+      at: "2026-11-19T10:00:00.000Z",
+      workspaceId: "default",
+      eventId: "inf_auto",
+      ruleId: "rule-auto",
+      ruleVersion: 1,
+      triggerRunId: "trg-auto",
+      jobId: "job-auto",
+      outcome: "fired",
+      gate: "write-back",
+      reason: null,
+      dedupeKey: "inf_auto:rule-auto",
+    };
+    await writeFile(
+      path.join(signalsDir, "reactions.jsonl"),
+      `${[
+        JSON.stringify(signal),
+        JSON.stringify(signal),
+        JSON.stringify({
+          at: "2026-11-19T11:00:00.000Z",
+          eventId: "inf_auto",
+          triggerRunId: "trg-auto",
+          useful: true,
+          costCny: 0.1,
+        }),
+        "not json",
+      ].join("\n")}\n`,
+      "utf8",
+    );
+
+    const bundle = await collectEvidence({
+      home,
+      repoRoot,
+      now: NOW,
+      days: 7,
+      dbPath,
+    });
+
+    expect(bundle.reactionSignals).toEqual([
+      {
+        at: "2026-11-19T10:00:00.000Z",
+        eventId: "inf_auto",
+        ruleId: "rule-auto",
+        triggerRunId: "trg-auto",
+        jobId: "job-auto",
+        outcome: "fired",
+        dedupeKey: "inf_auto:rule-auto",
+      },
+    ]);
+    expect(bundle.reactionSamples).toHaveLength(1);
+
+    const checks = new Map(
+      buildGateReport(bundle)
+        .gates.find((item) => item.id === "G2")
+        ?.checks.map((check) => [check.code, check.ok]),
+    );
+    expect(checks.get("signals-observed")).toBe(true);
+    expect(checks.get("signals-linked")).toBe(true);
+    expect(checks.get("samples-present")).toBe(true);
+    // Usefulness is still a human judgement; one sample is not a rate yet.
+    expect(checks.get("useful-rate")).toBe(true);
+  });
+
+  it("keeps reaction signals as GAP when the producer wrote nothing", async () => {
+    const home = await tempDir("kit-collect-no-reactions-home-");
+    const repoRoot = await tempDir("kit-collect-no-reactions-repo-");
+    const dbPath = path.join(home, "data", "kit.db");
+    await mkdir(path.dirname(dbPath), { recursive: true });
+
+    const bundle = await collectEvidence({
+      home,
+      repoRoot,
+      now: NOW,
+      days: 7,
+      dbPath,
+    });
+
+    expect(bundle.reactionSignals).toEqual([]);
+    const report = buildGateReport(bundle);
+    expect(report.gaps).toContain("G2.signals-observed");
+  });
+
   it("leaves empty sources as GAPs instead of synthetic values", async () => {
     const home = await tempDir("kit-collect-empty-home-");
     const repoRoot = await tempDir("kit-collect-empty-repo-");

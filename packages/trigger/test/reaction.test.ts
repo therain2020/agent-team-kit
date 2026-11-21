@@ -1,4 +1,4 @@
-import { cp, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -23,6 +23,7 @@ import {
   reactionEventView,
   traceReactions,
 } from "../src/reaction";
+import { reactionSignalId, readReactionSignals } from "../src/reaction-signal";
 import { DISPATCH_GATES, type DispatchGate } from "../src/types";
 
 const roots: string[] = [];
@@ -200,12 +201,17 @@ function reactionDeps(
     now: new Date("2026-11-20T12:00:00.000Z"),
     env: {},
     rules,
+    reactionsPath: signalPath(root),
     killSwitchFn: (() => null) as unknown as FireTriggerDeps["killSwitchFn"],
     opsGateFn,
     startJobFn,
     onGate: (gate) => trail.push(gate),
     ...overrides,
   };
+}
+
+function signalPath(root: string): string {
+  return path.join(root, "signals", "reactions.jsonl");
 }
 
 describe("reaction rule matching", () => {
@@ -382,6 +388,163 @@ describe("information-driven dispatch", () => {
         status: "started",
       }),
     ]);
+  }, 60_000);
+
+  it("writes one traceable signal at the reaction completion point", async () => {
+    const { root, store } = await setup();
+    const outcome = await reactToInformationEvent(
+      eventRecord("inf_signal"),
+      reactionDeps(store, root, [rule("rr_signal")]),
+    );
+    const candidate = outcome.candidates[0];
+    expect(candidate?.decision).toBe("fired");
+    expect(outcome.signalError).toBeUndefined();
+
+    const file = await readReactionSignals(signalPath(root));
+    expect(file.corrupt).toBe(0);
+    expect(file.signals).toHaveLength(1);
+    expect(file.signals[0]).toMatchObject({
+      kind: "reaction.outcome",
+      eventId: "inf_signal",
+      ruleId: "rr_signal",
+      ruleVersion: 1,
+      triggerRunId: candidate?.triggerRunId,
+      jobId: candidate?.jobId,
+      outcome: "fired",
+      gate: "write-back",
+      dedupeKey: "inf_signal:rr_signal",
+      at: "2026-11-20T12:00:00.000Z",
+    });
+    expect(file.signals[0]?.signalId).toBe(
+      reactionSignalId({
+        workspaceId: "default",
+        eventId: "inf_signal",
+        ruleId: "rr_signal",
+        triggerRunId: candidate?.triggerRunId ?? null,
+        outcome: "fired",
+      }),
+    );
+  }, 60_000);
+
+  it("does not append a second signal when the same reaction is replayed", async () => {
+    const { root, store } = await setup();
+    const rules = [rule("rr_signal_dedupe")];
+    const first = await reactToInformationEvent(
+      eventRecord("inf_signal_dedupe"),
+      reactionDeps(store, root, rules),
+    );
+    const second = await reactToInformationEvent(
+      eventRecord("inf_signal_dedupe"),
+      reactionDeps(store, root, rules),
+    );
+    expect(first.candidates[0]?.decision).toBe("fired");
+    expect(second.candidates[0]?.decision).toBe("existing");
+
+    const file = await readReactionSignals(signalPath(root));
+    expect(file.signals).toHaveLength(1);
+    expect(file.signals[0]?.outcome).toBe("fired");
+    expect(file.signals[0]?.triggerRunId).toBe(
+      first.candidates[0]?.triggerRunId,
+    );
+  }, 60_000);
+
+  it("records a failed launch and keeps a later successful retry visible", async () => {
+    const { root, store } = await setup();
+    const rules = [rule("rr_retry")];
+    const failing = reactionDeps(store, root, rules, [], {
+      startJobFn: (async () => {
+        throw new Error("engine unavailable");
+      }) as unknown as FireTriggerDeps["startJobFn"],
+    });
+    const first = await reactToInformationEvent(
+      eventRecord("inf_retry"),
+      failing,
+    );
+    expect(first.candidates[0]?.decision).toBe("failed");
+
+    // Same trigger run id is resumed; a genuine success must be recorded.
+    const retried = await reactToInformationEvent(
+      eventRecord("inf_retry"),
+      reactionDeps(store, root, rules),
+    );
+    expect(retried.candidates[0]?.decision).toBe("fired");
+    expect(retried.candidates[0]?.triggerRunId).toBe(
+      first.candidates[0]?.triggerRunId,
+    );
+
+    const signals = (await readReactionSignals(signalPath(root))).signals;
+    expect(signals.map((signal) => signal.outcome)).toEqual([
+      "failed",
+      "fired",
+    ]);
+    expect(signals.every((signal) => signal.ruleId === "rr_retry")).toBe(true);
+  }, 60_000);
+
+  it("signals budget-exhausted and cap-reached decisions", async () => {
+    const { root, store } = await setup();
+    const budgeted = [
+      rule("rr_signal_budget", { priority: 10, budget: { dailyRuns: 1 } }),
+      rule("rr_signal_fallback", { priority: 0 }),
+    ];
+    await reactToInformationEvent(
+      eventRecord("inf_signal_b1"),
+      reactionDeps(store, root, budgeted),
+    );
+    const second = await reactToInformationEvent(
+      eventRecord("inf_signal_b2"),
+      reactionDeps(store, root, budgeted),
+    );
+    expect(second.candidates[0]?.decision).toBe("budget-exhausted");
+
+    const capped = [
+      rule("rr_signal_cap_1", { priority: 3 }),
+      rule("rr_signal_cap_2", { priority: 1 }),
+    ];
+    const cappedOutcome = await reactToInformationEvent(
+      eventRecord("inf_signal_cap"),
+      reactionDeps(store, root, capped, [], { maxReactions: 1 }),
+    );
+    expect(cappedOutcome.candidates[1]?.decision).toBe("cap-reached");
+
+    const signals = (await readReactionSignals(signalPath(root))).signals;
+    const budgetSignal = signals.find(
+      (signal) =>
+        signal.eventId === "inf_signal_b2" &&
+        signal.ruleId === "rr_signal_budget",
+    );
+    expect(budgetSignal).toMatchObject({
+      outcome: "budget-exhausted",
+      gate: "trigger-budget",
+      triggerRunId: null,
+      jobId: null,
+    });
+    const capSignal = signals.find(
+      (signal) =>
+        signal.eventId === "inf_signal_cap" &&
+        signal.ruleId === "rr_signal_cap_2",
+    );
+    expect(capSignal).toMatchObject({
+      outcome: "cap-reached",
+      gate: null,
+      jobId: null,
+    });
+  }, 60_000);
+
+  it("reports a signal write failure without failing the dispatch", async () => {
+    const { root, store } = await setup();
+    const blocker = path.join(root, "blocker");
+    await mkdir(root, { recursive: true });
+    await writeFile(blocker, "not a directory", "utf8");
+
+    const outcome = await reactToInformationEvent(
+      eventRecord("inf_signal_error"),
+      reactionDeps(store, root, [rule("rr_signal_error")], [], {
+        reactionsPath: path.join(blocker, "reactions.jsonl"),
+      }),
+    );
+    expect(outcome.fired).toBe(1);
+    expect(typeof outcome.signalError).toBe("string");
+    expect(outcome.signalError?.length).toBeGreaterThan(0);
   }, 60_000);
 
   it("keeps information in the default auto-approval scope", () => {

@@ -22,6 +22,7 @@ function emptyBundle(): EvidenceBundle {
     triggerRuns: [],
     manualTasks: [],
     reactionSamples: [],
+    reactionSignals: [],
     manufactureProposals: [],
     codeChanges: [],
     runs: [],
@@ -102,6 +103,15 @@ function fullBundle(): EvidenceBundle {
     triggerRunId: `trig-${index}`,
     useful: true,
     costCny: 1,
+  }));
+  bundle.reactionSignals = Array.from({ length: 5 }, (_, index) => ({
+    at: day(index),
+    eventId: `inf-${index}`,
+    ruleId: `rule-${index}`,
+    triggerRunId: `trig-${index}`,
+    jobId: `job-${index}`,
+    outcome: "fired",
+    dedupeKey: `inf-${index}:rule-${index}`,
   }));
   bundle.manufactureProposals = [
     {
@@ -275,6 +285,7 @@ describe("buildGateReport", () => {
     expect(report.gates).toHaveLength(8);
     expect(report.gates.every((item) => item.status === "gap")).toBe(true);
     expect(report.gaps).toContain("G1.continuity");
+    expect(report.gaps).toContain("G2.signals-observed");
     expect(report.gaps).toContain("G2.samples-present");
     expect(report.gaps).toContain("G3.accepted-asset");
     expect(report.gaps).toContain("G4.low-medium-merged");
@@ -355,6 +366,23 @@ describe("buildGateReport", () => {
       noise.costCny = 5;
     }
     expect(buildGateReport(noisy).gaps).toContain("G2.noise-cost-ratio");
+  });
+
+  it("gaps reaction quality when the automatic producer leaves no signal", () => {
+    const bundle = fullBundle();
+    bundle.reactionSignals = [];
+    const report = buildGateReport(bundle);
+    expect(report.gaps).toContain("G2.signals-observed");
+    expect(gate(report, "G2").metrics.launchedSignals).toBe(0);
+  });
+
+  it("gaps a launched signal that does not resolve to an information trigger run", () => {
+    const bundle = fullBundle();
+    const signal = bundle.reactionSignals[0];
+    if (signal) {
+      signal.triggerRunId = "trig-orphan";
+    }
+    expect(buildGateReport(bundle).gaps).toContain("G2.signals-linked");
   });
 
   it("requires every sample to carry a cost", () => {

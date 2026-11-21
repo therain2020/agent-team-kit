@@ -74,6 +74,21 @@ export interface ReactionSampleEvidence {
   costCny: number | null;
 }
 
+/**
+ * Automatic reaction signal written by the reaction dispatcher (#259). It
+ * proves a reaction happened and links event → rule → trigger run → job;
+ * usefulness remains a human judgement and stays in the sample records.
+ */
+export interface ReactionSignalEvidence {
+  at: string;
+  eventId: string;
+  ruleId: string;
+  triggerRunId: string | null;
+  jobId: string | null;
+  outcome: string;
+  dedupeKey: string;
+}
+
 export interface ManufactureProposalEvidence {
   id: string;
   kind: string;
@@ -192,6 +207,7 @@ export interface EvidenceBundle {
   triggerRuns: TriggerRunEvidence[];
   manualTasks: ManualTaskEvidence[];
   reactionSamples: ReactionSampleEvidence[];
+  reactionSignals: ReactionSignalEvidence[];
   manufactureProposals: ManufactureProposalEvidence[];
   codeChanges: CodeChangeEvidence[];
   runs: RunEvidence[];
@@ -418,6 +434,21 @@ function gateReactionQuality(bundle: EvidenceBundle): GateDraft {
   );
   const jobs = informationTriggerRuns(bundle);
   const jobIds = new Set(jobs.map((job) => job.triggerRunId));
+  const signals = bundle.reactionSignals
+    .filter((signal) => inside(bundle.window, signal.at))
+    .sort(
+      (left, right) =>
+        left.at.localeCompare(right.at) ||
+        left.eventId.localeCompare(right.eventId) ||
+        left.ruleId.localeCompare(right.ruleId),
+    );
+  const launchedSignals = signals.filter(
+    (signal) => signal.outcome === "fired" || signal.outcome === "existing",
+  );
+  const unlinkedSignals = launchedSignals.filter(
+    (signal) =>
+      signal.triggerRunId === null || !jobIds.has(signal.triggerRunId),
+  );
   const samples = bundle.reactionSamples
     .filter((sample) => inside(bundle.window, sample.at))
     .sort(
@@ -450,6 +481,18 @@ function gateReactionQuality(bundle: EvidenceBundle): GateDraft {
   const noiseRate =
     costComplete && totalCost > 0 ? round(noiseCost / totalCost, 4) : null;
 
+  check(
+    gate,
+    "signals-observed",
+    launchedSignals.length > 0,
+    `${launchedSignals.length} automatic reaction signal(s) in window`,
+  );
+  check(
+    gate,
+    "signals-linked",
+    launchedSignals.length > 0 && unlinkedSignals.length === 0,
+    `${unlinkedSignals.length}/${launchedSignals.length} launched signal(s) do not resolve to an information trigger run`,
+  );
   check(
     gate,
     "samples-present",
@@ -498,11 +541,16 @@ function gateReactionQuality(bundle: EvidenceBundle): GateDraft {
   );
 
   gate.evidence.push(
-    `signals:reactions n=${samples.length}`,
+    `signals:reaction_outcomes n=${signals.length} launched=${launchedSignals.length}`,
+    `signals:reaction_samples n=${samples.length}`,
     `store:trigger_runs kind=information n=${jobs.length}`,
     "sampling contract: docs/gate-report.md#reaction-sampling",
   );
   gate.metrics = {
+    signals: signals.length,
+    launchedSignals: launchedSignals.length,
+    linkedSignals: launchedSignals.length - unlinkedSignals.length,
+    blockedSignals: signals.length - launchedSignals.length,
     samples: samples.length,
     linkedSamples: linked.length,
     usefulRate,

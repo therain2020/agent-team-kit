@@ -133,7 +133,7 @@ Options:
   --packs <dir>             Packs root (default: <repo>/packs)
   --signals <dir>           Signals root (default: <home>/signals)
   --sources <dir>           Installed sources root (default: <repo>/sources)
-  --reactions <file>        Reaction samples JSONL (default: <signals>/reactions.jsonl)
+  --reactions <file>        Reaction signals/samples JSONL (default: <signals>/reactions.jsonl)
   --supervisor-state <file> kit up supervisor state (default: <repo>/.tmp/supervisor/state.json)
   --tthw <file>             zero-config TTHW ledger (default: <home>/cold-start-tthw.json)
   --days <n>                Window days, 1-90 (default: ${DEFAULT_WINDOW_DAYS})
