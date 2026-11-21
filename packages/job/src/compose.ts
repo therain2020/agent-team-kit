@@ -11,6 +11,7 @@ import {
 import { createModelGateway, loadModelConfig } from "@kit/model";
 import {
   type DraftStage,
+  type LoadedPack,
   inferAgentRole,
   loadPack,
   packCatalog,
@@ -364,31 +365,15 @@ export async function composeJob(input: ComposeInput): Promise<ComposeResult> {
     );
   }
   if (input.kind === "pipeline") {
-    const env = input.env ?? process.env;
-    const catalog = await packCatalog(loaded.dir);
-    return composePipeline(
+    return composePipelineDraft({
       intent,
-      {
-        pack: loaded.pack.metadata.name,
-        agents: [...loaded.agents.entries()].map(([id, agent]) => ({
-          id,
-          role: agent.role,
-          tools: agent.spec.tools,
-        })),
-        tools: catalog.tools.map((tool) => tool.name),
-        skills: catalog.skills,
-        gates: loaded.pack.evals?.rubrics ? [loaded.pack.evals.rubrics] : [],
-        workflows: loaded.workflows.map((workflow) => ({
-          id: workflow.id,
-          stages: workflow.stages
-            .map((stage) => parseDraftStage(stage))
-            .filter((stage): stage is DraftStage => stage !== null),
-        })),
-        inventory: input.pipeline ?? emptyPipelineInventory(),
-        current: parseWorkflowDraftStages(input.currentStages),
-      },
-      env,
-    );
+      loaded,
+      ...(input.pipeline ? { inventory: input.pipeline } : {}),
+      ...(input.currentStages
+        ? { currentStages: parseWorkflowDraftStages(input.currentStages) }
+        : {}),
+      env: input.env ?? process.env,
+    });
   }
   if (input.kind === "packRun") {
     return composePackRun(intent, facts, input.env ?? process.env);
@@ -1559,6 +1544,48 @@ export interface PipelineDraftFacts {
   current: DraftStage[] | null;
   /** Command toolpacks need explicit consent; the composer never grants it. */
   allowCommand?: boolean;
+}
+
+export interface ComposePipelineDraftInput {
+  intent: string;
+  /** Already-loaded host pack; lets callers outside `packs/` (I-6) reuse it. */
+  loaded: LoadedPack;
+  inventory?: PipelineInventory;
+  currentStages?: DraftStage[] | null;
+  env?: Record<string, string | undefined>;
+}
+
+/**
+ * Reusable entry point for the C-6c pipeline composer. `composeJob` and the
+ * I-6 manufacture flow share this so both draft against the same inventory,
+ * catalog and stage-graph rules.
+ */
+export async function composePipelineDraft(
+  input: ComposePipelineDraftInput,
+): Promise<ComposeResult> {
+  const catalog = await packCatalog(input.loaded.dir);
+  const facts: PipelineDraftFacts = {
+    pack: input.loaded.pack.metadata.name,
+    agents: [...input.loaded.agents.entries()].map(([id, agent]) => ({
+      id,
+      role: agent.role,
+      tools: agent.spec.tools,
+    })),
+    tools: catalog.tools.map((tool) => tool.name),
+    skills: catalog.skills,
+    gates: input.loaded.pack.evals?.rubrics
+      ? [input.loaded.pack.evals.rubrics]
+      : [],
+    workflows: input.loaded.workflows.map((workflow) => ({
+      id: workflow.id,
+      stages: workflow.stages
+        .map((stage) => parseDraftStage(stage))
+        .filter((stage): stage is DraftStage => stage !== null),
+    })),
+    inventory: input.inventory ?? emptyPipelineInventory(),
+    current: input.currentStages ?? null,
+  };
+  return composePipeline(input.intent, facts, input.env ?? process.env);
 }
 
 /**

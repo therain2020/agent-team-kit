@@ -597,20 +597,29 @@ function DraftSummary({ proposal }: { proposal: ManufactureProposal }) {
   if (draft.type === "pipeline") {
     return (
       <div className="space-y-1">
-        {draft.spec.graph.nodes.map((node) => (
+        {draft.values.stages.map((stage) => (
           <div
-            key={node.id}
+            key={stage.id}
             className="flex flex-wrap items-center gap-x-2 rounded-md border border-border px-2.5 py-1.5 text-[10px]"
           >
-            <span className="font-mono text-zinc-300">{node.id}</span>
+            <span className="font-mono text-zinc-300">{stage.id}</span>
             <span className="rounded border border-border px-1 uppercase text-zinc-500">
-              {node.type}
+              {stage.type}
             </span>
             <span className="text-zinc-500">
-              {node.inputs.join(", ")} → {node.outputs.join(", ")}
+              {stage.inputs.join(", ")} → {stage.outputs.join(", ")}
             </span>
           </div>
         ))}
+        {draft.values.issues.length > 0 ? (
+          <ul className="space-y-1 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[10px] text-red-200">
+            {draft.values.issues.map((issue) => (
+              <li key={`${issue.code}:${issue.path}`}>
+                · {issue.code} {issue.path}: {issue.message}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
     );
   }

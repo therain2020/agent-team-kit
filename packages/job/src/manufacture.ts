@@ -37,6 +37,11 @@ import {
   validateStageGraph,
 } from "@kit/pack";
 import { parse, stringify } from "yaml";
+import {
+  type PipelineDraftValues,
+  type PipelineInventory,
+  composePipelineDraft,
+} from "./compose";
 import { JobError } from "./types";
 
 /**
@@ -128,7 +133,8 @@ export interface ManufactureWorkflowDraft {
 export interface ManufacturePipelineDraft {
   type: "pipeline";
   id: string;
-  spec: PipelineSpec;
+  /** Draft produced by the shared C-6c composer (`composePipelineDraft`). */
+  values: PipelineDraftValues;
 }
 
 export interface ManufactureComponentRequest {
@@ -251,6 +257,8 @@ export interface ManufactureDraftInput {
   componentIds?: ManufactureComponentRequest[];
   /** Library inventory, so drafts and validation can reject missing items. */
   availableComponents?: ManufactureComponentRequest[];
+  /** C-6c inventory for the shared pipeline composer; empty is allowed. */
+  pipelineInventory?: PipelineInventory;
   allowCommand?: boolean;
   /**
    * Operator edits applied before validation (D-64 edit step). Only the
@@ -672,111 +680,47 @@ async function draftPipeline(
   loaded: LoadedPackOk,
   env: Record<string, string | undefined>,
 ): Promise<DraftResult<ManufacturePipelineDraft>> {
-  const agents = [...loaded.agents.entries()].map(([id, agent]) => ({
-    id,
-    role: agent.role,
-  }));
-  const pool = agents.filter((agent) => agent.role !== "manager");
   const usedIds = new Set(loaded.workflows.map((workflow) => workflow.id));
   const id = uniqueId(input.assetId || slugId(input.intent), usedIds);
   const warnings: string[] = [];
-  if (pool.length === 0) {
-    warnings.push("Pack 里没有可用成员，无法生成流水线草稿。");
-  }
-  const chosen = pool.slice(0, Math.min(3, pool.length));
-  let graph = chainPipeline(
-    chosen.map((agent, index) => ({
-      id: slugId(agent.id),
-      goal: index === 0 ? firstSentence(input.intent, 200) : "",
-    })),
-  );
-  let rationale =
-    "按 Pack 成员的声明顺序装配一条线性流水线；组件绑定留给后续编辑。";
+  let values: PipelineDraftValues = {
+    id,
+    name: id,
+    description: firstSentence(input.intent, 300),
+    stages: [],
+    components: [],
+    bindings: [],
+    issues: [],
+  };
+  let rationale = "复用 C-6c 流水线装配草稿；组件绑定由装配器校验。";
   let model: DraftResult["model"] = "heuristic";
 
   try {
-    const gateway = createModelGateway(loadModelConfig(env));
-    const response = await gateway.complete({
-      model: "deepseek-flash",
-      instructions: `You design a NEW pipeline for a private agent team.
-Return JSON only:
-{"nodes":[{"id":"<slug>","agent":"<agent id>","goal":"<one sentence>"}],"rationale":"<one sentence>","warnings":["<optional>"]}
-Rules:
-- 1 to 4 nodes; ids are slugs matching ^[a-z][a-z0-9-]*$ and unique.
-- agent MUST be one of the provided non-manager agent ids; never invent agents.
-- nodes run in the given order; do not invent tools, components or facts.`,
-      input: JSON.stringify({
-        intent: input.intent,
-        agents: pool,
-      }),
+    // Reuse the shared C-6c composer (#228) instead of a second pipeline
+    // drafter: it validates components against the inventory, pinned refs,
+    // tools and the stage graph before anything is proposed.
+    const result = await composePipelineDraft({
+      intent: input.intent,
+      loaded,
+      ...(input.pipelineInventory
+        ? { inventory: input.pipelineInventory }
+        : {}),
+      env,
     });
-    const parsed = parseJsonObject(response.text);
-    if (parsed && Array.isArray(parsed.nodes)) {
-      const picked: Array<{ id: string; agent: string; goal: string }> = [];
-      const seen = new Set<string>();
-      for (const raw of parsed.nodes.slice(0, 4)) {
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-          continue;
-        }
-        const record = raw as Record<string, unknown>;
-        const agentId =
-          typeof record.agent === "string" &&
-          pool.some((agent) => agent.id === record.agent)
-            ? record.agent
-            : null;
-        if (!agentId) {
-          continue;
-        }
-        let nodeId =
-          typeof record.id === "string" && ID_PATTERN.test(record.id)
-            ? record.id
-            : slugId(agentId);
-        if (seen.has(nodeId)) {
-          nodeId = `${nodeId}-${picked.length + 1}`;
-        }
-        seen.add(nodeId);
-        picked.push({
-          id: nodeId,
-          agent: agentId,
-          goal:
-            typeof record.goal === "string" && record.goal.trim()
-              ? record.goal.trim().slice(0, 300)
-              : "",
-        });
-      }
-      if (picked.length > 0) {
-        graph = chainPipeline(
-          picked.map((node) => ({ id: node.id, goal: node.goal })),
-        );
-        rationale =
-          typeof parsed.rationale === "string" && parsed.rationale.trim()
-            ? parsed.rationale.trim().slice(0, 500)
-            : rationale;
-        if (Array.isArray(parsed.warnings)) {
-          warnings.push(...stringList(parsed.warnings, 5));
-        }
-        model = "live";
-      }
-    } else {
-      warnings.push("AI 流水线无法解析，已使用线性草稿。");
+    const draft = result.values as PipelineDraftValues;
+    values = { ...draft, id };
+    rationale = result.rationale;
+    warnings.push(...result.warnings);
+    model = result.model;
+    if (draft.issues.length > 0) {
+      warnings.push(...draft.issues.slice(0, 5).map((issue) => issue.message));
     }
   } catch {
-    warnings.push("AI 草稿不可用，已使用线性草稿。");
+    warnings.push("流水线装配草稿不可用，已生成空流水线草稿。");
   }
 
-  const spec = {
-    apiVersion: "agentteam/v1" as const,
-    kind: "Pipeline" as const,
-    id,
-    name: id,
-    version: "1.0",
-    description: firstSentence(input.intent, 300),
-    graph,
-    bindings: [],
-    policies: [],
-  };
   return {
-    draft: { type: "pipeline", id, spec },
+    draft: { type: "pipeline", id, values },
     rationale,
     warnings: [...new Set(warnings)],
     model,
@@ -1087,7 +1031,7 @@ function validatePipelineDraft(
       message: `pipeline file already exists: pipelines/${draft.id}.yaml`,
     });
   }
-  const parsed = pipelineSpecSchema.safeParse(draft.spec);
+  const parsed = pipelineSpecSchema.safeParse(pipelineSpecOf(draft));
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       issues.push({
@@ -1621,7 +1565,7 @@ async function applyDraftToPack(
   } else {
     writes.push({
       relative: `pipelines/${draft.id}.yaml`,
-      content: stringify({ ...draft.spec, id: draft.id }),
+      content: stringify(pipelineSpecOf(draft)),
     });
   }
 
@@ -2121,7 +2065,7 @@ async function buildProvenance(
     proposal.draft.type === "workflow"
       ? proposal.draft.version
       : proposal.draft.type === "pipeline"
-        ? proposal.draft.spec.version
+        ? "1.0"
         : prior
           ? bumpPatch(prior.version)
           : "0.1.0";
@@ -2521,43 +2465,44 @@ function evalFileExists(packDir: string, gate: string): boolean {
   );
 }
 
-interface PipelineChainEntry {
-  id: string;
-  goal: string;
-}
-
-function chainPipeline(entries: PipelineChainEntry[]): {
-  nodes: Array<{
-    id: string;
-    type: "agent";
-    description: string;
-    inputs: string[];
-    outputs: string[];
-  }>;
-  edges: Array<{ from: string; to: string }>;
-} {
-  const nodes: Array<{
-    id: string;
-    type: "agent";
-    description: string;
-    inputs: string[];
-    outputs: string[];
-  }> = [];
-  const edges: Array<{ from: string; to: string }> = [];
-  for (const entry of entries) {
-    const previous = nodes[nodes.length - 1];
-    nodes.push({
-      id: entry.id,
-      type: "agent",
-      description: entry.goal,
-      inputs: previous ? [`${previous.id}_output`] : ["task"],
-      outputs: [`${entry.id}_output`],
-    });
-    if (previous) {
-      edges.push({ from: previous.id, to: entry.id });
-    }
-  }
-  return { nodes, edges };
+/**
+ * Materialize the shared C-6c pipeline draft as the declarative `Pipeline`
+ * asset that is written to `pipelines/<id>.yaml` and validated by
+ * `pipelineSpecSchema`.
+ */
+function pipelineSpecOf(draft: ManufacturePipelineDraft): PipelineSpec {
+  const nodes = draft.values.stages.map((stage) => ({
+    id: stage.id,
+    type:
+      stage.type === "workflow"
+        ? ("subflow" as const)
+        : stage.type === "coder"
+          ? ("coder" as const)
+          : ("agent" as const),
+    inputs: [...stage.inputs],
+    outputs: [...stage.outputs],
+    ...(stage.gate ? { gate: stage.gate } : {}),
+    ...(stage.approval ? { approval: stage.approval } : {}),
+    description: stage.goal ?? "",
+  }));
+  const edges = draft.values.stages.flatMap((stage) =>
+    stage.depends.map((from) => ({ from, to: stage.id })),
+  );
+  const bindings = draft.values.bindings.map((binding) => ({
+    node: binding.node,
+    component: binding.component,
+  }));
+  return {
+    apiVersion: "agentteam/v1",
+    kind: "Pipeline",
+    id: draft.id,
+    name: draft.values.name || draft.id,
+    version: "1.0",
+    description: draft.values.description,
+    graph: { nodes, edges },
+    bindings,
+    policies: [],
+  };
 }
 
 function slugId(value: string): string {

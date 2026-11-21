@@ -243,36 +243,29 @@ describe("manufacture: pipeline", () => {
     const issues = await validateDraft(packDir, loaded, {
       type: "pipeline",
       id: "bad-pipeline",
-      spec: {
-        apiVersion: "agentteam/v1",
-        kind: "Pipeline",
+      values: {
         id: "bad-pipeline",
-        version: "1.0",
+        name: "bad-pipeline",
         description: "",
-        graph: {
-          nodes: [
-            {
-              id: "a",
-              type: "agent",
-              inputs: [],
-              outputs: [],
-              description: "",
-            },
-            {
-              id: "b",
-              type: "agent",
-              inputs: [],
-              outputs: [],
-              description: "",
-            },
-          ],
-          edges: [
-            { from: "a", to: "b" },
-            { from: "b", to: "a" },
-          ],
-        },
+        stages: [
+          {
+            id: "a",
+            type: "agent",
+            inputs: ["task"],
+            outputs: ["a_output"],
+            depends: ["b"],
+          },
+          {
+            id: "b",
+            type: "agent",
+            inputs: ["a_output"],
+            outputs: ["b_output"],
+            depends: ["a"],
+          },
+        ],
+        components: [],
         bindings: [],
-        policies: [],
+        issues: [],
       },
     });
     expect(issues.map((issue) => issue.code)).toContain("schema_invalid");

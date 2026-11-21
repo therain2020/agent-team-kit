@@ -1,5 +1,6 @@
 import { sameOriginError } from "@/lib/http";
 import { getComponentsRoot, resolvePackDir } from "@/lib/paths";
+import { loadPipelineInventory } from "@/lib/pipeline-inventory";
 import {
   MANUFACTURE_KINDS,
   type ManufactureAssetKind,
@@ -94,6 +95,10 @@ export async function POST(
         .filter((component) => component.valid)
         .map((component) => ({ kind: component.kind, id: component.id }));
       const agentFields = parseAgentFields(body.agentFields);
+      const pipelineInventory =
+        kind === "pipeline"
+          ? await loadPipelineInventory(packDir).catch(() => undefined)
+          : undefined;
       const proposal = await draftManufacture({
         kind,
         intent: typeof body.intent === "string" ? body.intent : "",
@@ -104,6 +109,7 @@ export async function POST(
           ? { componentIds: parseComponents(body.componentIds) }
           : {}),
         ...(agentFields ? { agentFields } : {}),
+        ...(pipelineInventory ? { pipelineInventory } : {}),
         availableComponents,
         allowCommand: body.allowCommand === true,
       });
