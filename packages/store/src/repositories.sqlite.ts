@@ -50,6 +50,7 @@ import {
   fromRunbookRow,
   fromStageRow,
   fromTriggerRunRow,
+  resolveRunRequestPriority,
   toArtifactRow,
   toBlobRow,
   toDegradationAuditRow,
@@ -902,8 +903,10 @@ export class SqliteRunRequestStore implements RunRequestStore {
         workspaceId: record.workspaceId,
         workflowId: record.workflowId,
         kind: record.kind,
+        priority: record.priority ?? null,
+        admissionReason: record.admissionReason ?? null,
         payload: record.payload,
-        status: "queued",
+        status: record.status ?? "queued",
         claimedBy: null,
         claimedAt: null,
         heartbeatAt: null,
@@ -915,44 +918,81 @@ export class SqliteRunRequestStore implements RunRequestStore {
       .onConflictDoNothing();
   }
 
-  async claimNext(
+  async listClaimable(
+    now: Date,
+    staleMs: number,
+    limit = 500,
+  ): Promise<RunRequestRecord[]> {
+    const staleIso = new Date(now.getTime() - staleMs).toISOString();
+    const claimable = or(
+      eq(runRequests.status, "queued"),
+      and(
+        eq(runRequests.status, "claimed"),
+        lt(runRequests.heartbeatAt, staleIso),
+      ),
+    );
+    const rows = await this.db
+      .select()
+      .from(runRequests)
+      .where(claimable)
+      .orderBy(asc(runRequests.createdAt))
+      .limit(limit);
+    return rows.map(fromSqliteRunRequestRow);
+  }
+
+  async claim(
+    requestId: string,
     owner: string,
     now: Date,
     staleMs: number,
   ): Promise<RunRequestRecord | null> {
     const staleIso = new Date(now.getTime() - staleMs).toISOString();
     const nowIso = now.toISOString();
-    const claimable = () =>
-      or(
-        eq(runRequests.status, "queued"),
-        and(
-          eq(runRequests.status, "claimed"),
-          lt(runRequests.heartbeatAt, staleIso),
-        ),
-      );
+    const claimable = or(
+      eq(runRequests.status, "queued"),
+      and(
+        eq(runRequests.status, "claimed"),
+        lt(runRequests.heartbeatAt, staleIso),
+      ),
+    );
+    const [row] = await this.db
+      .update(runRequests)
+      .set({
+        status: "claimed",
+        claimedBy: owner,
+        claimedAt: nowIso,
+        heartbeatAt: nowIso,
+        leaseVersion: sql`${runRequests.leaseVersion} + 1`,
+        updatedAt: nowIso,
+      })
+      .where(and(eq(runRequests.requestId, requestId), claimable))
+      .returning();
+    return row ? fromSqliteRunRequestRow(row) : null;
+  }
 
-    const candidates = await this.db
-      .select({ requestId: runRequests.requestId })
+  async countQueued(): Promise<number> {
+    const [row] = await this.db
+      .select({ count: sql<number>`count(*)` })
       .from(runRequests)
-      .where(claimable())
-      .orderBy(asc(runRequests.createdAt))
-      .limit(5);
+      .where(eq(runRequests.status, "queued"));
+    return Number(row?.count ?? 0);
+  }
 
+  async claimNext(
+    owner: string,
+    now: Date,
+    staleMs: number,
+  ): Promise<RunRequestRecord | null> {
+    const candidates = await this.listClaimable(now, staleMs, 5);
     for (const candidate of candidates) {
-      const [row] = await this.db
-        .update(runRequests)
-        .set({
-          status: "claimed",
-          claimedBy: owner,
-          claimedAt: nowIso,
-          heartbeatAt: nowIso,
-          leaseVersion: sql`${runRequests.leaseVersion} + 1`,
-          updatedAt: nowIso,
-        })
-        .where(and(eq(runRequests.requestId, candidate.requestId), claimable()))
-        .returning();
-      if (row) {
-        return fromSqliteRunRequestRow(row);
+      const claimed = await this.claim(
+        candidate.requestId,
+        owner,
+        now,
+        staleMs,
+      );
+      if (claimed) {
+        return claimed;
       }
     }
     return null;
@@ -1067,6 +1107,8 @@ function fromSqliteRunRequestRow(
     workspaceId: row.workspaceId,
     workflowId: row.workflowId,
     kind: row.kind as RunRequestRecord["kind"],
+    priority: resolveRunRequestPriority(row.priority, row.payload),
+    admissionReason: row.admissionReason ?? null,
     payload: row.payload,
     status: row.status as RunRequestRecord["status"],
     claimedBy: row.claimedBy ?? null,
