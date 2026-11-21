@@ -131,7 +131,13 @@ try {
     throw new Error("web build failed");
   }
 
-  server = await startProductionServer({ webRoot, env: benchEnv });
+  // `/api/health` is 503 without Temporal/Postgres, so readiness is the world
+  // snapshot endpoint: it is the store + schema path this benchmark needs.
+  server = await startProductionServer({
+    webRoot,
+    env: benchEnv,
+    healthPath: "/api/world",
+  });
   const base = server.base;
 
   // Warm caches and let the one-time projection backfill run before timing.

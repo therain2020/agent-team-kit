@@ -43,7 +43,8 @@ while still failing scheduled and manual runs on a **clear** regression.
 
 Every run builds the web app once into the isolated `KIT_WEB_DIST_DIR`
 (`.next-bench`), starts `next start` on a random loopback port, waits for
-`/api/health`, and warms the caches. The benchmark owns its store: SQLite at
+`/api/world` (readiness for this isolated store; `/api/health` is 503 without
+Temporal), and warms the caches. The benchmark owns its store: SQLite at
 `.tmp/office-perf/state/kit.db` with the blob root beside it, so neither the
 developer database nor a Postgres deployment is touched. A deterministic
 scenario is seeded before the server starts: 12 runs for workflow `demo` (the
