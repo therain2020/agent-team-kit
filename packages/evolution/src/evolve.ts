@@ -633,7 +633,9 @@ function promotionDecision(input: {
     fromTrafficPercent: 0,
     toTrafficPercent: 0,
     trigger: "manual",
-    reason: input.gate.reasons.join("; ") || "promotion gate passed",
+    reason:
+      [...input.gate.reasons, ...input.gate.notes].join("; ") ||
+      "promotion gate passed",
     actor: input.actor,
     createdAt: new Date().toISOString(),
     variantKind: input.kind,

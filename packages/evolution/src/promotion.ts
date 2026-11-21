@@ -162,7 +162,10 @@ export interface PromotionGateDecision {
   crossWorkspace: boolean;
   exempted: boolean;
   exemptionId: string | null;
+  /** Blocking conditions; empty means the gate allows the promotion. */
   reasons: string[];
+  /** Informational notes (applied exemption, ignored foreign approvals). */
+  notes: string[];
 }
 
 export type PromotionGateFailureCode =
@@ -208,6 +211,7 @@ export function evaluatePromotionGate(
 ): PromotionGateDecision {
   const required = requiredPromotionRoles(input.kind);
   const reasons: string[] = [];
+  const notes: string[] = [];
   const approvedRoles: PromotionRole[] = [];
   const rejectedRoles: PromotionRole[] = [];
   const approvalById = new Map<string, PromotionApproval>();
@@ -216,7 +220,7 @@ export function evaluatePromotionGate(
       approval.workspaceId !== undefined &&
       approval.workspaceId !== input.targetWorkspaceId
     ) {
-      reasons.push(
+      notes.push(
         `approval ${approval.approvalId} belongs to workspace ${approval.workspaceId}, not ${input.targetWorkspaceId}`,
       );
       continue;
@@ -259,7 +263,7 @@ export function evaluatePromotionGate(
     );
   }
   if (exempted && exemption) {
-    reasons.push(
+    notes.push(
       `exemption ${exemption.exemptionId} applied for ${exemption.fromWorkspaceId} -> ${exemption.toWorkspaceId} by ${exemption.approvedBy}`,
     );
   }
@@ -294,6 +298,7 @@ export function evaluatePromotionGate(
     exempted,
     exemptionId: exempted && exemption ? exemption.exemptionId : null,
     reasons,
+    notes,
   };
 }
 
