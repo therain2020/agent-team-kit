@@ -1,6 +1,11 @@
 import { sameOriginError } from "@/lib/http";
 import { resolvePackDir } from "@/lib/paths";
 import { parseRole } from "@/lib/roles";
+import {
+  type AvatarSpec,
+  avatarSpecSchema,
+  formatAvatarIssues,
+} from "@kit/core";
 import { deleteAgent, updateAgent } from "@kit/pack";
 import { NextResponse } from "next/server";
 
@@ -43,6 +48,16 @@ export async function PUT(
     );
   }
 
+  // Validate the avatar up front so an illegal sprite is rejected before any
+  // file write; `null` removes it, missing keeps the stored sprite.
+  const avatar = avatarPayload(body.avatar);
+  if (avatar.errors) {
+    return NextResponse.json(
+      { error: "invalid avatar", details: avatar.errors },
+      { status: 400 },
+    );
+  }
+
   try {
     await updateAgent(packDir, decodeURIComponent(agentId), {
       description,
@@ -52,6 +67,7 @@ export async function PUT(
       skills: stringArray(body.skills),
       instructions,
       permissions: permissions(body.permissions),
+      ...("avatar" in body ? { avatar: avatar.value } : {}),
     });
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -94,6 +110,21 @@ function stringArray(value: unknown, max = 30): string[] {
         .filter(Boolean)
         .slice(0, max)
     : [];
+}
+
+type AvatarPayload =
+  | { value: AvatarSpec | null; errors?: undefined }
+  | { value?: undefined; errors: string[] };
+
+function avatarPayload(value: unknown): AvatarPayload {
+  if (value === undefined || value === null) {
+    return { value: null };
+  }
+  const parsed = avatarSpecSchema.safeParse(value);
+  if (!parsed.success) {
+    return { errors: formatAvatarIssues(parsed.error) };
+  }
+  return { value: parsed.data };
 }
 
 function permissions(

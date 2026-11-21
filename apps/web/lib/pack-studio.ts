@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { type AvatarSpec, avatarSpecSchema } from "@kit/core";
 import {
   listEditablePackFiles,
   loadPack,
@@ -22,6 +23,8 @@ export interface StudioAgent {
   permissions?: { filesystem?: string; network?: string };
   instructions: string;
   file: string;
+  /** Optional custom sprite; absent means the procedural seed sprite. */
+  avatar?: AvatarSpec;
 }
 
 export interface StudioStage {
@@ -125,6 +128,7 @@ export async function loadStudioData(
       permissions: asPermissions(frontmatter.data.permissions),
       instructions: frontmatter.body,
       file: managerFile,
+      avatar: asAvatar(frontmatter.data.avatar),
     });
   }
 
@@ -148,6 +152,7 @@ export async function loadStudioData(
       permissions: asPermissions(frontmatter.data.permissions),
       instructions: frontmatter.body,
       file: entry.spec.file,
+      avatar: asAvatar(frontmatter.data.avatar),
     });
   }
 
@@ -308,6 +313,12 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
     : [];
+}
+
+/** Invalid stored avatars fall back to the procedural sprite, never crash. */
+function asAvatar(value: unknown): AvatarSpec | undefined {
+  const parsed = avatarSpecSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function asPermissions(

@@ -538,6 +538,7 @@ function Station({
           state={pixelStateFromStatus(agent.status)}
           tick={tick}
           tone={agent.status === "error" ? "red" : undefined}
+          avatar={agent.avatar}
         />
         {bubble ? <ToolBubble text={bubble.text} seq={bubble.seq} /> : null}
       </span>
